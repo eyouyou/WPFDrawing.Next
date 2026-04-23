@@ -157,33 +157,23 @@ namespace Hevo.Charting.Renderers
                         if (strokePaint != null) canvas.DrawOval(cmd.Payload.P1.X, cmd.Payload.P1.Y, cmd.Payload.Val1, cmd.Payload.Val2, strokePaint);
                         break;
                     case DrawOp.DrawPolyline:
-                        // 🚨 嫌疑人 1：画笔静默为空
-                        if (strokePaint == null)
-                        {
-                            break;
-                        }
+                        if (strokePaint == null) break;
 
-                        // 💥 彻底修改为 HevoPoint
                         if (cmd.RefData is IList<HevoPoint> polyPts && polyPts.Count > 1)
                         {
-                            var firstPt = T(polyPts[0]);
-
-                            // 强制确保是描边模式 (防手抖)
+                            // 强制描边模式 (防手抖)
                             strokePaint.Style = SKPaintStyle.Stroke;
 
                             using var path = new SKPath();
-                            path.MoveTo(firstPt);
+                            path.MoveTo(T(polyPts[0]));
                             for (int j = 1; j < polyPts.Count; j++)
                             {
                                 path.LineTo(T(polyPts[j]));
                             }
-
-                            // 🚨 嫌疑人 4：画布被错误地 Clip (裁切) 到 0x0 了
                             canvas.DrawPath(path, strokePaint);
                         }
                         break;
                     case DrawOp.DrawLineSegments:
-                        // 💥 彻底修改为 HevoPoint
                         if (strokePaint != null && cmd.RefData is IList<HevoPoint> segPts && segPts.Count > 1)
                         {
                             using var path = new SKPath();
@@ -196,7 +186,6 @@ namespace Hevo.Charting.Renderers
                         }
                         break;
                     case DrawOp.DrawRectangles:
-                        // 💥 彻底修改为 HevoRect
                         if (cmd.RefData is IList<HevoRect> rects)
                         {
                             for (int j = 0; j < rects.Count; j++)
@@ -222,41 +211,31 @@ namespace Hevo.Charting.Renderers
                             string actualText = ResolveString(textInfo.Text);
                             if (string.IsNullOrEmpty(actualText)) break;
 
-                            // 1. 极速测量宽度与高度
+                            // 1. 测量
                             float textWidth = font.MeasureText(actualText, fillPaint);
                             var metrics = font.Metrics;
-                            float textHeight = metrics.Descent - metrics.Ascent; // Skia 字体总高度
+                            float textHeight = metrics.Descent - metrics.Ascent;
 
-                            // 💥 2. 计算包围盒尺寸 (文字尺寸 + 内边距)
-                            float boxWidth = textWidth + textInfo.PaddingX * 2f;
-                            float boxHeight = textHeight + textInfo.PaddingY * 2f;
+                            // 2. 共用布局解算(背景框 + 文本起点)
+                            var layout = TextLayoutHelper.Compute(
+                                cmd.Payload.P1.X, cmd.Payload.P1.Y,
+                                textWidth, textHeight,
+                                textInfo.PaddingX, textInfo.PaddingY,
+                                textInfo.AlignX, textInfo.AlignY);
 
-                            float x = cmd.Payload.P1.X;
-                            float y = cmd.Payload.P1.Y;
-
-                            // 💥 3. 锚定修正
-                            if (textInfo.AlignX == TextAlignX.Center) x -= boxWidth / 2f;
-                            else if (textInfo.AlignX == TextAlignX.Right) x -= boxWidth;
-
-                            if (textInfo.AlignY == TextAlignY.Center) y -= boxHeight / 2f;
-                            else if (textInfo.AlignY == TextAlignY.Bottom) y -= boxHeight;
-
-                            // 💥 4. 一波带走：如果配置了背景，先画底框！
+                            // 3. 背景框
                             if (textInfo.BgBrush != null || textInfo.BorderPen != null)
                             {
                                 var bgPaint = GetFillPaint(textInfo.BgBrush);
                                 var borderPaint = GetStrokePaint(textInfo.BorderPen);
-                                var rect = new SKRect(x, y, x + boxWidth, y + boxHeight);
+                                var rect = new SKRect(layout.BoxX, layout.BoxY, layout.BoxX + layout.BoxWidth, layout.BoxY + layout.BoxHeight);
 
                                 if (bgPaint != null) canvas.DrawRect(rect, bgPaint);
                                 if (borderPaint != null) canvas.DrawRect(rect, borderPaint);
                             }
 
-                            // 5. 画文字 (💥 注意：Skia 坐标是基线，y 要加上 Padding，再减去负的 Ascent)
-                            float textX = x + textInfo.PaddingX;
-                            float textY = y + textInfo.PaddingY - metrics.Ascent;
-
-                            canvas.DrawText(actualText, textX, textY, font, fillPaint);
+                            // 4. 文字(Skia 用基线坐标系,所以 TextY 要再叠加 -Ascent)
+                            canvas.DrawText(actualText, layout.TextX, layout.TextY - metrics.Ascent, font, fillPaint);
                         }
                         break;
                     case DrawOp.DrawImage:
@@ -273,7 +252,7 @@ namespace Hevo.Charting.Renderers
                         }
                         break;
                     case DrawOp.PushTransform:
-                        var m = cmd.Payload.Transform; // 💥 现在这里是纯净的 System.Numerics.Matrix3x2
+                        var m = cmd.Payload.Transform; // System.Numerics.Matrix3x2
                         canvas.Save();
                         // 将 Matrix3x2 映射为 SKMatrix
                         canvas.Concat(new SKMatrix(m.M11, m.M21, m.M31, m.M12, m.M22, m.M32, 0, 0, 1));
@@ -296,10 +275,10 @@ namespace Hevo.Charting.Renderers
         // 💥 极速翻译器 (强制内联，纯 float 的平滑过渡)
         // ==========================================
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-        private SKPoint T(HevoPoint p) => new SKPoint(p.X, p.Y);
+        private static SKPoint T(HevoPoint p) => new SKPoint(p.X, p.Y);
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-        private SKRect T(HevoRect r) => new SKRect(r.Left, r.Top, r.Right, r.Bottom);
+        private static SKRect T(HevoRect r) => new SKRect(r.Left, r.Top, r.Right, r.Bottom);
 
         // 💥 字符串解析策略：将意图化为真正的字符
         private string ResolveString(IHevoString s)

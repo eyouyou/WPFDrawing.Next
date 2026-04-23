@@ -1,6 +1,5 @@
 ﻿using Hevo.Charting.Abstractions;
 using Hevo.Charting.Layers;
-using System.Windows;
 
 namespace Hevo.Charting.Core
 {

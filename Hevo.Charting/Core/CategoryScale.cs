@@ -6,8 +6,11 @@ namespace Hevo.Charting.Core
     /// 💥 分类标尺 (CategoryScale)：图形学归一化的终极大脑
     /// 完美抹平了“折线点映射(Edge)”与“柱状图波段映射(Centered)”的物理差异。
     /// 所有的图层(Layer)只需无脑调用 Normalize，即可获得绝对对齐的物理坐标！
+    ///
+    /// 可选 <paramref name="SnapEdges"/>：开启后 ChartInteractionFeature 的 Pan/Zoom 会把视口边界量化到整数索引，
+    /// 用户拖拽时绝不会出现边缘半根 K 线被切的情况（ratcheting 行为，跨过一根才走一步）。
     /// </summary>
-    public record CategoryScale(double Offset = 0.5) : IScale
+    public record CategoryScale(double Offset = 0.5, bool SnapEdges = false) : IScale, ISnappableScale
     {
         // ==========================================
         // 💥 预设标尺模式 (静态单例，0-GC)
@@ -19,9 +22,19 @@ namespace Hevo.Charting.Core
         public static readonly CategoryScale Centered = new(0.5);
 
         /// <summary>
+        /// 柱状图/K线 + 整根对齐：拖拽/缩放时边缘永远不出现半根被切（推荐用于 bar/candle 图）。
+        /// </summary>
+        public static readonly CategoryScale CenteredSnapped = new(0.5, SnapEdges: true);
+
+        /// <summary>
         /// 纯折线图/分时图专用：数据点死死钉在格子边缘 (0 偏移，首尾绝对贴边)
         /// </summary>
         public static readonly CategoryScale Edge = new(0.0);
+
+        // ==========================================
+        // ISnappableScale：量化到整数索引（仅当 SnapEdges 开启时生效）
+        // ==========================================
+        public double Snap(double logicalValue) => SnapEdges ? Math.Round(logicalValue) : logicalValue;
 
         // ==========================================
         // 💥 核心抽象：万能归一化引擎

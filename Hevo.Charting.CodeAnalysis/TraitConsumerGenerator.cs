@@ -103,7 +103,7 @@ namespace Hevo.Charting.CodeAnalysis
 
             if (traits.Count == 0) return null;
 
-            // 🚨 修复二：提取类的声明名称，必须包含泛型参数！(例如：AxisLayer<TDomain>)
+            // 🚨 修复二：提取类的声明名称，必须包含泛型参数！(例如：SomeLayer<T>)
             string typeParameters = classSymbol.TypeParameters.IsEmpty
                 ? ""
                 : "<" + string.Join(", ", classSymbol.TypeParameters.Select(t => t.Name)) + ">";

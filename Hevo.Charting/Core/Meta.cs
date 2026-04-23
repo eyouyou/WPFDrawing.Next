@@ -1,5 +1,4 @@
 ﻿using Hevo.Charting.Abstractions;
-using Hevo.Charting.Buildin;
 using System.Runtime.CompilerServices;
 using System.Windows.Media;
 

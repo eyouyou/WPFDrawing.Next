@@ -1,7 +1,6 @@
 ﻿using Hevo.Charting.Abstractions;
 using Hevo.Charting.Core;
 using Hevo.Charting.LowCode;
-using System.Windows;
 using System.Windows.Media;
 
 namespace Hevo.Charting.Features
@@ -140,9 +139,6 @@ namespace Hevo.Charting.Features
             var (lows, lowsChanged) = ctx.UsePort(Ports.Low);
             var (closes, closesChanged) = ctx.UsePort(Ports.Close);
 
-            // 💥 查脏 Offset！如果视口平移导致切片起始点变了，必须触发重绘！
-            var (offset, offsetChanged) = ctx.UsePort(Viewport.Offset);
-
             int len = opens.Length;
             if (len == 0 || !xRange.IsValid || !yRange.IsValid) return;
 
@@ -153,10 +149,9 @@ namespace Hevo.Charting.Features
             // 3. 剥离热数据：无论屏幕上有多少根 K 线，动态层永远只认最后一根！
             int dynamicStartIndex = Math.Max(0, len - 1);
 
-            // 💥 静态层重绘防抖大坝：
-            // 只要有任何一个维度的数据、尺寸、或者【物理偏移量】变了，静态历史层就得重绘！
-            // 如果仅仅是最后一根 K 线的价格跳动，静态层绝对不会被唤醒！
-            bool needRedrawStatic = areaChanged || xChanged || yChanged || opensChanged || highsChanged || lowsChanged || closesChanged || offsetChanged;
+            // 静态层重绘防抖：尺寸 / 视口 / 数据列任一变化都要重绘
+            // （切片器删除后无 Offset 概念：数据是全量、世界索引 == 数组下标）
+            bool needRedrawStatic = areaChanged || xChanged || yChanged || opensChanged || highsChanged || lowsChanged || closesChanged;
 
             if (needRedrawStatic)
             {
@@ -164,11 +159,9 @@ namespace Hevo.Charting.Features
                 ctx.For(_staticLayer).UpdateYAxis(yRange);
                 ctx.For(_staticLayer).PublishData(Style);
 
-                // 💥 绝对坐标黑科技：把 Offset 传给底层渲染图层！
-                // 底层引擎拿到的是被切片器阉割过的微型数组（例如长度只有 100），
-                // 加上 Offset 后，第 0 个元素的 X 坐标就会被精准投射到全局图表的绝对物理位置！
+                // 静态层渲染 [0, len-1) 的历史 K 线，StartIndex 即世界索引 0
                 ctx.For(_staticLayer).PublishData(new CandleData(
-                    StartIndex: offset,
+                    StartIndex: 0,
                     opens.Slice(0, dynamicStartIndex),
                     highs.Slice(0, dynamicStartIndex),
                     lows.Slice(0, dynamicStartIndex),
@@ -191,9 +184,9 @@ namespace Hevo.Charting.Features
             var lowSlice = lows.Slice(dynamicStartIndex, dynamicLen);
             var closeSlice = closes.Slice(dynamicStartIndex, dynamicLen);
 
-            // 💥 动态层坐标系校准：绝对起步 X 坐标 = Offset + 最后一个元素的相对索引！
+            // 动态层只渲染最后一根，StartIndex = 该根的世界索引
             ctx.For(_dynamicLayer).PublishData(new CandleData(
-                StartIndex: offset + dynamicStartIndex,
+                StartIndex: dynamicStartIndex,
                 openSlice, highSlice, lowSlice, closeSlice
             ));
 

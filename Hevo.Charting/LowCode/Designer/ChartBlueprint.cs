@@ -114,8 +114,7 @@ namespace Hevo.Charting.LowCode.Designer
                 // (此处可复用类似的反射逻辑动态生成 ScatterIngestor 并加入 pipe，逻辑与标量类似，略作精简展示)
             }
 
-            // 💥 将组装好的反射管道与流绑定（低代码反射场景走 BindTo 兼容路径——
-            // 没有 DataPipeBuilder 载体可以承载 Injector，不适合 MergeInto）
+            // 💥 将组装好的反射管道与流绑定到图表生命周期
             _sourceStream.Select(items => pipe.Process(items)).BindTo(chart);
         }
 

@@ -1,7 +1,6 @@
 ﻿using Hevo.Charting.Abstractions;
 using Hevo.Charting.Core;
 using Hevo.Charting.LowCode;
-using System.Threading;
 
 namespace Hevo.Charting.WorkFlow
 {

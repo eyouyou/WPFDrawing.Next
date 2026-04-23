@@ -6,7 +6,7 @@ namespace Hevo.Charting.Buildin
     /// 💥 工业级优雅 Y 轴刻度策略 (Nice Number Tick Strategy)
     /// 无论 AutoScale 给的极值多丑 (如 12.3~87.6)，都能算出完美的刻度 (如 20, 40, 60, 80)
     /// </summary>
-    public class NiceNumberYTickStrategy : ITickStrategy<double>
+    public class NiceNumberYTickStrategy : ITickStrategy
     {
         private readonly int _desiredTicks;
 
@@ -15,7 +15,7 @@ namespace Hevo.Charting.Buildin
             _desiredTicks = Math.Max(2, desiredTicks);
         }
 
-        public IEnumerable<TickMathResult<double>> Calculate(RealRange range, double physicalLength)
+        public IEnumerable<TickMathResult> Calculate(RealRange range, double physicalLength)
         {
             if (!range.IsValid || range.Span == 0) yield break;
 
@@ -40,10 +40,9 @@ namespace Hevo.Charting.Buildin
                 // 强制修正由于浮点数产生的 -0.0000000001
                 if (Math.Abs(val) < 1e-9) val = 0;
 
-                double ratio = (val - range.Min) / range.Span;
                 bool isBase = val == 0;
 
-                yield return new TickMathResult<double>(ratio, val, isBase);
+                yield return new TickMathResult(val, isBase);
             }
         }
 

@@ -73,8 +73,8 @@ namespace Hevo.Charting.Features
 
         protected override void OnCompose(ChartCell chart, RenderContext ctx, IRenderFlow<DataBlackboard> flow)
         {
-            // 💥 响应式拦截：只有当视口跨度、偏移量或底层数据发生变化时，才唤醒极值计算
-            var listenPorts = new List<object> { Viewport.ActiveRange, Viewport.Offset };
+            // 响应式拦截：视口跨度或底层数据变化时才唤醒极值计算
+            var listenPorts = new List<object> { Viewport.ActiveRange };
             listenPorts.AddRange(ValuePorts);
             if (ReferencePort != null) listenPorts.Add(ReferencePort);
 
@@ -86,7 +86,6 @@ namespace Hevo.Charting.Features
                 using (board.AcquireUpgradeableReadLock())
                 {
                     var xRange = board.Read(Viewport.ActiveRange);
-                    int offset = board.Read(Viewport.Offset);
 
                     // 💥 0-GC 短路拦截：视口无效直接退帧
                     if (!xRange.IsValid) return;
@@ -95,9 +94,9 @@ namespace Hevo.Charting.Features
                     double globalMin = double.MaxValue;
                     bool hasValidData = false;
 
-                    // 计算当前屏幕可见的物理数据索引边界
-                    int localStart = (int)Math.Max(0, Math.Floor(xRange.Min) - offset);
-                    int localEndMax = (int)Math.Ceiling(xRange.Max) - offset;
+                    // 删 Slicer 后世界索引 == 数组下标，直接 clip 到 ActiveRange
+                    int localStart = (int)Math.Max(0, Math.Floor(xRange.Min));
+                    int localEndMax = (int)Math.Ceiling(xRange.Max);
 
                     // 💥 0-GC O(N) 极速视口切片遍历
                     foreach (var valuePort in ValuePorts)

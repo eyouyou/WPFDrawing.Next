@@ -67,8 +67,11 @@ namespace Hevo.Charting.Layers
 
                 if (clampedZeroPy == clampedValPy) continue;
 
-                double pxLeft = pxCenter - pxHalfWidth;
-                double pxRight = pxCenter + pxHalfWidth;
+                // 💥 边缘柱子的半宽度可能溢出 plotArea，直接在数学坐标层面收回来，
+                //    保证像素严格落在 plotArea 内部 —— 不依赖 Skia 剪裁。
+                double pxLeft = Math.Max(pxCenter - pxHalfWidth, area.Left);
+                double pxRight = Math.Min(pxCenter + pxHalfWidth, area.Right);
+                if (pxRight <= pxLeft) continue;
 
                 double top = Math.Min(clampedZeroPy, clampedValPy);
                 double bottom = Math.Max(clampedZeroPy, clampedValPy);

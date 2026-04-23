@@ -39,7 +39,7 @@ namespace Hevo.Charting.Layers
             => Create(GridOrientation.Vertical, Colors.LightGray);
     }
 
-    public partial class GridLineLayer<TDomain> : ChartLayer
+    public partial class GridLineLayer : ChartLayer
     {
         public GridLineLayer(string name)
         {
@@ -50,7 +50,7 @@ namespace Hevo.Charting.Layers
 
         protected override void OnUpdate(IVisualData data, IDrawingSink draw, WidgetBuffer widget)
         {
-            var tickTrait = data.Get<AxisTickDataTrait<TDomain>>();
+            var tickTrait = data.Get<AxisTickDataTrait>();
             var style = data.Get<GridStyleTrait>();
             var plotArea = data.Get<PlotAreaTrait>();
 
@@ -67,6 +67,10 @@ namespace Hevo.Charting.Layers
                 {
                     ref var tick = ref tickTrait.Ticks[i];
                     if (tick.IsBaseLine) continue;
+
+                    // 💥 与 AxisLayer 对齐：Ratio 越界的 tick 不能画网格线到 plotArea 外。
+                    //    NiceNumberYTickStrategy 为了"优美对齐"会向外多生成刻度，这里必须守门。
+                    if (tick.Ratio < 0 || tick.Ratio > 1) continue;
 
                     if (style.Orientation == GridOrientation.Horizontal)
                     {

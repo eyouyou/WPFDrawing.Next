@@ -148,30 +148,6 @@ namespace Hevo.Charting.Core
             return (float)(area.Top + (area.Height * (1.0 - vNorm)));
         }
 
-        public static (double Domain, double Value) ProjectToLogic(
-                    HevoRect area,
-                    RealRange rangeDomain,
-                    RealRange rangeValue,
-                    ScaleStrategyTrait axis,
-                    float screenX,
-                    float screenY)
-        {
-            if (area.Width <= 0 || area.Height <= 0) return (0, 0);
-
-            double dNorm = (screenX - area.Left) / area.Width;
-            double vNorm = 1.0 - ((screenY - area.Top) / area.Height);
-
-            double logicDomain = axis.DomainScale.Denormalize(dNorm, rangeDomain);
-            double logicValue = axis.ValueScale.Denormalize(vNorm, rangeValue);
-
-            return (logicDomain, logicValue);
-        }
-
-        public static double GetPixelsPerUnitDomain(HevoRect area, RealRange rangeDomain) =>
-            (rangeDomain.Span > 0 && area.Width > 0) ? area.Width / rangeDomain.Span : 0;
-
-        public static double GetPixelsPerUnitValue(HevoRect area, RealRange rangeValue) =>
-            (rangeValue.Span > 0 && area.Height > 0) ? area.Height / rangeValue.Span : 0;
     }
 
     // =================================================================

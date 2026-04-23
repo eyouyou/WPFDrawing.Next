@@ -6,13 +6,11 @@ using System.Windows.Media;
 namespace Hevo.Charting.Layers
 {
     /// <summary>
-    /// 万能策略载体。
-    /// TStrategy 约束必须是一个 ITickStrategy，且由于它是 record，
-    /// 当 PublishData 时，引擎会自动通过 Equals 判断策略内的参数（如 PreClose）是否真的变了。
+    /// 万能策略载体。record 自动 Equals，策略参数真变才触发下游更新。
     /// </summary>
-    public record TickStrategyTrait<TDomain>(ITickStrategy<TDomain> Strategy) : IVisualTrait
+    public record TickStrategyTrait(ITickStrategy Strategy) : IVisualTrait
     {
-        public static TickStrategyTrait<T> Create<T>(ITickStrategy<T> strategy) => new(strategy);
+        public static TickStrategyTrait Create(ITickStrategy strategy) => new(strategy);
     }
 
     public record AxisRangeTrait(RealRange Range) : IVisualTrait
@@ -21,9 +19,9 @@ namespace Hevo.Charting.Layers
         public static readonly AxisRangeTrait Empty = new(RealRange.Empty);
     }
 
-    public record AxisTickDataTrait<TDomain>(TickModel<TDomain>[] Ticks, int Count) : IVisualTrait
+    public record AxisTickDataTrait(TickModel[] Ticks, int Count) : IVisualTrait
     {
-        public static AxisTickDataTrait<TDomain> Empty() => new(Array.Empty<TickModel<TDomain>>(), 0);
+        public static AxisTickDataTrait Empty() => new(Array.Empty<TickModel>(), 0);
     }
 
     public enum AxisPlacement { Top, Bottom, Left, Right }
@@ -61,7 +59,7 @@ namespace Hevo.Charting.Layers
 
     public record AxisLayoutTrait(double AbsoluteAnchor) : IVisualTrait;
 
-    public partial class AxisLayer<TDomain> : ChartLayer
+    public partial class AxisLayer : ChartLayer
     {
         public AxisLayer(string name)
         {
@@ -72,7 +70,7 @@ namespace Hevo.Charting.Layers
 
         protected override void OnUpdate(IVisualData data, IDrawingSink draw, WidgetBuffer widget)
         {
-            var tickTrait = data.Get<AxisTickDataTrait<TDomain>>();
+            var tickTrait = data.Get<AxisTickDataTrait>();
             var axisTrait = data.Get<AxisStyleTrait>();
             var plotArea = data.Get<PlotAreaTrait>();
 

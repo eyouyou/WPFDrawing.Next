@@ -53,6 +53,12 @@ namespace Hevo.Charting.Core
     /// 1. 物理容器：管理 DrawingCanvas(底层), VectorCanvas(中层), InteractionCanvas(顶层)。
     /// 2. 层级管理：确保 D3D -> Vector -> Interaction -> Overlay 的物理顺序。
     /// 3. 生命周期：作为 ChartSession 的挂载点。
+    ///
+    /// LayerBuffer 三类子缓冲的路由(不变量):
+    /// - Drawing(矢量指令):Software Layer 走 RenderWpfLayers→WpfRenderProvider;Hardware Layer 走 OnSkiaPaintSurface→SkiaRenderProvider。
+    /// - Bitmap(光栅像素):Software→WpfRasterRenderer;Hardware→SkiaRasterRenderer。
+    /// - Widget(WPF 控件):**不区分 Mode**,所有 Layer 都通过 RenderWidgetLayers 进入 InteractionCanvas 控件池;
+    ///   两个 RenderProvider 对 WidgetBuffer 都返回 null,LayerBuffer.Execute 内的 widget 分支自动 no-op,不会双渲染。
     /// </summary>
     public class ChartCell : ContentControl
     {
@@ -157,11 +163,13 @@ namespace Hevo.Charting.Core
             _hookedWindow = Window.GetWindow(this);
             if (_hookedWindow != null)
             {
-                _stateChangedHandler = (_, __) =>
+                // 💥 用 sender 直接拿窗口引用，避免字段在 Unloaded 清空 / 重复 Loaded 导致捕获的 _hookedWindow 为 null
+                _stateChangedHandler = (sender, __) =>
                 {
                     if (Template is not Abstractions.IPausable pp) return;
-                    if (_hookedWindow.WindowState == WindowState.Minimized) pp.Suspend();
-                    else                                                     pp.Resume();
+                    if (sender is not Window w) return;
+                    if (w.WindowState == WindowState.Minimized) pp.Suspend();
+                    else                                        pp.Resume();
                 };
                 _hookedWindow.StateChanged += _stateChangedHandler;
             }

@@ -42,6 +42,11 @@ namespace Hevo.Charting.Core
 
     public partial class CandleLayer : ChartLayer
     {
+        // 跨帧复用,首次 OnUpdate 后 capacity 锁定在水位线,后续帧 0 分配。
+        private readonly List<HevoRect> _upRects = new(256);
+        private readonly List<HevoRect> _downRects = new(256);
+        private readonly List<HevoPoint> _wicks = new(512);
+
         public CandleLayer()
         {
             Name = "CandleStick";
@@ -87,12 +92,9 @@ namespace Hevo.Charting.Core
 
             if (logicalStart > logicalEnd) return;
 
-            int capacity = logicalEnd - logicalStart + 1;
-
-            // 💥 换装轻量级集合
-            var upRects = new List<HevoRect>(capacity);
-            var downRects = new List<HevoRect>(capacity);
-            var wicks = new List<HevoPoint>(capacity * 2);
+            _upRects.Clear();
+            _downRects.Clear();
+            _wicks.Clear();
 
             // ==========================================
             // 💥 极致多态：利用 IScale 相邻索引差值，推算绝对物理宽度！
@@ -129,8 +131,8 @@ namespace Hevo.Charting.Core
                 double yLow = CoordinateExtensions.ProjectValueToScreen(plotArea, yRange, axis, l);
                 double yClose = CoordinateExtensions.ProjectValueToScreen(plotArea, yRange, axis, c);
 
-                wicks.Add(new HevoPoint((float)xCenter, (float)yHigh));
-                wicks.Add(new HevoPoint((float)xCenter, (float)yLow));
+                _wicks.Add(new HevoPoint((float)xCenter, (float)yHigh));
+                _wicks.Add(new HevoPoint((float)xCenter, (float)yLow));
 
                 double top = Math.Min(yOpen, yClose);
                 double bottom = Math.Max(yOpen, yClose);
@@ -138,27 +140,26 @@ namespace Hevo.Charting.Core
 
                 HevoRect rect = new HevoRect((float)leftEdge, (float)top, (float)(rightEdge - leftEdge), (float)height);
 
-                if (c >= o) upRects.Add(rect);
-                else downRects.Add(rect);
+                if (c >= o) _upRects.Add(rect);
+                else _downRects.Add(rect);
             }
 
-            // 绘制与抗锯齿处理
             using (draw.PushClip(plotArea))
             {
-                if (wicks.Count > 0)
+                if (_wicks.Count > 0)
                 {
                     using (draw.PushPixelSnapping((float)style.WickPen.Thickness))
                     {
-                        draw.DrawLineSegments(style.WickPen, wicks);
+                        draw.DrawLineSegments(style.WickPen, _wicks);
                     }
                 }
 
-                if (upRects.Count > 0 || downRects.Count > 0)
+                if (_upRects.Count > 0 || _downRects.Count > 0)
                 {
                     using (draw.PushPixelSnapping(0.0f))
                     {
-                        if (upRects.Count > 0) draw.DrawRectangles(style.UpBrush, null, upRects);
-                        if (downRects.Count > 0) draw.DrawRectangles(style.DownBrush, null, downRects);
+                        if (_upRects.Count > 0) draw.DrawRectangles(style.UpBrush, null, _upRects);
+                        if (_downRects.Count > 0) draw.DrawRectangles(style.DownBrush, null, _downRects);
                     }
                 }
             }

@@ -39,9 +39,10 @@ namespace Hevo.Charting.Features
     public enum ScaleMapping { Domain, Value }
 
     /// <summary>
-    /// 万能坐标轴特征（终极正交版）：物理方位、数学映射、作用域彻底解耦
+    /// 万能坐标轴特征（终极正交版）：物理方位、数学映射、作用域彻底解耦。
+    /// 逻辑域严格跟 RealRange / IScale 的 double 契约对齐，不再携带假泛型。
     /// </summary>
-    public class AxisFeature<TDomain> : ChartFeature
+    public class AxisFeature : ChartFeature
     {
         public AxisHandle Handle { get; init; } = new AxisHandle();
         public override FeaturePhase Phase => FeaturePhase.Scale;
@@ -54,15 +55,15 @@ namespace Hevo.Charting.Features
         public GridStyleTrait? GridStyle { get; init; }
 
         private bool IsHorizontal => AxisStyle.Placement == AxisPlacement.Top || AxisStyle.Placement == AxisPlacement.Bottom;
-        private readonly ITickProvider<TDomain> _tickProvider;
-        private readonly AxisLayer<TDomain> _axisLayer;
-        private readonly GridLineLayer<TDomain> _gridLayer;
+        private readonly ITickProvider _tickProvider;
+        private readonly AxisLayer _axisLayer;
+        private readonly GridLineLayer _gridLayer;
 
-        public AxisFeature(ITickProvider<TDomain> tickProvider, string name = "Axis")
+        public AxisFeature(ITickProvider tickProvider, string name = "Axis")
         {
             _tickProvider = tickProvider ?? throw new ArgumentNullException(nameof(tickProvider));
-            _axisLayer = new AxisLayer<TDomain>($"{name}_Layer");
-            _gridLayer = new GridLineLayer<TDomain>($"{name}_Grid");
+            _axisLayer = new AxisLayer($"{name}_Layer");
+            _gridLayer = new GridLineLayer($"{name}_Grid");
         }
 
         protected override void OnCompose(ChartCell chart, RenderContext ctx, IRenderFlow<DataBlackboard> flow)
@@ -104,12 +105,12 @@ namespace Hevo.Charting.Features
                                 // 保证坐标轴刻度与 K线、折线的物理坐标 100% 像素级对齐！
                                 for (int i = 0; i < rawTicks.Length; i++)
                                 {
-                                    double logicalValue = Convert.ToDouble(rawTicks[i].Value);
-                                    double realRatio = deps.scale.Normalize(logicalValue, deps.range);
+                                    // Value 直接是 double，无需 Convert.ToDouble 的装箱与虚派发
+                                    double realRatio = deps.scale.Normalize(rawTicks[i].Value, deps.range);
                                     rawTicks[i] = rawTicks[i] with { Ratio = realRatio };
                                 }
 
-                                return new AxisTickDataTrait<TDomain>(rawTicks, rawTicks.Length);
+                                return new AxisTickDataTrait(rawTicks, rawTicks.Length);
                             });
             // 💥 0-GC 优化 2：Style 的 with 克隆操作用 static 锁死
             var (finalStyleTrait, styleChanged) = ctx.UseMemo((plotArea, AxisStyle),

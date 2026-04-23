@@ -92,19 +92,6 @@ namespace Hevo.Charting.WorkFlow
         // ==========================================
         // 💥 管线收束终结符
         // ==========================================
-        public void MergeInto(IDataFlowHost host, DataFlowRole role = DataFlowRole.Primary)
-        {
-            var binding = new DataFlowBinding
-            {
-                Injector = this.Reevaluate,
-                Trigger = this.Seal().Select(_ => new object()),
-                Role = role,
-                FlowName = typeof(TSource).Name
-            };
-            host.AttachDataFlow(binding);
-        }
-
-        // 保持对旧代码直接绑定的兼容性
         public IRenderFlow<DataBlackboard> BindTo(ChartCell chart)
         {
             return this.Seal().BindTo(chart);

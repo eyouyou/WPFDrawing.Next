@@ -6,7 +6,7 @@ namespace Hevo.Charting
     /// <summary>
     /// 💥 顶层数据源基类：只负责低 GC 快照与管线构建 (双缓冲读写分离版)
     /// </summary>
-    public abstract class DataSource<TSource, TItem> : IDisposable, IMappingBase, Hevo.Charting.Abstractions.IPausable
+    public abstract class DataSource<TSource, TItem> : IDisposable, Hevo.Charting.Abstractions.IPausable
         where TSource : DataSource<TSource, TItem>
     {
         protected readonly WorkflowTrigger<DataSnapshot<TItem>> _trigger = new();
@@ -93,43 +93,19 @@ namespace Hevo.Charting
     }
 
 
-    public interface IMappingBase
-    {
-        int LogicalLength { get; }
-    }
-
     /// <summary>
-    /// 连续模式: 专门服务于连续数据 (如 K 线)
-    /// </summary>
-    public interface IContinuousMapping : IMappingBase { }
-
-    /// <summary>
-    /// 散列模式
-    /// [内核契约] 结构化坑位映射能力
-    /// 任何具备规律性坑位的数据源（如股票分时、分类数据）实现此接口。
-    /// 内核只认 Index，绝不沾染 Time 等业务属性。
-    /// </summary>
-    public interface IStructuredMapping<TItem> : IMappingBase
-    {
-        int MapToIndex(TItem item);
-    }
-
-    /// <summary>
-    /// 💥 视口驱动型泛型数据源 (终极异步契约版)
-    /// 【绝对纯净】：没有任何 Enum，没有任何 DateTime，只做排队调度。
-    /// 【异步穿透】：支持 TaskCompletionSource，完美桥接响应式流与 async/await！
+    /// 请求驱动型泛型数据源：承载"身份 + 多类请求分发 + 按请求类型定制合并策略"的完整三元组。
+    /// 适用于需要在同一 Context 下发起多种 TRequest 的复杂流（典型代表：KLine 分页的 History / Range / Latest）；
+    /// 90% 只需"身份 + 拉一次"的业务请改继承 3 参精简版 <see cref="ReactiveDataSource{TSource, TContext, TItem}"/>。
     /// </summary>
     public abstract class ReactiveDataSource<TSource, TContext, TRequest, TResponse, TItem> : DataSource<TSource, TItem>
         where TSource : ReactiveDataSource<TSource, TContext, TRequest, TResponse, TItem>
     {
-        // ==========================================
-        // 💥 核武器：请求信封 (包装原始请求与生命周期令牌)
-        // ==========================================
         protected readonly struct RequestEnvelope
         {
             public TRequest Request { get; }
-            public TaskCompletionSource<int>? Tcs { get; } // 💥 升级：携带有返回值的支票，用于兑现真实回包数量！
-            public CancellationToken Token { get; } // 💥 携带独立生命周期令牌
+            public TaskCompletionSource<int>? Tcs { get; }   // null = fire-and-forget；非 null 用于 RequestAsync 回传条数
+            public CancellationToken Token { get; }          // 调用方独立的生命周期令牌
 
             public RequestEnvelope(TRequest request, TaskCompletionSource<int>? tcs, CancellationToken token)
             {
@@ -144,10 +120,15 @@ namespace Hevo.Charting
 
         public TContext? Context { get; private set; }
 
-        protected ReactiveDataSource()
+        protected ReactiveDataSource() => _pipelineSub = BuildPipeline();
+
+        /// <summary>
+        /// 管线装配：请求入队 → FetchLatest 调度 OnFetchAsync → 丧尸拦截 → 锁内 OnMerge → 回传 TCS。
+        /// 构造期首建、Suspend/Resume 后重建都走这里，保证两条路径行为严格一致。
+        /// </summary>
+        private IDisposable BuildPipeline()
         {
-            // 💥 核心管线：请求流入 -> 异步抓取 -> 拦截丧尸 -> 线程安全合并 -> 解锁 UI
-            _pipelineSub = _requestBus
+            return _requestBus
                 .FetchLatest(async (env, token) =>
                 {
                     try
@@ -165,35 +146,22 @@ namespace Hevo.Charting
                 {
                     try
                     {
-                        if (res.Error != null)
-                        {
-                            res.Env.Tcs?.TrySetException(res.Error);
-                            return;
-                        }
+                        if (res.Error != null) { res.Env.Tcs?.TrySetException(res.Error); return; }
 
-                        // ==========================================
-                        // 💥 终极防火墙：丧尸数据拦截器！
-                        // ==========================================
+                        // 💥 丧尸拦截：调用方已取消时，绝不能再触碰 buffer
                         if (res.Env.Token.IsCancellationRequested)
                         {
-                            System.Diagnostics.Debug.WriteLine("🚨 [DataSource] 拦截到超时丧尸数据，已在合并前安全销毁！");
                             res.Env.Tcs?.TrySetCanceled(res.Env.Token);
                             return;
                         }
 
-                        int fetchedCount = 0;
-
-                        // 只有通过了防火墙的纯洁数据，才允许加锁合并！
+                        int fetchedCount;
                         lock (_lock)
                         {
-                            // 💥 从子类获取真实合并结果与网络回包数量！
                             var mergeResult = OnMerge(_buffer, res.Response, res.Env.Request);
                             fetchedCount = mergeResult.FetchedCount;
-
                             if (mergeResult.IsDirty) Publish();
                         }
-
-                        // 💥 完美收官：数据已就位，兑现支票，并把真实数量交给 UI 引擎！
                         res.Env.Tcs?.TrySetResult(fetchedCount);
                     }
                     catch (Exception mergeEx)
@@ -203,6 +171,9 @@ namespace Hevo.Charting
                 });
         }
 
+        /// <summary>
+        /// 同步切换上下文：立即清空 buffer 并 Publish，适用于"宁可闪一下也要立刻拔掉旧数据"的场景。
+        /// </summary>
         public void SwitchContext(TContext context, TRequest initialRequest)
         {
             Context = context;
@@ -211,71 +182,45 @@ namespace Hevo.Charting
         }
 
         /// <summary>
-        /// 💥 无缝异步切换上下文 (The Seamless Switcher)
-        /// 不会立刻清空旧数据，而是等待新数据到达后，通过 OnMerge 原子级覆盖！彻底消灭 UI 闪烁！
+        /// 无缝异步切换上下文：不立即清 buffer，等新数据到达后由 OnMerge 原子替换，消灭 UI 空窗期闪烁。
+        /// 💥 与 <see cref="SwitchContext"/> 的差异是刻意的，不要"顺手"加上 _buffer.Clear()。
         /// </summary>
         public async Task<int> SwitchContextAsync(TContext context, TRequest initialRequest, CancellationToken token = default)
         {
-            // 1. 切换上下文令牌
             Context = context;
 
-            // 💥 绝对红线：这里千万不要调用 _buffer.Clear() 和 Publish()！
-            // 让旧数据继续留在黑板上供 UI 渲染，避免出现“空窗期闪烁”。
-            // (旧数据会在几十毫秒后，被安全送达的 OnMerge 连根替换)
-
-            // 2. 复用 RequestAsync 的核心发车逻辑
             var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
             await using var registration = token.CanBeCanceled ? token.Register(() => tcs.TrySetCanceled(token)) : default;
 
             _requestBus.Push(new RequestEnvelope(initialRequest, tcs, token));
-
-            // 3. 挂起等待，直到管线处理完毕并返回数量
             return await tcs.Task;
         }
 
+        /// <summary>Fire-and-forget 请求。Context 未设置时静默丢弃。</summary>
         public void Request(TRequest request)
         {
             if (Context != null)
                 _requestBus.Push(new RequestEnvelope(request, null, CancellationToken.None));
         }
 
-        /// <summary>
-        /// 💥 史诗级进化接口：支持 CancellationToken 的彻底异步取消，并返回拉取数量！
-        /// </summary>
+        /// <summary>可 await 可取消的请求；返回本次网络回包条数。Context 未设置时立即返回 0。</summary>
         public async Task<int> RequestAsync(TRequest request, CancellationToken token = default)
         {
             if (Context == null) return 0;
 
             var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-            // 💥 神级防泄漏修补：await using 保证任务不论成功、失败还是超时，
-            // 只要跳出此方法，立刻销毁注册链，绝不污染全局 Token！
+            // 💥 await using 保证任务无论成功/失败/超时跳出本方法时，回调注册链必被销毁，防止 Token 泄漏
             await using var registration = token.CanBeCanceled ? token.Register(() => tcs.TrySetCanceled(token)) : default;
 
             _requestBus.Push(new RequestEnvelope(request, tcs, token));
-
-            // 💥 挂起等待下游流处理完毕，并接收返回的 FetchedCount
             return await tcs.Task;
         }
 
-        protected void MergeDirectly(TResponse response, TRequest mockRequest)
-        {
-            lock (_lock)
-            {
-                var mergeResult = OnMerge(_buffer, response, mockRequest);
-                if (mergeResult.IsDirty) Publish();
-            }
-        }
-
         protected abstract Task<TResponse> OnFetchAsync(TContext? context, TRequest request, CancellationToken token);
-
-        // 💥 升级签名：强迫子类汇报是否产生重绘 (IsDirty) 以及真实的拉取数量 (FetchedCount)
         protected abstract (bool IsDirty, int FetchedCount) OnMerge(List<TItem> buffer, TResponse response, TRequest request);
 
         // ==========================================
-        // 💥 Phase 11 / §H：在基类闸门之上，追加请求管线的冷冻 + 上下文刷新
-        //    Suspend：切断 FetchLatest 管线，防止丧尸回包；
-        //    Resume ：重建管线 + 按当前 Context 补一次增量请求（子类可重载 OnBuildRefreshRequest）。
+        // 💥 IPausable：Suspend 切断请求管线防止丧尸回包写入；Resume 重建管线并按需补一次刷新。
         // ==========================================
         public override void Suspend()
         {
@@ -288,53 +233,16 @@ namespace Hevo.Charting
         public override void Resume()
         {
             if (IsActive) return;
-            if (_pipelineSub == null)
-            {
-                // 重建与构造时同构的 FetchLatest 管线
-                _pipelineSub = _requestBus
-                    .FetchLatest(async (env, token) =>
-                    {
-                        try
-                        {
-                            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(token, env.Token);
-                            var response = await OnFetchAsync(Context, env.Request, linkedCts.Token);
-                            return (Env: env, Response: response, Error: (Exception?)null);
-                        }
-                        catch (Exception ex)
-                        {
-                            return (Env: env, Response: default(TResponse)!, Error: ex);
-                        }
-                    })
-                    .Subscribe(res =>
-                    {
-                        try
-                        {
-                            if (res.Error != null) { res.Env.Tcs?.TrySetException(res.Error); return; }
-                            if (res.Env.Token.IsCancellationRequested) { res.Env.Tcs?.TrySetCanceled(res.Env.Token); return; }
-
-                            int fetchedCount = 0;
-                            lock (_lock)
-                            {
-                                var mergeResult = OnMerge(_buffer, res.Response, res.Env.Request);
-                                fetchedCount = mergeResult.FetchedCount;
-                                if (mergeResult.IsDirty) Publish();
-                            }
-                            res.Env.Tcs?.TrySetResult(fetchedCount);
-                        }
-                        catch (Exception mergeEx) { res.Env.Tcs?.TrySetException(mergeEx); }
-                    });
-            }
+            _pipelineSub ??= BuildPipeline();
             base.Resume();
 
-            // 补一次刷新请求：Resume 瞬间保证数据新鲜度。子类可通过 OnBuildRefreshRequest 定制（默认不发）。
             var refreshReq = OnBuildRefreshRequest();
             if (Context != null && refreshReq != null)
                 _requestBus.Push(new RequestEnvelope(refreshReq, null, CancellationToken.None));
         }
 
         /// <summary>
-        /// 子类重载以在 Resume 时补一次定制刷新请求（如 KLine 拉最新 5 根、TimeShare 重订阅推送）。
-        /// 默认返回 null，表示不发补刷。
+        /// 子类重载以在 Resume 时补一次定制刷新请求（如 KLine 拉最新 N 根）。默认返回 null 表示不发补刷。
         /// </summary>
         protected virtual TRequest? OnBuildRefreshRequest() => default;
 
@@ -343,6 +251,60 @@ namespace Hevo.Charting
             _pipelineSub?.Dispose();
             base.Dispose();
         }
+    }
+
+    /// <summary>
+    /// 空占位类型：当 ReactiveDataSource 不需要 TRequest/TResponse 语义时使用。
+    /// </summary>
+    public readonly struct Unit
+    {
+        public static readonly Unit Default = default;
+    }
+
+    // ==========================================
+    // 💥 3 参精简基类：只承载"身份 (TContext) + 数据项 (TItem)"
+    //    核心哲学：基类不替业务决定合并策略，只提供一个并发安全的 buffer 写入闸门。
+    //    - 吞掉 TRequest / TResponse 两个几乎总被占位的泛型槽
+    //    - 没有 OnMerge 家族：子类在 OnFetchAsync 里和推送回调里都用同一把 UpdateBuffer
+    //    - fetch 与 push 完全对称、路径合一，不再存在"空快照抹掉推送数据"这类窗口
+    // ==========================================
+    public abstract class ReactiveDataSource<TSource, TContext, TItem>
+        : ReactiveDataSource<TSource, TContext, Unit, int, TItem>
+        where TSource : ReactiveDataSource<TSource, TContext, TItem>
+    {
+        // ----- sealed 适配 5 参管线：TResponse = int 只用来把本次拉到的条数交给 TCS -----
+        protected sealed override Task<int> OnFetchAsync(TContext? context, Unit request, CancellationToken token)
+            => OnFetchAsync(context, token);
+
+        // buffer 已经在 OnFetchAsync 里通过 UpdateBuffer 写完并 Publish 过，这里一律报告"未再弄脏"
+        protected sealed override (bool IsDirty, int FetchedCount) OnMerge(List<TItem> buffer, int response, Unit request)
+            => (false, response);
+
+        /// <summary>
+        /// 子类唯一需要实现的方法：拉数据 + 在适当时机调用 <see cref="UpdateBuffer"/> 写入。
+        /// 返回值是本次拉到的条数，会透传给 <c>LoadAsync</c> 的调用者。
+        /// </summary>
+        protected abstract Task<int> OnFetchAsync(TContext? context, CancellationToken token);
+
+        /// <summary>
+        /// 💥 唯一的 buffer 写入通道：加锁 → 执行 mutation → Publish。
+        /// fetch 回调 和 push 回调 都调它，保证语义对称、并发安全。
+        /// 调用即视为"产生了变更"，基类会无条件 Publish；若子类判断无需变更，直接不要调它。
+        /// </summary>
+        protected void UpdateBuffer(Action<List<TItem>> mutation)
+        {
+            if (mutation == null) return;
+            lock (_lock)
+            {
+                mutation(_buffer);
+                Publish();
+            }
+        }
+
+        // ----- 门面 API：把"设置身份 + 首次拉取"合并为一次调用 -----
+        public void Load(TContext context) => SwitchContext(context, Unit.Default);
+        public Task<int> LoadAsync(TContext context, CancellationToken token = default)
+            => SwitchContextAsync(context, Unit.Default, token);
     }
 
     public readonly record struct AlignedTuple<TVal1, TVal2>(DateTime Time, TVal1 Value1, TVal2 Value2);

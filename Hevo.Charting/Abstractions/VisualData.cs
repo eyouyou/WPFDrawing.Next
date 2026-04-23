@@ -81,8 +81,19 @@ namespace Hevo.Charting.Abstractions
     // ==========================================
     internal static class TraitIndexer
     {
+        // Trait 类型总数硬上限。正常用例 < 200,设置 1024 给二次开发留 5x 余地;
+        // 命中即说明存在 trait 泛型滥用(例如把业务实体类塞进 trait 槽位),应排查而非扩容。
+        public const int MaxTraitTypes = 1024;
+
         private static int _counter = -1;
-        public static int Next() => Interlocked.Increment(ref _counter);
+        public static int Next()
+        {
+            int next = Interlocked.Increment(ref _counter);
+            if (next >= MaxTraitTypes)
+                throw new InvalidOperationException(
+                    $"已注册的 IVisualTrait 类型超过硬上限 {MaxTraitTypes}。请检查是否有泛型滥用导致 TraitId<T> 不断膨胀。");
+            return next;
+        }
         public static int CurrentCount => Volatile.Read(ref _counter) + 1;
     }
 

@@ -169,7 +169,7 @@ namespace Hevo.Charting.Core
     // ==========================================
     // 💥 图表特征基类：生命周期管线与内存管家！
     // ==========================================
-    public abstract class ChartFeature : ChartAspect, IDisposableHost, IDataFlowHost, Abstractions.IPausable
+    public abstract class ChartFeature : ChartAspect, IDisposableHost, Abstractions.IPausable
     {
         public string InstanceId { get; } = Guid.NewGuid().ToString("N").Substring(0, 8);
 
@@ -177,7 +177,6 @@ namespace Hevo.Charting.Core
 
         // 💥 内存泄漏终结者：专门存放与图表生命周期绑定的 Rx 句柄
         private readonly List<IDisposable> _disposables = new();
-        private PipelineDispatcher? _dispatcher;
 
         public virtual FeaturePhase Phase => FeaturePhase.Series;
 
@@ -248,7 +247,6 @@ namespace Hevo.Charting.Core
 #if DEBUG
             using var scope = DevTools.TopologyTracer.EnterScope(this);
 #endif
-            _dispatcher?.Execute(board);
 
             // 修复 H1：复用持久化的 _context 实例，不再每帧 new FeatureContext。
             //
@@ -265,16 +263,6 @@ namespace Hevo.Charting.Core
             _context.BeginProject(ctx, board);
             OnProject(_context);
             _context.EndProject();
-        }
-
-        public void AttachDataFlow(DataFlowBinding binding)
-        {
-            (_dispatcher ??= CreateDispatcher()).AttachDataFlow(binding);
-        }
-
-        private PipelineDispatcher CreateDispatcher()
-        {
-            return new PipelineDispatcher(this, () => Schema.RequestDataFlowPulse());
         }
 
         protected virtual void ComposeCore(ChartCell chart, RenderContext ctx) { }
@@ -328,8 +316,6 @@ namespace Hevo.Charting.Core
             _managedLayers.Clear();
 
             // 2. 💥 彻底斩断流式订阅，防止内存泄漏！
-            _dispatcher?.Dispose();
-            _dispatcher = null;
             foreach (var d in _disposables)
             {
                 d.Dispose();

@@ -63,7 +63,7 @@ namespace Hevo.Charting.Core
     // 💥 响应式图纸：接入状态时钟与 UI 事务热插拔机制
     // [核心哲学]：所有视觉特征 (Feature) 的增删改查必须具备原子性。
     // ==========================================
-    public abstract class ReactiveSchema : ChartSchema, IFeatureContext, IFeatureProjector, IDisposableHost, IDataFlowHost, Hevo.Charting.Abstractions.IPausable
+    public abstract class ReactiveSchema : ChartSchema, IFeatureContext, IFeatureProjector, IDisposableHost, Hevo.Charting.Abstractions.IPausable
     {
         private volatile DataBlackboard? _latestBoard;
         public DataBlackboard? CurrentBoard => _latestBoard;
@@ -97,7 +97,6 @@ namespace Hevo.Charting.Core
         private VersionToken _renderedToken = default;
 
         private readonly List<IDisposable> _disposables = new();
-        private PipelineDispatcher? _schemaDispatcher;
 
         // ==========================================
         // 💥 引擎运行状态与动态事务容器
@@ -201,11 +200,6 @@ namespace Hevo.Charting.Core
         /// 子类重载以解冻 schema 级特殊状态。通常用于重建在 OnSuspend 里 Cancel 掉的 CancellationTokenSource。
         /// </summary>
         protected virtual void OnResume() { }
-
-        public void AttachDataFlow(DataFlowBinding binding)
-        {
-            (_schemaDispatcher ??= CreatePipelineDispatcher()).AttachDataFlow(binding);
-        }
 
         // ==========================================
         // 🛡️ 核心：UI 渲染事务 (UI Transaction) 与智能 Diff
@@ -456,13 +450,13 @@ namespace Hevo.Charting.Core
 
         protected abstract void DefineFeatures(IFeatureContext canvas);
 
-        // 💥 源头水管定义：子类用 `.MergeInto(this)` 登记数据流（Phase 12 / §I 推荐）。
-        // 仍兼容老式 `.BindTo(chart)` —— Ambient 作用域会自动捕获为 _pendingMainFlow。
+        // 💥 源头水管定义：子类在里面组装一条 IRenderFlow 并 `.BindTo(chart)` 注册为主数据流。
+        // Ambient 作用域自动捕获该流到 _pendingMainFlow，BuildAndActivatePipeline 接续驱动 Feature 帧。
         // 与 DefineFeatures 对齐为 void，允许子类多语句装配（加载任务、订阅、心跳等）。
         protected abstract void DefineDataFlow(ChartCell chart);
 
         // ==========================================
-        // BindTo 兼容 Ambient（全量迁移到 MergeInto 后可删）
+        // BindTo Ambient 机制：让 .BindTo(chart) 自动登记为主数据流
         // ==========================================
         [ThreadStatic]
         private static ReactiveSchema? _composingSchema;
@@ -524,41 +518,13 @@ namespace Hevo.Charting.Core
             base.ComposeAll(chart, ctx);
         }
 
-        private PipelineDispatcher CreatePipelineDispatcher()
-        {
-            return new PipelineDispatcher(this, RequestDataFlowPulse);
-        }
-
-        internal void RequestDataFlowPulse()
-        {
-            var chart = _attachedChart;
-            var board = _latestBoard;
-            if (chart == null || board == null) return;
-
-            _schemaDispatcher?.Execute(board);
-            chart.RequestUpdate(_ => { });
-        }
-
-        // Phase 12 / §I：MergeInto 路径下用作 Feature.flow 的合成 pulse trigger
-        private WorkflowTrigger<DataBlackboard>? _featurePulse;
-
         // 职责 3：构建 Rx 数据流管线并扣动扳机激活
         //
-        // Phase 12 / §I：双模式兼容
-        //   - 【BindTo 路径（旧）】：子类 `.BindTo(chart)` 产生 IRenderFlow，走 Ambient 登记到 _pendingMainFlow
-        //     （Ambient 机制见 WorkflowWatchExtensions.BindTo；本类只读 _pendingMainFlow）
-        //   - 【MergeInto 路径（新）】：子类 `.MergeInto(this)` 把 binding 登记到 _schemaDispatcher；
-        //     Schema 自持 `_latestBoard`，用内部 WorkflowTrigger 合成 Feature.flow，Push 一次触发 initial setup
+        // 子类在 DefineDataFlow 里组装 `.BindTo(chart)`，Ambient 捕获到 _pendingMainFlow；
+        // 本方法把它 mainFlow.Do 截住，每帧更新 _latestBoard + OnPortUpdated 挂载，然后传给 Feature 链。
         private void BuildAndActivatePipeline(ChartCell chart, RenderContext ctx)
         {
-            _schemaDispatcher = CreatePipelineDispatcher();
-
-            // Phase 12：Schema 自持黑板（MergeInto 路径下 bindings 的 ProcessTo(...) 要有目标）
-            _latestBoard ??= new DataBlackboard();
-            _latestBoard.OnPortUpdated -= Blackboard_OnPortUpdated;
-            _latestBoard.OnPortUpdated += Blackboard_OnPortUpdated;
-
-            // 3a. 业务 DefineDataFlow —— bindings 走 MergeInto 登记到 dispatcher；或 BindTo 走 Ambient
+            // 3a. 业务 DefineDataFlow —— BindTo 走 Ambient 登记到 _pendingMainFlow
             _pendingMainFlow = null;
             var prevComposing = _composingSchema;
             _composingSchema = this;
@@ -576,35 +542,23 @@ namespace Hevo.Charting.Core
                 _composingSchema = prevComposing;
             }
 
-            // 3b. 准备 Feature.flow
-            IRenderFlow<DataBlackboard> featureFlow;
-            bool isBindToMode = _pendingMainFlow != null;
-            if (isBindToMode)
+            if (_pendingMainFlow == null)
+                throw new InvalidOperationException(
+                    $"{GetType().Name}.DefineDataFlow 必须调用 .BindTo(chart) 注册主数据流");
+
+            // 3b. 主数据流挂钩：每次推送时对齐 _latestBoard + OnPortUpdated 监听
+            var mainFlow = _pendingMainFlow!;
+            _pendingMainFlow = null;
+            var dataPlotWorkflow = mainFlow.Do(board =>
             {
-                // 【BindTo 兼容路径】老模型：mainFlow 驱动每帧 Feature.Do
-                var mainFlow = _pendingMainFlow!;
-                _pendingMainFlow = null;
-                var dataPlotWorkflow = mainFlow.Do(board =>
+                if (!ReferenceEquals(_latestBoard, board))
                 {
-                    // BindTo 路径下 board 可能来自 DataPipeBuilder._persistentBoard；迁转 OnPortUpdated 挂载
-                    if (!ReferenceEquals(_latestBoard, board))
-                    {
-                        if (_latestBoard != null) _latestBoard.OnPortUpdated -= Blackboard_OnPortUpdated;
-                        _latestBoard = board;
-                        board.OnPortUpdated += Blackboard_OnPortUpdated;
-                    }
-                    _schemaDispatcher?.Execute(board);
-                });
-                featureFlow = mainFlow.Wrap(dataPlotWorkflow);
-            }
-            else
-            {
-                // 【MergeInto 新路径】Feature.flow 是合成的 WorkflowTrigger
-                // 只需 initial Push 一次触发 Feature.Watch 的 OnTransactionCommitted 挂载；
-                // 后续数据更新走 bindings → PipelineDispatcher.Execute → ProcessTo → Transaction 自然 fire Watch
-                _featurePulse = new WorkflowTrigger<DataBlackboard>();
-                featureFlow = _featurePulse.BindTo(chart);
-            }
+                    if (_latestBoard != null) _latestBoard.OnPortUpdated -= Blackboard_OnPortUpdated;
+                    _latestBoard = board;
+                    board.OnPortUpdated += Blackboard_OnPortUpdated;
+                }
+            });
+            IRenderFlow<DataBlackboard> featureFlow = mainFlow.Wrap(dataPlotWorkflow);
 
             // 3c. Feature 依 Phase 顺序 compose
             foreach (var feature in _orderedFeatures)
@@ -634,13 +588,6 @@ namespace Hevo.Charting.Core
                 }
 #endif
             });
-
-            if (!isBindToMode)
-            {
-                // MergeInto 路径：先跑一次 dispatcher 把现存数据注入 _latestBoard，再 Push 给 featureFlow 让 Feature.Watch 挂钩
-                _schemaDispatcher?.Execute(_latestBoard!);
-                _featurePulse!.Push(_latestBoard!);
-            }
         }
 
 #if DEBUG
@@ -687,9 +634,6 @@ namespace Hevo.Charting.Core
             // 💥 全局卸载时，清空所有字典里的流，防止泄漏
             foreach (var kvp in _dynamicSubs) kvp.Value?.Dispose();
             _dynamicSubs.Clear();
-
-            _schemaDispatcher?.Dispose();
-            _schemaDispatcher = null;
 
             // 1. 斩断与底层物理黑板的全局监听 (防止极其严重的内存泄漏！)
             if (_latestBoard != null)

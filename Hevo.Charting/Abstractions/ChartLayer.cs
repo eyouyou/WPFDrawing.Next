@@ -125,6 +125,16 @@ namespace Hevo.Charting.Abstractions
         // 💥 是否已经被局部唤醒并完成了第一次采样？
         internal bool IsDiscovered { get; set; } = false;
 
+        // 是否已完成 RequiredTrait 校验(每个 Layer 实例只跑一次)
+        private bool _traitsValidated = false;
+
+        /// <summary>
+        /// 校验 [RequiredTrait] 标注的硬依赖 trait 是否已被发布。
+        /// 默认空实现;Roslyn 生成器(RequiredTraitValidatorGenerator)会为有 [RequiredTrait] 标注的
+        /// partial Layer 子类生成强类型 override,运行时 0 反射、0 装箱。
+        /// </summary>
+        protected virtual void ValidateRequiredTraits(IVisualData data) { }
+
         // 接口实现：隐式转型为 RenderBuffer 基类
         public RenderBuffer Buffer
         {
@@ -141,6 +151,7 @@ namespace Hevo.Charting.Abstractions
                 // 如果被隐藏了，必须清空后备缓冲，消除残影，并重置脏标记
                 lock (_lock) _backBuffer.Clear();
                 IsDirty = true; // 标记脏状态，强制 ChartCell 把这层透明画面刷到前台
+                IsDiscovered = true;
                 return;         // 🚨 0 开销跳过，绝对不执行 OnUpdate
             }
 
@@ -155,8 +166,21 @@ namespace Hevo.Charting.Abstractions
 
             active.Clear();
 
-            // 3. 执行纯粹的业务渲染（这里面再也没有恶心的 if(visible) 了！）
-            OnUpdate(data, active.Drawing, active.Widget);
+            // 3. 首次进入渲染分支时校验 [RequiredTrait] 标注的硬依赖 trait,缺失即 fail-fast。
+            if (!_traitsValidated)
+            {
+                ValidateRequiredTraits(data);
+                _traitsValidated = true;
+            }
+
+            // 4. 包一层 TrackerDataProxy:在 OnUpdate 内 Get<T> 自动落入 DependencyTracker.TrackedRefs,
+            //    供下一帧 RenderContext.SubmitSync 走 Strategy B 做引用相等性判脏。
+            //    构造期会清空上一帧记忆,因此仅在 IsDirty=true(确认进入渲染分支)时再创建。
+            var tracker = new TrackerDataProxy(this, data);
+            OnUpdate(tracker, active.Drawing, active.Widget);
+
+            // 5. 标记已完成首次发现:从下一帧起 SubmitSync 走 Strategy B 自动判脏
+            IsDiscovered = true;
         }
 
         // --- 2. Swap (UI 线程同步) ---

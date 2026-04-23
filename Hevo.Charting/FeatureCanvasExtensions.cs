@@ -94,10 +94,34 @@ namespace Hevo.Charting
     {
         // --- 🌍 1. Environment ---
         // Viewport 由 ReactiveSchema.Add 自动注入（L6 / §B.2.6），外部不再显式传 vp。
-        public static EnvironmentBuilder SetupViewport(this EnvironmentBuilder builder, int minVisibleCount = 10, ViewportAlignment alignment = ViewportAlignment.LeftEdge)
+        //
+        // 参数：
+        //   minVisibleCount: 最小可缩放到的根数（限制最大放大）
+        //   alignment: 数据/视口变化时的停靠侧（RightEdge=新数据贴右；LeftEdge=贴左不动）
+        //   defaultVisibleCount: 首屏显示根数（null=显示全部，分页业务必传以留出滚动空间）
+        //   maxSpanMultiplier: 视口最大可缩放至数据量的几倍（限制最大缩小，**约束所有 UserRange 写入**，不只是缩放）
+        //   overscrollMin/Max: 用户拖到数据边界外时的策略
+        //                       Hard=钳回（默认，适合数据量固定）
+        //                       Overscroll=允许越界留白（适合分页业务，用户意图保留）
+        public static EnvironmentBuilder SetupViewport(
+            this EnvironmentBuilder builder,
+            int minVisibleCount = 10,
+            ViewportAlignment alignment = ViewportAlignment.LeftEdge,
+            int? defaultVisibleCount = null,
+            double maxSpanMultiplier = 1.5,
+            OverscrollPolicy overscrollMin = OverscrollPolicy.Hard,
+            OverscrollPolicy overscrollMax = OverscrollPolicy.Hard)
         {
             builder.Canvas.Remove<ViewportManagerFeature>();
-            builder.Canvas.Add(new ViewportManagerFeature { MinVisibleCount = minVisibleCount, Alignment = alignment });
+            builder.Canvas.Add(new ViewportManagerFeature
+            {
+                MinVisibleCount = minVisibleCount,
+                Alignment = alignment,
+                DefaultVisibleCount = defaultVisibleCount,
+                MaxSpanMultiplier = maxSpanMultiplier,
+                OverscrollMin = overscrollMin,
+                OverscrollMax = overscrollMax
+            });
             return builder;
         }
 
@@ -118,18 +142,14 @@ namespace Hevo.Charting
             ViewportPorts vp,
             FieldMeta meta,
             // 💥 终极修改：接收带有 RefBox 盒子的工厂，完美对齐 DomainTickProvider 的需求！
-            Func<RefBox<ReadOnlyMemory<TX>>, ITickStrategy<double>>? strategyFactory = null)
+            Func<RefBox<ReadOnlyMemory<TX>>, ITickStrategy>? strategyFactory = null)
         {
             if (!builder.Canvas.HasFeature<ViewportManagerFeature>())
-            {
-                // Viewport 由 ReactiveSchema.Add 自动注入（L6 / §B.2.6）
-                builder.Canvas.Add(new ViewportManagerFeature
-                {
-                    Alignment = ViewportAlignment.RightEdge
-                });
-            }
+                throw new InvalidOperationException(
+                    "请先在 Environment 阶段调用 env.SetupViewport(...) 配置视口策略。" +
+                    "缺省 ViewportManager 已废弃 —— 隐式默认会让初始视口贴满数据，造成拖拽无反馈。");
 
-            builder.Canvas.Add(new AxisFeature<double>(
+            builder.Canvas.Add(new AxisFeature(
                 new DomainTickProvider<TX>(domainData, vp, meta.Format, meta.Provider, strategyFactory),
                 "DomainAxis")
             {
@@ -158,9 +178,9 @@ namespace Hevo.Charting
             FieldMeta meta,
             AxisPlacement placement = AxisPlacement.Right,
             AxisHandle? handle = null,
-            ITickStrategy<double>? strategy = null) // 💥 核心：允许注入策略
+            ITickStrategy? strategy = null) // 💥 核心：允许注入策略
         {
-            builder.Canvas.Add(new AxisFeature<double>(
+            builder.Canvas.Add(new AxisFeature(
                 new NumericTickProvider(meta.Format, meta.Provider, strategy),
                 $"RangeAxis_{placement}")
             {
@@ -197,19 +217,32 @@ namespace Hevo.Charting
 
             var hitPort = options.HitPort ?? new DataPort<PointerHitState?>("InternalHitState");
 
-            // 💥 装配大管家：所有参数严格对齐最新版的 ChartInteractionFeature
+            // AvailabilityPort 是分页 Feature 的对外通道；DSL 在此唯一处建实例并穿针给两个 Feature
+            DataPort<DataAvailability>? availabilityPort = options.OnRequireDataAsync != null
+                ? new DataPort<DataAvailability>("DataAvailability")
+                : null;
+
             builder.Canvas.Add(new ChartInteractionFeature
             {
                 PointerHitPort = hitPort,
                 SupportedModes = options.Modes,
-                PointerSnapMode = options.SnapMode, // 👈 使用新名称
+                PointerSnapMode = options.SnapMode,
                 ValidDataCountPort = options.ValidCountPort,
-                OnRequireDataAsync = options.OnRequireDataAsync,
-                ZoomConfig = options.ZoomConfig,    // 👈 注入缩放配置组
-                FetchConfig = options.FetchConfig,  // 👈 注入推图配置组
-                // 如果外部没有传策略，则兜底使用我们的“神级组合”
-                ZoomStrategy = options.ZoomStrategy ?? new SmartAdaptiveZoomStrategy()
+                ZoomConfig = options.ZoomConfig,
+                ZoomStrategy = options.ZoomStrategy ?? new SmartAdaptiveZoomStrategy(),
+                AvailabilityPort = availabilityPort
             });
+
+            // 仅当业务提供分页回调时挂载 DataPagingFeature；非分页 schema 不付出额外 Watch 成本
+            if (availabilityPort != null)
+            {
+                builder.Canvas.Add(new DataPagingFeature
+                {
+                    OnRequireDataAsync = options.OnRequireDataAsync,
+                    FetchConfig = options.FetchConfig,
+                    AvailabilityPort = availabilityPort
+                });
+            }
 
             builder.Canvas.Add(new CrosshairFeature<TX> { HitStatePort = hitPort, XAxisDataPort = domainDataPort, XMeta = domainMeta, ShowIntersectionDots = options.ShowIntersectionDots });
             builder.Canvas.Add(new TooltipWidgetFeature<TX> { HitStatePort = hitPort, XAxisDataPort = domainDataPort, XMeta = options.TooltipXMeta ?? domainMeta });
@@ -239,18 +272,31 @@ namespace Hevo.Charting
             DataFetchOptions? fetchConfig = null,
             IZoomStrategy? zoomStrategy = null)
         {
+            DataPort<DataAvailability>? availabilityPort = onRequireDataAsync != null
+                ? new DataPort<DataAvailability>("DataAvailability")
+                : null;
+
             builder.Canvas.Add(new ChartInteractionFeature
             {
                 PointerHitPort = hitPort,
                 SupportedModes = modes,
-                PointerSnapMode = snapMode, // 👈 映射新属性
+                PointerSnapMode = snapMode,
                 ValidDataCountPort = validCountPort,
-                OnRequireDataAsync = onRequireDataAsync,
-                // 💥 完美融合选项组
                 ZoomConfig = zoomConfig ?? new ZoomOptions(),
-                FetchConfig = fetchConfig ?? new DataFetchOptions(),
-                ZoomStrategy = zoomStrategy ?? new SmartAdaptiveZoomStrategy()
+                ZoomStrategy = zoomStrategy ?? new SmartAdaptiveZoomStrategy(),
+                AvailabilityPort = availabilityPort
             });
+
+            if (availabilityPort != null)
+            {
+                builder.Canvas.Add(new DataPagingFeature
+                {
+                    OnRequireDataAsync = onRequireDataAsync,
+                    FetchConfig = fetchConfig ?? new DataFetchOptions(),
+                    AvailabilityPort = availabilityPort
+                });
+            }
+
             return builder;
         }
 

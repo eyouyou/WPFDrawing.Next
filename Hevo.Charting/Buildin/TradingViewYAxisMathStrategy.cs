@@ -5,9 +5,9 @@ namespace Hevo.Charting.Buildin
     /// <summary>
     /// 💥 TradingView 同款算法：基于“优美数 (Nice Number)”的动态 Y 轴推导
     /// </summary>
-    public class TradingViewYAxisMathStrategy : ITickStrategy<double>
+    public class TradingViewYAxisMathStrategy : ITickStrategy
     {
-        public IEnumerable<TickMathResult<double>> Calculate(RealRange range, double physicalHeight)
+        public IEnumerable<TickMathResult> Calculate(RealRange range, double physicalHeight)
         {
             if (range.IsEmpty || range.Span == 0 || physicalHeight <= 0) yield break;
 
@@ -31,8 +31,7 @@ namespace Hevo.Charting.Buildin
             // 5. 生成极其优美的刻度！
             for (double val = startVal; val <= range.Max; val += actualStep)
             {
-                double ratio = (val - range.Min) / range.Span;
-                yield return new TickMathResult<double>(ratio, val, isBaseLine: false); // 0 值或昨收可以通过后续修饰器判断
+                yield return new TickMathResult(val, isBaseLine: false); // 0 值或昨收可以通过后续修饰器判断
             }
         }
     }

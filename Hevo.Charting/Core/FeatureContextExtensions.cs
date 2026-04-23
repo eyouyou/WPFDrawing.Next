@@ -1,8 +1,4 @@
-﻿
-using Hevo.Charting.Abstractions;
-using Hevo.Charting.LowCode;
-using System.Runtime.CompilerServices;
-using System.Windows;
+﻿using System.Runtime.CompilerServices;
 
 namespace Hevo.Charting.Core
 {

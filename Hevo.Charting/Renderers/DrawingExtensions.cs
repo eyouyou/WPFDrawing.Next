@@ -1,7 +1,4 @@
 ﻿using System.Numerics;
-using System.Windows;
-using System.Windows.Media;
-using Windows.Devices.Geolocation;
 
 namespace Hevo.Charting.Renderers
 {

@@ -102,76 +102,90 @@ namespace Hevo.Charting.Abstractions
     }
 
     /// <summary>
-    /// 轴体 tick 刻度模型
+    /// 可选能力：domain 支持量化的 scale。ChartInteractionFeature 的 Pan/Zoom 在写回视口前，
+    /// 会把连续 logical delta / range 交给 <see cref="Snap"/> 量化（典型：Round 到整数索引），
+    /// 保证视口边缘始终对齐整根 K 线/bar，不出现半根被切的情况。
+    /// 拖拽输入采取 ratcheting：量化结果为 0 时直接跳过本次 pulse，累积到跨过阈值才提交。
     /// </summary>
-    /// <typeparam name="TDomain"></typeparam>
-    public struct TickModel<TDomain>
+    public interface ISnappableScale
+    {
+        /// <summary>量化逻辑位移 / 坐标到 scale 约束的颗粒度（如整数）。返回 0 表示本次不足以产生边界变化。</summary>
+        double Snap(double logicalValue);
+    }
+
+    /// <summary>
+    /// 轴体 tick 刻度模型。Value 直接是 double 逻辑值（时间轴场景下为"索引-as-double"，
+    /// DateTime 在 StylePolicy 里由外部数组反查）。和 RealRange / IScale 保持 double 统一契约。
+    /// </summary>
+    public struct TickModel
     {
         public string Label;
-        public TDomain Value;
+        public double Value;
         public double Ratio;
         public bool IsBaseLine;
         public IHevoBrush? OverrideTextBrush;
     }
 
-    public readonly struct TickMathResult<TDomain>
+    /// <summary>
+    /// 💥 刻度原材料：策略只负责"选哪些逻辑值"，物理屏幕百分比 (Ratio) 由 AxisFeature
+    ///    统一通过 IScale.Normalize 兜底计算，保证与 series 像素级对齐。
+    /// </summary>
+    public readonly struct TickMathResult
     {
-        public readonly double Ratio;
-        public readonly TDomain Value;
+        public readonly double Value;
         public readonly bool IsBaseLine;
 
-        public TickMathResult(double ratio, TDomain value, bool isBaseLine)
+        public TickMathResult(double value, bool isBaseLine)
         {
-            Ratio = ratio; Value = value; IsBaseLine = isBaseLine;
+            Value = value; IsBaseLine = isBaseLine;
         }
     }
     /// <summary>
     /// 刻度修饰策略：负责在计算时，顺手决定外观
     /// </summary>
-    public interface ITickStylePolicy<TDomain>
+    public interface ITickStylePolicy
     {
         // 决定显示的文字 (代替原来的 ToString)
-        string FormatLabel(TDomain value);
+        string FormatLabel(double value);
 
         // 决定覆写的颜色 (代替另外写一个 Processor)
-        IHevoBrush? GetOverrideBrush(TDomain value);
+        IHevoBrush? GetOverrideBrush(double value);
     }
 
     /// <summary>
-    /// TDomain 是业务类型（int/double），TValue 是生成的刻度值类型
+    /// 刻度选取策略：给定逻辑范围与物理尺寸，决定在哪些逻辑值处放刻度。
+    /// 不做坐标归一化，物理百分比统一由 AxisFeature 通过 IScale 兜底计算。
     /// </summary>
-    /// <typeparam name="TDomain"></typeparam>
-    public interface ITickStrategy<TDomain>
+    public interface ITickStrategy
     {
         /// <summary>
         /// 结合逻辑范围和物理屏幕尺寸，生成携带业务语义的刻度集合。
-        /// 不包含屏幕坐标计算 (Ratio)，坐标计算由外层 Scale 负责。
         /// </summary>
         /// <param name="logicalRange">逻辑极值（如最低价~最高价，或 0~241 索引）</param>
         /// <param name="physicalLength">当前轴在屏幕上的物理像素长度</param>
-        IEnumerable<TickMathResult<TDomain>> Calculate(RealRange logicalRange, double physicalLength);
+        IEnumerable<TickMathResult> Calculate(RealRange logicalRange, double physicalLength);
     }
 
     /// <summary>
     /// 💥 刻度策略提供者：它知道如何从黑板榨取数据，并生成当帧所需的策略！
     /// </summary>
-    public interface ITickProvider<TDomain>
+    public interface ITickProvider
     {
-        ITickStrategy<TDomain> GetStrategy(FeatureContext ctx);
-        ITickStylePolicy<TDomain> GetStyle(FeatureContext ctx);
+        ITickStrategy GetStrategy(FeatureContext ctx);
+        ITickStylePolicy GetStyle(FeatureContext ctx);
     }
 
     public static class TickStrategyExtensions
     {
-        public static IEnumerable<TickModel<TDomain>> ApplyStyle<TDomain>(
-            this IEnumerable<TickMathResult<TDomain>> mathResults,
-            ITickStylePolicy<TDomain> stylePolicy)
+        public static IEnumerable<TickModel> ApplyStyle(
+            this IEnumerable<TickMathResult> mathResults,
+            ITickStylePolicy stylePolicy)
         {
             foreach (var math in mathResults)
             {
-                yield return new TickModel<TDomain>
+                yield return new TickModel
                 {
-                    Ratio = math.Ratio,
+                    // Ratio 故意不设：由 AxisFeature 通过全局 IScale 统一填充
                     Value = math.Value,
                     IsBaseLine = math.IsBaseLine,
                     Label = stylePolicy.FormatLabel(math.Value), // 穿上文字衣服

@@ -101,13 +101,13 @@ namespace Hevo.Charting.Renderers
                         if (brush != null && cmd.RefData is TextInfo textInfo)
                         {
                             var tf = GetTypeface(textInfo.Typeface);
-                            double fontSize = cmd.Payload.Val1; // float 隐式转 double
+                            double fontSize = cmd.Payload.Val1;
 
-                            // 1. 0-GC 文本排版拦截
+                            // 1. 0-GC 文本排版缓存
                             var key = new FormattedTextKey(textInfo.Text, tf, fontSize, brush);
                             if (!_formattedTextCache.TryGetValue(key, out var ft))
                             {
-                                string actualText = WpfRenderRegistry.ResolveString(textInfo.Text); // 需确保有 Registry 或复用 ThemeResolver
+                                string actualText = WpfRenderRegistry.ResolveString(textInfo.Text);
                                 if (string.IsNullOrEmpty(actualText)) break;
 
                                 ft = new FormattedText(
@@ -116,30 +116,24 @@ namespace Hevo.Charting.Renderers
                                 _formattedTextCache[key] = ft;
                             }
 
-                            // 💥 2. 计算最终的包围盒尺寸 (文字尺寸 + 两倍内边距)
-                            double boxWidth = ft.Width + textInfo.PaddingX * 2.0;
-                            double boxHeight = ft.Height + textInfo.PaddingY * 2.0;
+                            // 2. 共用布局解算(背景框 + 文本起点)
+                            var layout = TextLayoutHelper.Compute(
+                                cmd.Payload.P1.X, cmd.Payload.P1.Y,
+                                (float)ft.Width, (float)ft.Height,
+                                textInfo.PaddingX, textInfo.PaddingY,
+                                textInfo.AlignX, textInfo.AlignY);
 
-                            double x = cmd.Payload.P1.X;
-                            double y = cmd.Payload.P1.Y;
-
-                            // 💥 3. 根据对齐方式，推算出包围盒左上角的真实物理坐标
-                            if (textInfo.AlignX == TextAlignX.Center) x -= boxWidth / 2.0;
-                            else if (textInfo.AlignX == TextAlignX.Right) x -= boxWidth;
-
-                            if (textInfo.AlignY == TextAlignY.Center) y -= boxHeight / 2.0;
-                            else if (textInfo.AlignY == TextAlignY.Bottom) y -= boxHeight;
-
-                            // 💥 4. 一波带走：如果配置了背景，先画底框！
+                            // 3. 背景框
                             if (textInfo.BgBrush != null || textInfo.BorderPen != null)
                             {
                                 var bgWpfBrush = GetBrush(textInfo.BgBrush);
                                 var borderWpfPen = GetPen(textInfo.BorderPen);
-                                dc.DrawRectangle(bgWpfBrush, borderWpfPen, new Rect(x, y, boxWidth, boxHeight));
+                                dc.DrawRectangle(bgWpfBrush, borderWpfPen,
+                                    new Rect(layout.BoxX, layout.BoxY, layout.BoxWidth, layout.BoxHeight));
                             }
 
-                            // 5. 画文字 (必须加上内边距的偏移量)
-                            dc.DrawText(ft, new Point(x + textInfo.PaddingX, y + textInfo.PaddingY));
+                            // 4. 文字(WPF 用顶左坐标,直接用 TextX/TextY)
+                            dc.DrawText(ft, new Point(layout.TextX, layout.TextY));
                         }
                         break;
                     case DrawOp.DrawImage:

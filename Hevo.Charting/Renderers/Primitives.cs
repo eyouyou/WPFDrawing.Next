@@ -1,7 +1,5 @@
 ﻿using System.Numerics;
 using System.Runtime.InteropServices;
-using System.Windows;
-using System.Windows.Media;
 
 namespace Hevo.Charting.Renderers
 {

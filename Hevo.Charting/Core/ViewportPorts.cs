@@ -4,34 +4,18 @@ using Hevo.Charting.LowCode;
 namespace Hevo.Charting.Core
 {
     /// <summary>
-    /// 💥 视口状态全家桶：彻底终结引脚满天飞的终极收纳盒！
-    /// 将逻辑边界、物理偏移、用户意图全部打包，作为一个整体在管道中传递。
+    /// 视口状态：纯语义层，全部 RealRange / int 表达"用户在看哪儿"。
+    /// 离散索引（slice offset 等）已移除 —— 数据流不再切片，世界索引 == 数组下标。
     /// </summary>
     public class ViewportPorts
     {
-        /// <summary>
-        /// 1. 数据的总逻辑长度 (供大法官防越界)
-        /// </summary>
+        /// <summary>数据总规模：bar 数。视图管家用作 clamp 上界。</summary>
         public DataPort<int> LogicalLength { get; } = new("VP_LogicalLength");
 
-        /// <summary>
-        /// 2. 系统的默认显示范围
-        /// </summary>
-        public DataPort<RealRange> SystemRange { get; } = new("VP_SystemRange");
-
-        /// <summary>
-        /// 3. 用户拖拽鼠标产生的意图范围
-        /// </summary>
+        /// <summary>用户意图范围：交互层（Pan/Zoom/Keyboard）写入。可越界（视 OverscrollPolicy）。</summary>
         public DataPort<RealRange> UserRange { get; } = new("VP_UserRange");
 
-        /// <summary>
-        /// 4. 大法官 (ViewportManagerFeature) 裁决后的最终生效范围
-        /// </summary>
+        /// <summary>当前显示范围：视图管家裁决后的合法 range。下游所有消费者读这一个。</summary>
         public DataPort<RealRange> ActiveRange { get; } = new("VP_ActiveRange");
-
-        /// <summary>
-        /// 5. 💥 底层 0-GC 切片引擎 (LinkViewportStream) 吐出的“真实物理起点”
-        /// </summary>
-        public DataPort<int> Offset { get; } = new("VP_Offset");
     }
 }

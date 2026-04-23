@@ -9,7 +9,6 @@ namespace Hevo.Charting.WorkFlow
     // 因为 ReadOnlySpan 是 ref struct，不能塞进 Func<T> 里，必须自定义委托
     // ==========================================
     public delegate double[] AoSSpanExtractor<TSource, TItem>(ReadOnlySpan<TItem> sourceSpan, TSource sourceRef);
-    public delegate double[] SoASpanExtractor<TBlock>(ReadOnlySpan<TBlock> sourceSpan);
 
     // ==========================================
     // 💥 AoS 核心适配器：序列变换摄入器 (已升级 0-GC 与瞬间查脏)
@@ -70,58 +69,6 @@ namespace Hevo.Charting.WorkFlow
     }
 
     // ==========================================
-    // 💥 SoA 核心适配器：序列变换摄入器
-    // ==========================================
-    internal class SoASequenceTransformIngestor<TBlock> : IDataIngestor<TBlock>, IDisposable
-    {
-        private readonly DataPort<ReadOnlyMemory<double>> _targetPort;
-        private readonly Func<int> _lengthProvider;
-        private readonly SoASpanExtractor<TBlock> _sourceExtractor;
-        private readonly ISequenceTransform _transform;
-
-        private VersionToken _lastVersion;
-        private double[]? _rentedArray;
-
-        public SoASequenceTransformIngestor(
-            DataPort<ReadOnlyMemory<double>> targetPort,
-            Func<int> lengthProvider,
-            SoASpanExtractor<TBlock> sourceExtractor,
-            ISequenceTransform transform)
-        {
-            _targetPort = targetPort; _lengthProvider = lengthProvider;
-            _sourceExtractor = sourceExtractor; _transform = transform;
-        }
-
-        public void Process(DataSnapshot<TBlock> snapshot, DataBlackboard board)
-        {
-            if (snapshot.Version == _lastVersion) return;
-            _lastVersion = snapshot.Version;
-
-            int len = _lengthProvider();
-            if (len <= 0) return;
-
-            if (_rentedArray == null || _rentedArray.Length < len)
-            {
-                if (_rentedArray != null) ArrayPool<double>.Shared.Return(_rentedArray);
-                _rentedArray = ArrayPool<double>.Shared.Rent(len);
-            }
-
-            // SoA 榨取直接传入 Span
-            double[] rawSource = _sourceExtractor(snapshot.AsSpan());
-
-            _transform.Transform(rawSource.AsSpan(0, len), _rentedArray.AsSpan(0, len));
-
-            ArrayPool<double>.Shared.Return(rawSource);
-            board.ForceWrite(_targetPort, new ReadOnlyMemory<double>(_rentedArray, 0, len));
-        }
-
-        public void Dispose()
-        {
-            if (_rentedArray != null) { ArrayPool<double>.Shared.Return(_rentedArray); _rentedArray = null; }
-        }
-    }
-
-    // ==========================================
     // 💡 官方语法糖：为配置器提供高雅的扩展方法
     // ==========================================
     public static class TransformExtensions
@@ -154,32 +101,7 @@ namespace Hevo.Charting.WorkFlow
             return cfg; // 支持链式调用
         }
 
-        /// <summary>
-        /// [SoA 轨道专用] 挂载序列变换
-        /// </summary>
-        public static SoAScatterConfigurator<TBlock> ApplyTransform<TBlock>(
-            this SoAScatterConfigurator<TBlock> cfg,
-            DataPort<ReadOnlyMemory<double>> targetPort,
-            Func<TBlock, List<double>> arraySelector, // 提取规则：直接从块里拔出整列 List
-            ISequenceTransform transform,
-            Func<int> lengthProvider)
-        {
-            // 定义 SoA 提取委托：直接通过 Span 级内存拷贝榨取，性能极高
-            SoASpanExtractor<TBlock> extractor = sourceSpan =>
-            {
-                int len = lengthProvider();
-                double[] raw = ArrayPool<double>.Shared.Rent(len);
-
-                if (sourceSpan.Length > 0)
-                {
-                    var list = arraySelector(sourceSpan[0]);
-                    System.Runtime.InteropServices.CollectionsMarshal.AsSpan(list).Slice(0, len).CopyTo(raw);
-                }
-                return raw;
-            };
-
-            cfg.Plug(new SoASequenceTransformIngestor<TBlock>(targetPort, lengthProvider, extractor, transform));
-            return cfg;
-        }
+        // SoA ApplyTransform 已移除：业务零调用方。如未来需要，按 ColumnPublisher 模式重新实现，
+        // selector 直接返回 ReadOnlyMemory<double>，0 拷贝下沉到变换层。
     }
 }

@@ -2,7 +2,6 @@
 using Hevo.Charting.Core;
 using Hevo.Charting.Layers;
 using Hevo.Charting.LowCode;
-using System.Windows;
 
 namespace Hevo.Charting.Features
 {
@@ -199,6 +198,7 @@ namespace Hevo.Charting.Features
 
             var state = hitState.Value;
             var style = ctx.Shared().Read<CrosshairStyleTrait>() ?? CrosshairStyleTrait.DefaultDark;
+            var scaleStrategy = ctx.Shared().Read<ScaleStrategyTrait>() ?? ScaleStrategyTrait.Default;
             HevoRect plotArea = ctx.PlotArea;
             _yLabelBuffer.Clear();
             _dotBuffer.Clear();
@@ -223,7 +223,7 @@ namespace Hevo.Charting.Features
 
             if (DisplayMode.HasFlag(CrosshairDisplayMode.YLabel) && plotArea.Height > 0)
             {
-                double ratio = Math.Clamp((plotArea.Bottom - state.MousePos.Y) / plotArea.Height, 0, 1);
+                double vNorm = Math.Clamp((plotArea.Bottom - state.MousePos.Y) / plotArea.Height, 0, 1);
 
                 for (int i = 0; i < YTrackers.Length; i++)
                 {
@@ -232,7 +232,7 @@ namespace Hevo.Charting.Features
 
                     if (currentRange.Span > 0)
                     {
-                        double priceVal = currentRange.Min + ratio * currentRange.Span;
+                        double priceVal = scaleStrategy.ValueScale.Denormalize(vNorm, currentRange);
                         string yStr = priceVal.FormatValue(tracker.Meta?.Format ?? "F2", tracker.Meta?.Provider);
 
                         double? targetPhysicalX = null;
@@ -275,7 +275,7 @@ namespace Hevo.Charting.Features
                     if (doubleData != null && doubleData.FieldValues.Length > 0 && state.LocalIndex < doubleData.FieldValues[0].Span.Length)
                     {
                         double val = doubleData.FieldValues[0].Span[state.LocalIndex];
-                        if (!double.IsNaN(val)) yPixel = plotArea.Bottom - ((val - layerYRange.Min) / layerYRange.Span) * plotArea.Height;
+                        if (!double.IsNaN(val)) yPixel = CoordinateExtensions.ProjectValueToScreen(plotArea, layerYRange, scaleStrategy, val);
                     }
 
                     if (!double.IsNaN(yPixel))

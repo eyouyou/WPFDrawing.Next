@@ -3,7 +3,6 @@ using Hevo.Charting.Buildin;
 using Hevo.Charting.Core;
 using Hevo.Charting.LowCode;
 using Hevo.Charting.WorkFlow;
-using System.Diagnostics;
 using System.Windows;
 using System.Windows.Input;
 
@@ -16,21 +15,6 @@ namespace Hevo.Charting.Features
     {
         /// <summary> 缩放灵敏度 (默认 0.15 即每次滚轮缩放 15% 的视口) </summary>
         public double Sensitivity { get; init; } = 0.15;
-    }
-
-    /// <summary>
-    /// 数据无缝加载 (Infinite Scroll) 配置参数
-    /// </summary>
-    public record DataFetchOptions
-    {
-        /// <summary> 安全缓冲区：距离边缘还剩多少根 K 线时触发预加载 (默认 30 根) </summary>
-        public int SafeBuffer { get; init; } = 30;
-        /// <summary> 预加载乘数：每次触发加载时，请求当前视口宽度的几倍数据 (默认 3 倍) </summary>
-        public double PrefetchMultiplier { get; init; } = 3.0;
-        /// <summary> 正常节流阀：防止拖拽过快导致的密集请求 (默认 200 毫秒) </summary>
-        public TimeSpan Pacing { get; init; } = TimeSpan.FromMilliseconds(200);
-        /// <summary> 熔断节流阀：网络异常或报错时的强制冷却时间，保护服务器 (默认 3 秒) </summary>
-        public TimeSpan NetworkFaultThrottle { get; init; } = TimeSpan.FromSeconds(3);
     }
 
     // ==========================================
@@ -69,7 +53,7 @@ namespace Hevo.Charting.Features
     /// <summary>
     /// 💥 图表交互总枢纽大脑
     /// 职责：接管底层 UI 框架事件 -> 降维至 Hevo 坐标系 -> 推演视口数学变化 -> 写入黑板。
-    /// 附带边界侦测与异步数据分页调度能力。
+    /// 分页/无缝加载已拆为独立的 <see cref="DataPagingFeature"/>，本 Feature 只关心手势翻译。
     /// </summary>
     public class ChartInteractionFeature : ChartFeature
     {
@@ -81,13 +65,17 @@ namespace Hevo.Charting.Features
         public DataPort<PointerHitState?> PointerHitPort { get; init; } = new("GlobalPointerHit");
         public DataPort<int>? ValidDataCountPort { get; init; }
 
+        /// <summary>
+        /// 数据可用性端口：由 DSL 注入，与 <see cref="DataPagingFeature.AvailabilityPort"/> 共用同一实例。
+        /// 仅 HandleZoom 在锁内 Read 一次喂给 ZoomContext。未挂载分页 Feature 时为 null。
+        /// </summary>
+        public DataPort<DataAvailability>? AvailabilityPort { get; init; }
+
         // --- 行为配置 ---
         public ChartInteractionMode SupportedModes { get; init; } = ChartInteractionMode.All;
         public PointerOutOfBoundsStrategy PointerSnapMode { get; init; } = PointerOutOfBoundsStrategy.Free;
-        public Func<int, int, Task<bool>>? OnRequireDataAsync { get; init; }
         public IZoomStrategy ZoomStrategy { get; init; } = new SmartAdaptiveZoomStrategy();
         public ZoomOptions ZoomConfig { get; init; } = new();
-        public DataFetchOptions FetchConfig { get; init; } = new();
         public double EdgeHitTolerance { get; init; } = 1.0;
 
         private const double StandardWheelDelta = 120.0;
@@ -98,14 +86,6 @@ namespace Hevo.Charting.Features
         private HevoPoint _lastPanPos;
         private bool _isPanning;
         private HevoPoint? _lastMousePos;
-
-        // ==========================================
-        // 💥 分页加载状态锁 (极其重要，防止雪崩式请求)
-        // ==========================================
-        private volatile bool _isFetching = false;
-        private bool _isLeftWallHit = false;  // 左墙锁：历史数据已见底，不要再请求了
-        private bool _isRightWallHit = false; // 右墙锁：最新数据已见顶，不要再请求了
-        private int _lastSeenLength = -1;     // 用于侦测底层大数组是否真的发生了扩容
 
         protected override void OnCompose(ChartCell chart, RenderContext ctx, IRenderFlow<DataBlackboard> flow)
         {
@@ -184,22 +164,16 @@ namespace Hevo.Charting.Features
                 else if (keyEvent.Key == Key.Right) { HandleKeyboardNavigation(ctx, c.Board, 1); keyEvent.Handled = true; }
             }).DisposeWith(this);
 
-            // 7. 💥 核心监视器：永远监听视口的改变！
-            // 只要视口改变，立即触发两件事：1. 判断是否需要加载更多数据；2. 刷新十字光标位置。
+            // 7. 💥 视口变更后刷新十字光标位置（分页判定已交给 DataPagingFeature 独立 Watch）
             flow.Watch(new object[] { Viewport.ActiveRange }, board =>
             {
                 using (board.AcquireUpgradeableReadLock())
                 {
                     var activeRange = board.Read(Viewport.ActiveRange);
-                    int logicalLength = board.Read(Viewport.LogicalLength);
-
-                    // ctx.GetPlotArea() 现已纯净返回 HevoRect
                     var plotArea = ctx.GetPlotArea();
                     var scaleStrategy = ctx.Shared().Read<ScaleStrategyTrait>();
 
                     if (!activeRange.IsValid || plotArea.IsEmpty || scaleStrategy == null) return;
-
-                    CheckBoundaries(activeRange, logicalLength, board);
 
                     if (_lastMousePos.HasValue && !_isPanning)
                         UpdatePointerStateFromMouse(plotArea, scaleStrategy, board, activeRange, _lastMousePos.Value);
@@ -222,12 +196,32 @@ namespace Hevo.Charting.Features
                 if (plotArea.IsEmpty || scaleStrategy == null || !baseRange.IsValid || baseRange.Span <= 0) return;
 
                 double deltaX = currentPos.X - _lastPanPos.X;
-                _lastPanPos = currentPos;
+                System.Diagnostics.Debug.WriteLine($"deltaX：{deltaX}");
                 if (deltaX == 0) return;
-
+                
                 // 算法：物理位移比例 * 逻辑总跨度 = 逻辑位移量
+                // expandedSpan：plotArea 整个宽度对应的 domain 跨度。
+                //   CategoryScale.Edge 下 = Span；CategoryScale.Centered 下 = Span + 1（两端各留半格）。
+                //   走 Denormalize(1) - Denormalize(0) 是为了对任何 IScale 实现都正确。
                 double expandedSpan = scaleStrategy.DomainScale.Denormalize(1.0, baseRange) - scaleStrategy.DomainScale.Denormalize(0.0, baseRange);
                 double logicalDelta = (deltaX / plotArea.Width) * expandedSpan;
+
+                // 💥 ISnappableScale 支持：开启 SnapEdges 的 CategoryScale 走 ratcheting 平移。
+                //   用 Math.Truncate（向零截断）而非 Round —— Round 会"过度消费"：用户只拖了 0.51 unit，
+                //   Round 提交 1 unit 的像素消费，导致 _lastPanPos 跳到用户手指前面，后续 deltaX 变负、
+                //   永远 round 到 0，pan 卡死。Truncate 保证 consumedPx ≤ 实际 deltaX，不留余额透支。
+                if (scaleStrategy.DomainScale is ISnappableScale)
+                {
+                    double snappedDelta = Math.Truncate(logicalDelta);
+                    if (snappedDelta == 0) return;  // 不足 1 unit，累积到下一次
+                    double consumedPx = (snappedDelta / expandedSpan) * plotArea.Width;
+                    _lastPanPos = new HevoPoint((float)(_lastPanPos.X + consumedPx), _lastPanPos.Y);
+                    logicalDelta = snappedDelta;
+                }
+                else
+                {
+                    _lastPanPos = currentPos;
+                }
 
                 using (board.AcquireWriteLock())
                     board.WriteIfChanged(Viewport.UserRange, new RealRange(baseRange.Min - logicalDelta, baseRange.Max - logicalDelta));
@@ -235,7 +229,8 @@ namespace Hevo.Charting.Features
         }
 
         /// <summary>
-        /// 处理滚轮缩放：根据鼠标所在的相对位置，以其为原点进行视口伸缩
+        /// 处理滚轮缩放：构造完整 ZoomContext 后委派给 IZoomStrategy。
+        /// 交互层不再 clamp Span —— 该决策由策略持有（用 ZoomMath.ClampSpan）；ViewportManager 仅作越界保险。
         /// </summary>
         private void HandleZoom(RenderContext ctx, DataBlackboard board, HevoPoint pos, int delta)
         {
@@ -244,32 +239,54 @@ namespace Hevo.Charting.Features
                 var baseRange = board.Read(Viewport.ActiveRange);
                 int logicalLength = board.Read(Viewport.LogicalLength);
                 var plotArea = ctx.GetPlotArea();
+                var scaleStrategy = ctx.Shared().Read<ScaleStrategyTrait>();
 
                 if (!baseRange.IsValid || plotArea.Width <= 0 || logicalLength <= 0) return;
 
-                // 基础缩放系数推导
+                // 用户意图跨度（不 clamp，由策略决定如何处理）
                 double steps = delta / StandardWheelDelta;
                 double zoomFactor = Math.Pow(1.0 - ZoomConfig.Sensitivity, steps);
-
-                // 获取极值限制，防止缩放至崩溃
-                var limits = ctx.Shared().Read<ViewportLimitsTrait>();
-                double minSpan = limits != null ? limits.MinSpan : 2.0;
-
-                double maxIndex = Math.Max(0, logicalLength - 1);
-                double maxSpan = limits != null ? maxIndex * limits.MaxSpanMultiplier : maxIndex * 2.0;
-                if (maxSpan < minSpan) maxSpan = minSpan;
-
                 double rawTargetSpan = baseRange.Span * zoomFactor;
-                double clampedTargetSpan = Math.Clamp(rawTargetSpan, minSpan, maxSpan);
 
-                // 视口大小未发生实质变化则静默返回
-                if (Math.Abs(clampedTargetSpan - baseRange.Span) < 1e-5) return;
+                // 解析视图层 trait → 绝对 SpanLimits
+                var limitsTrait = ctx.Shared().Read<ViewportSpanLimitsTrait>();
+                double maxIndex = Math.Max(0, logicalLength - 1);
+                double minSpan = limitsTrait?.MinSpan ?? 2.0;
+                double maxSpan = limitsTrait != null ? maxIndex * limitsTrait.MaxSpanMultiplier : maxIndex * 2.0;
+                var limits = new SpanLimits(minSpan, Math.Max(minSpan, maxSpan));
 
-                // 核心：捕获鼠标当前相对画口的百分比位置，作为缩放不动的锚点
-                double relativeX = Math.Clamp((pos.X - plotArea.Left) / plotArea.Width, 0, 1.0);
-                var zoomCtx = new ZoomContext(baseRange, clampedTargetSpan, board.Read(PointerHitPort), relativeX);
+                // 鼠标相对位置：保留越界（不 Clamp 到 [0,1]），让策略判断鼠标是否在 plot 区
+                double relativeX = (pos.X - plotArea.Left) / plotArea.Width;
 
-                RealRange newRange = ZoomStrategy.Calculate(zoomCtx);
+                // 数据可用性：DataPagingFeature 写、本 Feature 读，board 锁兜底
+                // AvailabilityPort 为 null 表示业务未启用分页 → 一律视为"未耗尽"
+                var availability = AvailabilityPort != null ? board.Read(AvailabilityPort) : default;
+
+                var zoomCtx = new ZoomContext(
+                    BaseRange: baseRange,
+                    RawTargetSpan: rawTargetSpan,
+                    MouseRelativeX: relativeX,
+                    HitState: board.Read(PointerHitPort),
+                    LogicalLength: logicalLength,
+                    Limits: limits,
+                    DomainScale: scaleStrategy?.DomainScale,
+                    LeftDataExhausted: availability.LeftExhausted,
+                    RightDataExhausted: availability.RightExhausted);
+
+                RealRange newRange = ZoomStrategy.Calculate(in zoomCtx);
+
+                // 视口未发生实质变化静默返回
+                if (Math.Abs(newRange.Span - baseRange.Span) < 1e-5
+                    && Math.Abs(newRange.Min - baseRange.Min) < 1e-5) return;
+
+                // ISnappableScale 量化：所有策略共用的渲染对齐后处理
+                if (scaleStrategy?.DomainScale is ISnappableScale snappable)
+                {
+                    double snappedMin = snappable.Snap(newRange.Min);
+                    double snappedMax = snappable.Snap(newRange.Max);
+                    if (snappedMax - snappedMin >= 1.0)
+                        newRange = new RealRange(snappedMin, snappedMax);
+                }
 
                 using (board.AcquireWriteLock())
                     board.WriteIfChanged(Viewport.UserRange, newRange);
@@ -296,12 +313,12 @@ namespace Hevo.Charting.Features
 
                 // 1. 防线：绝对不能越界到没有数据的地方
                 int logicalLength = board.Read(Viewport.LogicalLength);
-                int offset = board.Read(Viewport.Offset);
                 int validCount = ValidDataCountPort != null ? board.Read(ValidDataCountPort) : logicalLength;
                 if (validCount <= 0) validCount = logicalLength;
 
-                int minIndex = offset;
-                int maxIndex = offset + validCount - 1;
+                // 数据世界范围 [0, validCount-1]（删 Slicer 后，世界索引 == 数组下标）
+                int minIndex = 0;
+                int maxIndex = validCount - 1;
 
                 targetIndex = Math.Clamp(targetIndex, minIndex, maxIndex);
 
@@ -360,13 +377,21 @@ namespace Hevo.Charting.Features
             int validCount = ValidDataCountPort != null ? board.Read(ValidDataCountPort) : logicalLength;
             if (validCount <= 0) validCount = logicalLength;
 
-            int offset = board.Read(Viewport.Offset);
-            bool isOutOfBounds = globalIndex < offset || globalIndex >= offset + validCount;
+            // 数据世界范围 [0, validCount-1]（删 Slicer 后，世界索引 == 数组下标）
+            bool isOutOfBounds = globalIndex < 0 || globalIndex >= validCount;
 
             // 3. 吸附防线：是否强制把越界的光标拉回合法数据区
             if (PointerSnapMode == PointerOutOfBoundsStrategy.SnapToValidData)
             {
-                globalIndex = Math.Clamp(globalIndex, offset, Math.Max(offset, offset + validCount - 1));
+                // 💥 同时收进"可见整数索引"范围，保证正向投影回来的 centerX ∈ [plot.Left, plot.Right]，
+                //    让竖线与交点圆点和 series 画出来的柱子/点位严格对齐。
+                int visibleLeft = (int)Math.Ceiling(scaleStrategy.DomainScale.Denormalize(0.0, activeRange));
+                int visibleRight = (int)Math.Floor(scaleStrategy.DomainScale.Denormalize(1.0, activeRange));
+                int lo = Math.Max(0, visibleLeft);
+                int hi = Math.Min(validCount - 1, visibleRight);
+                // 可见范围与数据范围无交集时回退到数据范围（极端缩放场景）
+                if (hi < lo) { lo = 0; hi = Math.Max(0, validCount - 1); }
+                globalIndex = Math.Clamp(globalIndex, lo, hi);
                 isOutOfBounds = false;
             }
 
@@ -381,161 +406,8 @@ namespace Hevo.Charting.Features
                     new HevoPoint((float)centerX, pos.Y),
                     hit,
                     centerX,
-                    globalIndex - offset,
+                    globalIndex,    // 删 Slicer 后世界索引 == 数组下标，LocalIndex 无意义，直接用 world
                     isOutOfBounds));
-            }
-        }
-
-        // ==========================================
-        // 💥 引擎级无缝加载 (Infinite Paging) 调度控制组
-        // ==========================================
-
-        /// <summary>
-        /// 史诗级修正：彻底根除左右墙互锁与心跳破碎 Bug
-        /// 负责在每一帧侦测：用户是否快把图表拖到头了？
-        /// </summary>
-        private void CheckBoundaries(RealRange activeRange, int logicalLength, DataBlackboard board)
-        {
-            if (OnRequireDataAsync == null || logicalLength <= 0 || _isFetching) return;
-
-            // 1. 数据重置或增量侦测防线
-            // 通过监测底层大数组的长度，智能判断墙锁是否应该被打破
-            if (_lastSeenLength != logicalLength)
-            {
-                if (logicalLength < _lastSeenLength)
-                {
-                    // 数据变短（如切换股票发生了 Clear），双墙重置，迎接新生命
-                    _isLeftWallHit = false;
-                    _isRightWallHit = false;
-                }
-                else
-                {
-                    // 数据变长（心跳拉了新数据，或左侧拉了历史）
-                    // 只要数据长了，说明右侧有可能有新空间了，解除右墙限制！
-                    // 但是左墙代表上市首日，如果曾被击中则永远不解，除非切股票。
-                    _isRightWallHit = false;
-                }
-                _lastSeenLength = logicalLength;
-            }
-
-            int offsetAmount = (int)Math.Ceiling(activeRange.Span * FetchConfig.PrefetchMultiplier);
-
-            // 2. 纯粹的饥饿判断 (Buffer Threshold Check)
-            // 如果向左拖拽即将触底且未曾撞墙
-            if (activeRange.Min <= FetchConfig.SafeBuffer && !_isLeftWallHit)
-            {
-                Debug.WriteLine($"🚀 [Fetch] Hitting LEFT boundary. Requesting data...");
-                FireRequestSafe(isLeft: true, anchorIndex: 0, offsetAmount, board);
-            }
-            // 如果向右拖拽即将越界且未曾撞墙
-            else if (activeRange.Max >= logicalLength - FetchConfig.SafeBuffer && !_isRightWallHit)
-            {
-                Debug.WriteLine($"🚀 [Fetch] Hitting RIGHT boundary. Requesting data...");
-                FireRequestSafe(isLeft: false, anchorIndex: logicalLength - 1, offsetAmount, board);
-            }
-        }
-
-        // 修复 H5：调用方包装。FireRequestAsync 已改为 async Task，调用点位于
-        // UpgradeableReadLock 内不能 await，故走 fire-and-forget；ContinueWith 兜底
-        // 任何穿透内层 catch 的异常（如线程池继承上下文异常），避免成为 UnobservedTaskException。
-        private void FireRequestSafe(bool isLeft, int anchorIndex, int offsetAmount, DataBlackboard board)
-        {
-            _ = FireRequestAsync(isLeft, anchorIndex, offsetAmount, board)
-                .ContinueWith(
-                    t => Debug.WriteLine($"🚨 [Fetch] Unobserved exception escaped FireRequestAsync: {t.Exception}"),
-                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
-        }
-
-        /// <summary>
-        /// 异步防火墙队列：调度拉取数据，提供异常熔断、重复数据识别防呆机制
-        /// </summary>
-        private async Task FireRequestAsync(bool isLeft, int anchorIndex, int offsetAmount, DataBlackboard board)
-        {
-            if (_isFetching) return; // 防御并发重入
-            _isFetching = true;
-
-            bool isNetworkFault = false, hasMoreData = true;
-            TimeSpan delay = FetchConfig.Pacing; // 默认延迟为正常的拖拽节流阀 (200ms)
-
-            // 💥 1. 记下请求前的“物理真理” (用于后续判断业务层是否欺骗了我们)
-            int lengthBeforeFetch = 0;
-            if (!board.IsDisposed)
-            {
-                using (board.AcquireReadLock())
-                {
-                    lengthBeforeFetch = board.Read(Viewport.LogicalLength);
-                }
-            }
-
-            try
-            {
-                try
-                {
-                    hasMoreData = await OnRequireDataAsync!.Invoke(anchorIndex, offsetAmount);
-                }
-                catch (OperationCanceledException)
-                {
-                    // 💥 修复“等好久”问题：因为 HttpClient 5秒 超时导致的取消异常，免除额外的熔断惩罚时间！
-                    Debug.WriteLine($"⚠️ [Fetch] Timeout occurred. Bypassing additional throttle penalty.");
-                    isNetworkFault = true;
-                    delay = TimeSpan.Zero;
-                }
-                catch (Exception ex)
-                {
-                    // 真正的网络断开/解析异常，施加 3 秒强制冷却，保护后端服务器避免 DDOS 自己
-                    Debug.WriteLine($"⚠️ [Fetch] Exception: {ex.Message}");
-                    isNetworkFault = true;
-                    delay = FetchConfig.NetworkFaultThrottle;
-                }
-
-                if (!isNetworkFault && !board.IsDisposed)
-                {
-                    using (board.AcquireReadLock())
-                    {
-                        int lengthAfterFetch = board.Read(Viewport.LogicalLength);
-
-                        // 💥 2. 被打脸后重新加回来的终极防线！
-                        // 就算外围的业务层信誓旦旦地说有数据 (hasMoreData = true返回了)，
-                        // 但如果我发现底层黑板大数组的长度根本没变长，说明拉到的是完全重复的废数据！
-                        // 为了防止死循环，由框架强行执行“判死刑”拦截！
-                        if (hasMoreData && lengthAfterFetch <= lengthBeforeFetch)
-                        {
-                            Debug.WriteLine($"🛑 [Fetch] Fake/Duplicate data detected! Length remained at {lengthAfterFetch}. Forcing wall lock.");
-                            hasMoreData = false;
-                        }
-
-                        // 一旦宣告无数据，立即打上永久封印锁
-                        if (!hasMoreData)
-                        {
-                            Debug.WriteLine($"🛑 [Fetch] Wall reached on {(isLeft ? "LEFT" : "RIGHT")}. Locking.");
-                            if (isLeft) _isLeftWallHit = true;
-                            else _isRightWallHit = true;
-                        }
-                    }
-                }
-
-                // 执行调度排队 (0, 200ms, 或 3s)
-                if (delay > TimeSpan.Zero) await Task.Delay(delay);
-            }
-            catch (TaskCanceledException) { /* 安全吃掉 Task.Delay 因为框架卸载带来的系统取消异常 */ }
-            catch (Exception ex) { Debug.WriteLine($"🚨 [Fetch] Fatal: {ex}"); }
-            finally
-            {
-                // 彻底释放调度锁
-                _isFetching = false;
-
-                // 痊愈后自启循环引擎：验证刚才加载的一波数据是否足够填饱肚子
-                try
-                {
-                    if (board != null && !board.IsDisposed)
-                    {
-                        using (board.AcquireReadLock())
-                        {
-                            CheckBoundaries(board.Read(Viewport.ActiveRange), board.Read(Viewport.LogicalLength), board);
-                        }
-                    }
-                }
-                catch (Exception ex) { Debug.WriteLine($"🔥 [Fetch] CRITICAL ERROR IN RECOVERY LOOP: {ex}"); }
             }
         }
 

@@ -7,7 +7,7 @@ namespace Hevo.Charting.Buildin
     // 💥 8. TradingView 同款时间轴
     // 【终极 0-GC 改造】：替换为 RefBox
     // ==========================================
-    public class TradingViewTimeMathStrategy : ITickStrategy<double>
+    public class TradingViewTimeMathStrategy : ITickStrategy
     {
         private readonly RefBox<ReadOnlyMemory<DateTime>> _timesBox;
 
@@ -16,26 +16,30 @@ namespace Hevo.Charting.Buildin
             _timesBox = timesBox;
         }
 
-        public IEnumerable<TickMathResult<double>> Calculate(RealRange logicalRange, double physicalWidth)
+        public IEnumerable<TickMathResult> Calculate(RealRange logicalRange, double physicalWidth)
         {
             var times = _timesBox.Value; // 💥 每一帧拉取盒子里的最新指针
 
-            // 增加 times.IsEmpty 判断，防止开局空数据崩溃
             if (!logicalRange.IsValid || logicalRange.Span <= 0 || physicalWidth <= 0 || times.IsEmpty)
                 yield break;
 
+            // 删 Slicer 后世界索引 == 数组下标，logicalRange / times 同坐标系直用
             int startIdx = Math.Max(0, (int)Math.Floor(logicalRange.Min));
             int endIdx = Math.Min(times.Length - 1, (int)Math.Ceiling(logicalRange.Max));
 
             if (startIdx >= endIdx) yield break;
 
-            TimeSpan totalTime = times.Span[endIdx] - times.Span[startIdx];
+            // 💥 用"bar 数 × 典型 bar 间隔"代替墙钟差，跳过午休/隔夜等非交易黑洞
+            var span = times.Span;
+            TimeSpan barInterval = InferBarInterval(span, startIdx, endIdx);
+            int barCount = endIdx - startIdx + 1;
+            TimeSpan effectiveTime = TimeSpan.FromTicks(barInterval.Ticks * barCount);
 
             int desiredTicks = Math.Max(2, (int)(physicalWidth / 150.0));
-            TimeSpan roughInterval = TimeSpan.FromTicks(totalTime.Ticks / desiredTicks);
+            TimeSpan roughInterval = TimeSpan.FromTicks(effectiveTime.Ticks / desiredTicks);
             TimeSpan niceInterval = GetNiceTimeInterval(roughInterval);
 
-            DateTime currentBoundary = RoundUp(times.Span[startIdx], niceInterval);
+            DateTime currentBoundary = RoundUp(span[startIdx], niceInterval);
 
             double lastRatio = -2.0;
             double minRatioGap = 80.0 / physicalWidth;
@@ -50,13 +54,30 @@ namespace Hevo.Charting.Buildin
 
                     if (ratio - lastRatio >= minRatioGap)
                     {
-                        yield return new TickMathResult<double>(ratio, i, isBaseLine: false);
+                        yield return new TickMathResult(i, isBaseLine: false);
                         lastRatio = ratio;
                     }
 
                     currentBoundary = RoundUp(t.AddTicks(1), niceInterval);
                 }
             }
+        }
+
+        /// <summary>
+        /// 推断典型 bar 间隔：取相邻 delta 的最小值（取样最多 5 对，避开午休/隔夜的大跳）。
+        /// 默认回退 1 分钟（最常见 K 线粒度）。
+        /// </summary>
+        private static TimeSpan InferBarInterval(ReadOnlySpan<DateTime> span, int startIdx, int endIdx)
+        {
+            if (endIdx <= startIdx) return TimeSpan.FromMinutes(1);
+            long minTicks = long.MaxValue;
+            int sampleEnd = Math.Min(startIdx + 5, endIdx);
+            for (int i = startIdx; i < sampleEnd; i++)
+            {
+                long delta = (span[i + 1] - span[i]).Ticks;
+                if (delta > 0 && delta < minTicks) minTicks = delta;
+            }
+            return minTicks == long.MaxValue ? TimeSpan.FromMinutes(1) : TimeSpan.FromTicks(minTicks);
         }
 
         private TimeSpan GetNiceTimeInterval(TimeSpan rough)
@@ -86,7 +107,7 @@ namespace Hevo.Charting.Buildin
     // 💥 9. TradingView 风格 X/Y 轴通用算法 (专治非 DateTime 的泛型数据)
     // 【架构说明】：不依赖任何数组，纯数学映射，无需改造！
     // ==========================================
-    public class TradingViewAxisMathStrategy : ITickStrategy<double>
+    public class TradingViewAxisMathStrategy : ITickStrategy
     {
         private readonly double _minPixelsPerTick;
 
@@ -95,7 +116,7 @@ namespace Hevo.Charting.Buildin
             _minPixelsPerTick = minPixelsPerTick;
         }
 
-        public IEnumerable<TickMathResult<double>> Calculate(RealRange range, double physicalLength)
+        public IEnumerable<TickMathResult> Calculate(RealRange range, double physicalLength)
         {
             if (!range.IsValid || range.Span <= 0 || physicalLength <= 0)
                 yield break;
@@ -111,10 +132,8 @@ namespace Hevo.Charting.Buildin
 
             for (double val = start; val <= end + epsilon; val += niceStep)
             {
-                double ratio = (val - range.Min) / range.Span;
                 bool isBase = Math.Abs(val) < 1e-6;
-
-                yield return new TickMathResult<double>(ratio, val, isBaseLine: isBase);
+                yield return new TickMathResult(val, isBaseLine: isBase);
             }
         }
 
