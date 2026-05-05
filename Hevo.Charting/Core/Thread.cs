@@ -20,6 +20,11 @@ namespace Hevo.Charting.Core
         // ==========================================
         public struct ThreadPoolSwitchAwaiter : INotifyCompletion
         {
+            // 静态 WaitCallback,把 continuation 从 state 槽里取出来执行。
+            // 替代 `_ => continuation()` 这种每次 await 都 new 一个闭包对象的写法,
+            // SwitchToBackground() 的 await 调用上稳态零分配。
+            private static readonly WaitCallback s_invokeContinuation = static state => ((Action)state!)();
+
             public ThreadPoolSwitchAwaiter GetAwaiter() => this;
 
             // 永远返回 false，强迫 await 挂起当前方法，交出控制权
@@ -28,7 +33,7 @@ namespace Hevo.Charting.Core
             public void GetResult() { } // 不返回任何值
 
             // 💥 当 await 挂起后，让状态机在 ThreadPool 里恢复执行！
-            public void OnCompleted(Action continuation) => ThreadPool.QueueUserWorkItem(_ => continuation());
+            public void OnCompleted(Action continuation) => ThreadPool.QueueUserWorkItem(s_invokeContinuation, continuation);
         }
 
         public struct DispatcherSwitchAwaiter : INotifyCompletion
@@ -76,8 +81,10 @@ namespace Hevo.Charting.Core
             // skipFrames: 1 表示跳过当前的 FireAndForget 方法，直接抓业务调用方
             string enqueueStackTrace = new StackTrace(1, true).ToString();
 #endif
-            // 3. 正常并发模式：扔进线程池
-            Task.Run(() =>
+            // 3. 正常并发模式：直接扔进线程池
+            //    用 ThreadPool.QueueUserWorkItem 替代 Task.Run —— 我们不需要 Task 句柄
+            //    (没人 await 这个 fire-and-forget),省掉每次 Task.Run 的 Task 对象分配。
+            ThreadPool.QueueUserWorkItem(_ =>
             {
                 try
                 {
@@ -102,7 +109,7 @@ namespace Hevo.Charting.Core
                     Debug.WriteLine(msg);
 
                     // 强烈建议在 Debug 下依然把异常抛出，让开发者立刻感知！
-                    // throw new Exception(msg, ex); 
+                    // throw new Exception(msg, ex);
 #else
                     // Release 模式：极致轻量，安全吞掉异常，保证金融终端不闪退！
                     Debug.WriteLine($"[HevoDispatcher Error] {ownerName}: {ex.Message}");

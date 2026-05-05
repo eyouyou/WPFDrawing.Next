@@ -27,10 +27,10 @@ namespace Hevo.Charting.Buildin
             for (int i = 0; i <= _gridCount; i++)
             {
                 double val = range.Min + step * i;
-                if (Math.Abs(val) < 1e-6) val = 0;
+                if (Math.Abs(val) < MathTolerance.NumericEqual) val = 0;
 
                 bool isBase = val == 0;
-                yield return new TickMathResult(val, isBaseLine: isBase);
+                yield return new TickMathResult(val, isAnchor: isBase);
             }
         }
     }
@@ -79,7 +79,7 @@ namespace Hevo.Charting.Buildin
                 if (closestIndex == lastIndex) continue;
                 lastIndex = closestIndex;
 
-                yield return new TickMathResult(closestIndex, isBaseLine: false);
+                yield return new TickMathResult(closestIndex, isAnchor: false);
             }
         }
     }
@@ -217,7 +217,7 @@ namespace Hevo.Charting.Buildin
             for (int i = 0; i <= gridCount; i++)
             {
                 double val = range.Min + step * i;
-                if (Math.Abs(val) < 1e-6) val = 0;
+                if (Math.Abs(val) < MathTolerance.NumericEqual) val = 0;
 
                 yield return new TickMathResult(val, val == 0);
             }

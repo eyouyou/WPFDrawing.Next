@@ -32,6 +32,22 @@ namespace Hevo.Charting.Features
     /// 💥 分页加载 Feature：监听视口变化，命中 SafeBuffer 时调度后端 fetch；维护左右墙状态。
     /// 与 <see cref="ChartInteractionFeature"/> 解耦：交互层只负责手势 → 视口；分页层只负责视口 → fetch。
     /// 墙状态通过 <see cref="AvailabilityPort"/> 暴露，下游（如 HistoryAwareZoomStrategy）按需读取。
+    /// <para>
+    /// <b>典型用法</b>:
+    /// <code>
+    /// var availability = new DataPort&lt;DataAvailability&gt;("Avail");
+    /// canvas.Add(new DataPagingFeature
+    /// {
+    ///     OnRequireDataAsync = async (anchor, count) =&gt; await client.LoadKlineAsync(anchor, count),
+    ///     AvailabilityPort   = availability,
+    /// });
+    /// // 同时把 availability 喂给 ChartInteractionFeature.AvailabilityPort,
+    /// // 让缩放策略知道"已经撞到上市首日,别再缩"。
+    /// </code>
+    /// </para>
+    /// <para>
+    /// <b>数据流</b>:Viewport.ActiveRange Watch → CheckBoundaries 命中 SafeBuffer → fire-and-forget OnRequireDataAsync → 业务侧扩容大数组 → LogicalLength 变化触发本 Feature 重判 → 撞墙时写 AvailabilityPort 锁死方向。
+    /// </para>
     /// </summary>
     public class DataPagingFeature : ChartFeature
     {
@@ -58,10 +74,14 @@ namespace Hevo.Charting.Features
         // ==========================================
         // 💥 分页加载状态锁 (极其重要，防止雪崩式请求)
         // ==========================================
+        // 单飞标记:任意时刻只有一笔 fetch 在路上。volatile 保证跨线程可见性(Watch 在 board 写入线程,fetch 任务可能切线程池)。
         private volatile bool _isFetching = false;
-        private bool _isLeftWallHit = false;  // 左墙锁：历史数据已见底
-        private bool _isRightWallHit = false; // 右墙锁：最新数据已见顶
-        private int _lastSeenLength = -1;     // 用于侦测底层大数组是否真的发生了扩容
+        // 左墙锁:历史数据已见底,onRequire 返回 false 后置为 true,LogicalLength 变化才解锁(切股票场景)。
+        private bool _isLeftWallHit = false;
+        // 右墙锁:最新数据已见顶,LogicalLength 长大就解锁(心跳场景)。
+        private bool _isRightWallHit = false;
+        // 上次见到的 LogicalLength,用来侦测大数组扩容 / 切股票清空,以决定是否解锁墙锁。
+        private int _lastSeenLength = -1;
 
         protected override void OnCompose(ChartCell chart, RenderContext ctx, IRenderFlow<DataBlackboard> flow)
         {
@@ -145,6 +165,8 @@ namespace Hevo.Charting.Features
         private async Task FireRequestAsync(bool isLeft, int anchorIndex, int offsetAmount, DataBlackboard board)
         {
             if (_isFetching) return; // 防御并发重入
+            // 上游 OnRequireData 在 RequestPaging 入口已 null 守过；这里再捕获到本地，方便 NRT 流分析
+            if (OnRequireDataAsync is not { } requestData) return;
             _isFetching = true;
 
             bool isNetworkFault = false, hasMoreData = true;
@@ -161,7 +183,7 @@ namespace Hevo.Charting.Features
             {
                 try
                 {
-                    hasMoreData = await OnRequireDataAsync!.Invoke(anchorIndex, offsetAmount);
+                    hasMoreData = await requestData.Invoke(anchorIndex, offsetAmount);
                 }
                 catch (OperationCanceledException)
                 {

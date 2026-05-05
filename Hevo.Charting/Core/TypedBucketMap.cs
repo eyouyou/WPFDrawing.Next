@@ -12,6 +12,9 @@ namespace Hevo.Charting.Core
         // 字典的 Key 是 typeof(KeyValuePair<TKey, TValue>)，Value 是强类型的 Dictionary<TKey, TValue>。
         private readonly ConcurrentDictionary<Type, object> _buckets = new();
 
+        // 💥 与 _buckets 同步：每个桶对应的强类型 Clear 委托，避免清理阶段反射开销。
+        private readonly ConcurrentDictionary<Type, Action<object>> _bucketClearers = new();
+
         /// <summary>
         /// 💥 核心魔法：获取强类型物理桶
         /// </summary>
@@ -20,11 +23,22 @@ namespace Hevo.Charting.Core
             // 使用 Key 和 Value 的复合类型作为唯一标识，防止不同类型的 Key 撞车
             var typeKey = typeof(KeyValuePair<TKey, TValue>);
 
-            // 极简、线程安全的获取或创建逻辑
-            return (Dictionary<TKey, TValue>)_buckets.GetOrAdd(
-                typeKey,
-                _ => new Dictionary<TKey, TValue>()
-            );
+            // 已存在直接 fast-path 返回，避免每次 GetBucket 都触碰 _bucketClearers。
+            if (_buckets.TryGetValue(typeKey, out var existing))
+            {
+                return (Dictionary<TKey, TValue>)existing;
+            }
+
+            // 首次创建：必须先登记 Clearer，再发布 Bucket。
+            // 这样 Clear() 在迭代 _buckets 看到新桶时，_bucketClearers 一定已可见，避免并发裂缝。
+            _bucketClearers[typeKey] = static obj => ((Dictionary<TKey, TValue>)obj).Clear();
+            var fresh = new Dictionary<TKey, TValue>();
+            if (_buckets.TryAdd(typeKey, fresh))
+            {
+                return fresh;
+            }
+            // TryAdd 失败说明竞态下已有别人先登记，clearer 也是同一份委托，写覆盖等价。
+            return (Dictionary<TKey, TValue>)_buckets[typeKey];
         }
 
         /// <summary>
@@ -56,11 +70,13 @@ namespace Hevo.Charting.Core
         /// </summary>
         public void Clear()
         {
-            foreach (var bucketObj in _buckets.Values)
+            // 直接走 GetBucket 缓存好的强类型 Clear 委托，零反射。
+            foreach (var kv in _buckets)
             {
-                // 利用反射调用 Clear (发生在清理阶段，非高频渲染路径，性能可接受)
-                var clearMethod = bucketObj.GetType().GetMethod("Clear");
-                clearMethod?.Invoke(bucketObj, null);
+                if (_bucketClearers.TryGetValue(kv.Key, out var clearer))
+                {
+                    clearer(kv.Value);
+                }
             }
         }
     }

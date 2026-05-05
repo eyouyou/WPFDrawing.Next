@@ -68,7 +68,8 @@ namespace Hevo.Charting.Abstractions
     {
         // 💥 记忆海马体：记录上一次 Update 时，实际拿到了哪些对象 (Key: TraitId, Value: 对象的内存引用)
         // 字典只在增删键时有微小开销，预热后 0 分配
-        public Dictionary<int, object?> TrackedRefs { get; } = new();
+        // 初始容量 16:典型 layer 跟踪 5-15 个 trait,跳过 0→3→7→17 的 resize 链。
+        public Dictionary<int, object?> TrackedRefs { get; } = new(16);
 
         // 把清理工作也搬过来
         public void PrepareForNewFrame()

@@ -13,6 +13,10 @@ namespace Hevo.Charting.Core
         // 缓存池：保存属于这个图层的所有物理控件
         private readonly List<ContentPresenter> _pool = new();
 
+        // 上一帧 active widget 数,用来只在边界变化时切换 Visibility — DependencyProperty 设值
+        // 即使值不变也要走 WPF 内部 coercion / 失效逻辑,稳态 active 数不变时省一整轮 DP set。
+        private int _activeCount = 0;
+
         public LayerWidgetPool(Canvas interactionCanvas)
         {
             _interactionCanvas = interactionCanvas;
@@ -23,8 +27,13 @@ namespace Hevo.Charting.Core
         /// </summary>
         public void Sync(IReadOnlyList<WidgetCommand> commands)
         {
+            int newActive = commands.Count;
+            int prevActive = _activeCount;
+
             // 1. 扩容：如果指令数 > 池子现有的控件数，造几个新的补充进去
-            while (_pool.Count < commands.Count)
+            //    新建的 ContentPresenter Width/Height 默认就是 double.NaN(自适应),
+            //    因此只在创建时一次性配置 IsHitTestVisible,后续每帧不再重设尺寸。
+            while (_pool.Count < newActive)
             {
                 var cp = new ContentPresenter
                 {
@@ -34,36 +43,31 @@ namespace Hevo.Charting.Core
                 _pool.Add(cp);
             }
 
-            // 2. 更新与激活：应用当前的 N 条指令
-            for (int i = 0; i < commands.Count; i++)
+            // 2. 更新当前 [0, newActive) 的指令
+            //    Visibility 只在"原本是隐藏"的位置(i >= prevActive)上切回 Visible,稳态零 DP 改动。
+            for (int i = 0; i < newActive; i++)
             {
                 var cp = _pool[i];
                 var cmd = commands[i];
 
-                cp.Visibility = Visibility.Visible;
+                if (i >= prevActive) cp.Visibility = Visibility.Visible;
+
                 cp.Content = cmd.ViewModel;
 
-                // 💥 1. 只负责定位！
+                // 只负责定位 — Canvas 的 Left/Top 是 attached DP,WPF 内部值相等会自动短路。
                 Canvas.SetLeft(cp, cmd.Bounds.X);
                 Canvas.SetTop(cp, cmd.Bounds.Y);
-
-                // 💥 2. 彻底干掉强行赋值宽高！
-                // 只有当业务层真的传了特定的强制尺寸（比如覆盖全屏的蒙版），我们才去设。
-                // 对于悬浮窗，如果它的尺寸是根据内容自适应的，强行设 Width 会触发浮点截断 Bug！
-                // cp.Width = cmd.Bounds.Width;   <-- 删掉！
-                // cp.Height = cmd.Bounds.Height; <-- 删掉！
-
-                // 优雅的替代方案：清除尺寸限制，让 ContentPresenter 开启 Auto 模式自然撑开
-                cp.Width = double.NaN;
-                cp.Height = double.NaN;
             }
 
-            // 3. 回收：把多余的控件隐藏起来，供下一帧复用
-            for (int i = commands.Count; i < _pool.Count; i++)
+            // 3. 回收：仅处理上一帧用到、本帧不再用的范围 [newActive, prevActive)
+            //    稳态(active 数不变)时这段循环根本不进。
+            for (int i = newActive; i < prevActive; i++)
             {
                 _pool[i].Visibility = Visibility.Collapsed;
                 _pool[i].Content = null; // 解除 ViewModel 引用，防止内存泄漏
             }
+
+            _activeCount = newActive;
         }
 
         /// <summary>
@@ -76,6 +80,7 @@ namespace Hevo.Charting.Core
                 _interactionCanvas.Children.Remove(cp);
             }
             _pool.Clear();
+            _activeCount = 0;
         }
     }
 }

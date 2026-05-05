@@ -9,7 +9,7 @@ namespace Hevo.Charting.Renderers
     /// </summary>
     public enum DrawOp : byte
     {
-        // --- 基础几何 (7个) ---
+        // --- 基础几何 (8个) ---
         DrawLine = 1,
         DrawPolyline,
         DrawLineSegments,
@@ -17,6 +17,7 @@ namespace Hevo.Charting.Renderers
         DrawRoundedRectangle,
         DrawEllipse,
         DrawGeometry,         // 复杂矢量路径 (如 SVG Data)
+        DrawCubicBezier,      // 三次贝塞尔曲线 —— 走 WPF 原生 BezierTo,杜绝采样成 polyline 看起来折角
 
         // --- 文本与媒体 (3个) ---
         DrawText,
@@ -26,11 +27,10 @@ namespace Hevo.Charting.Renderers
         // --- 批量优化 (1个) ---
         DrawRectangles,       // 极速绘制成千上万个矩形
 
-        // --- 状态堆栈 (5个) ---
+        // --- 状态堆栈 (4个) ---
         PushClip,
         PushOpacity,
         PushTransform,
-        PushGuidelineSet,     // 像素对齐利器
         Pop
     }
 

@@ -29,4 +29,27 @@ namespace Hevo.Charting.LowCode
         public string GroupName { get; }
         public PortGroupAttribute(string groupName) => GroupName = groupName;
     }
+
+    /// <summary>
+    /// 引脚方向。<see cref="DataPort{T}"/> 本身只是全局路由 token,feature 自己决定写入(Output)还是读取(Input);
+    /// GraphViewer 拓扑可视化时必须知道方向才能画连线 (输出在右、输入在左)。
+    /// </summary>
+    public enum PortDirection
+    {
+        /// <summary>Feature 从该 DataPort 读取数据 (默认)。</summary>
+        Input,
+        /// <summary>Feature 向该 DataPort 写入数据 (典型:UniversalAutoScaleFeature.YRangePort)。</summary>
+        Output
+    }
+
+    /// <summary>
+    /// 标注 <see cref="DataPort{T}"/> 属性的方向,供 GraphViewer 拓扑校验和可视化使用。
+    /// 不标注则按 Input 处理(绝大多数 series feature 是消费方)。
+    /// </summary>
+    [AttributeUsage(AttributeTargets.Property)]
+    public sealed class PortDirectionAttribute : Attribute
+    {
+        public PortDirection Direction { get; }
+        public PortDirectionAttribute(PortDirection direction) { Direction = direction; }
+    }
 }

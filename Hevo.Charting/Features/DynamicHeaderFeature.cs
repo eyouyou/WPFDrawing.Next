@@ -1,6 +1,7 @@
 ﻿using Hevo.Charting.Abstractions;
 using Hevo.Charting.Core;
 using Hevo.Charting.LowCode;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -31,17 +32,34 @@ namespace Hevo.Charting.Features
     }
 
     /// <summary>
-    /// 💥 终极版万能联动头：精致排版 + 数据精准映射 + 绝对可靠的热路径刷新
+    /// 💥 终极版万能联动头：精致排版 + 数据精准映射 + 绝对可靠的热路径刷新。
+    /// <para>
+    /// <b>典型用法</b>:
+    /// <code>
+    /// env.SetupUniversalHeader(lengthPort: ports.Length, hitPort: hitPort);
+    /// // 之后凡是带 MetaTrait + DoubleSeriesDataTrait 的 Layer 都会自动出现在头部行。
+    /// </code>
+    /// </para>
+    /// <para>
+    /// <b>数据流</b>:命中索引 → 遍历所有活跃 Layer 的 MetaTrait/DoubleSeriesDataTrait → 只更新 TextBlock.Text(不重建 UI)。
+    /// 指标数量 / 名字 / 颜色变化时,通过 fingerprint 比对触发 RebuildUi 重新创建子控件;之后所有更新都走对象池,0 控件分配。
+    /// </para>
     /// </summary>
     public class UniversalHeaderFeature : ChartFeature
     {
         public override FeaturePhase Phase => FeaturePhase.Interaction;
 
+        /// <summary>命中状态端口:有命中则显示对应索引的字段值;无命中则回落到末根(实时数据)。</summary>
         public DataPort<PointerHitState?> HitStatePort { get; init; } = null!;
+
+        /// <summary>逻辑数据长度端口:用于在数据切换时同步触发头部刷新(目前主要起 Watch 触发器作用)。</summary>
         public DataPort<int> LogicalLengthPort { get; init; } = null!;
 
+        // 头部容器(WrapPanel),由 Decorate 在挂载阶段一次性创建并贴在外层 DockPanel 顶部。
         private WrapPanel _headerContainer = null!;
+        // UI 控件池:每个字段对应一组 (TextBlock + Ellipse),热路径只改 Text/Fill,绝不 new 控件。
         private readonly List<HeaderItemCache> _itemCaches = new();
+        // 上一次所有 MetaTrait 的复合哈希。指标增删/重命名/换色时 fingerprint 跳变 → RebuildUi。
         private int _lastMetaFingerprint = -1;
 
         public override UIElement Decorate(UIElement inner)
@@ -99,6 +117,21 @@ namespace Hevo.Charting.Features
                     ? hitState.Value.LocalIndex
                     : span.Length - 1;
 
+                // 诊断：默认态尾部出现 NaN 时，定位是哪根线、尾部连续缺多少格、最后一根有效值在哪。
+                // 回退修复后保留这段，以便复现"hover 一次就变 --"时打印根因。
+                if (!hitState.HasValue || hitState.Value.IsOutOfBounds)
+                {
+                    int probe = span.Length - 1;
+                    while (probe >= 0 && double.IsNaN(span[probe])) probe--;
+                    int tailNaN = (span.Length - 1) - probe;
+                    if (tailNaN > 0)
+                    {
+                        var name = WpfRenderRegistry.ResolveString(cache.Meta.Name);
+                        double lastValid = probe >= 0 ? span[probe] : double.NaN;
+                        Debug.WriteLine($"[Header] line=\"{name}\" field={cache.FieldIndex} spanLen={span.Length} tailNaN={tailNaN} lastValidIdx={probe} lastValidVal={lastValid}");
+                    }
+                }
+
                 if (targetIndex >= 0 && targetIndex < span.Length)
                 {
                     double val = span[targetIndex];
@@ -136,7 +169,7 @@ namespace Hevo.Charting.Features
                 if (meta == null) continue;
 
                 // 把每一个 FieldMeta 都塞进哈希计算器里
-                // 因为你把 FieldMeta 定义成了 record struct，它会自动按值比较！
+                // FieldMeta 是 record class:编译器自动生成值哈希,HashCode.Add<T> 走泛型不装箱
                 for (int i = 0; i < meta.Fields.Length; i++)
                 {
                     hash.Add(meta.Fields[i]);

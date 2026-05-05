@@ -78,6 +78,15 @@ namespace Hevo.Charting
         // 💥 接入新的分组配置项
         public ZoomOptions ZoomConfig { get; init; } = new();
         public DataFetchOptions FetchConfig { get; init; } = new();
+        // 三类可配置手势:Box-zoom / 惯性 Pan / 双击复原
+        public BoxZoomOptions BoxZoomConfig { get; init; } = new();
+        public InertiaPanOptions InertiaPanConfig { get; init; } = new();
+        public DoubleClickResetOptions DoubleClickResetConfig { get; init; } = new();
+
+        /// <summary>true = 鼠标进 chart 不立即出十字光标,需先在 chart 内单击一次才武装。</summary>
+        public bool RequireClickToActivate { get; init; } = false;
+        /// <summary>true = 按下 Esc 立即解除 hover(隐藏 crosshair / tooltip),直至下次单击。</summary>
+        public bool DismissOnEscape { get; init; } = false;
 
         // 💥 允许业务层注入自定义缩放策略
         public IZoomStrategy? ZoomStrategy { get; init; }
@@ -142,12 +151,15 @@ namespace Hevo.Charting
             ViewportPorts vp,
             FieldMeta meta,
             // 💥 终极修改：接收带有 RefBox 盒子的工厂，完美对齐 DomainTickProvider 的需求！
-            Func<RefBox<ReadOnlyMemory<TX>>, ITickStrategy>? strategyFactory = null)
+            Func<RefBox<ReadOnlyMemory<TX>>, ITickStrategy>? strategyFactory = null,
+            LineStyle? gridStyle = null)
         {
-            if (!builder.Canvas.HasFeature<ViewportManagerFeature>())
+            if (!builder.Canvas.HasFeature<ViewportManagerFeature>()
+                && !builder.Canvas.HasFeature<Linked.ExternalViewportFeature>())
                 throw new InvalidOperationException(
                     "请先在 Environment 阶段调用 env.SetupViewport(...) 配置视口策略。" +
-                    "缺省 ViewportManager 已废弃 —— 隐式默认会让初始视口贴满数据，造成拖拽无反馈。");
+                    "缺省 ViewportManager 已废弃 —— 隐式默认会让初始视口贴满数据，造成拖拽无反馈。" +
+                    "(联动副图通过 SchemaContext.LinkedPane 装饰,会自动挂 ExternalViewportFeature 标记)");
 
             builder.Canvas.Add(new AxisFeature(
                 new DomainTickProvider<TX>(domainData, vp, meta.Format, meta.Provider, strategyFactory),
@@ -157,7 +169,46 @@ namespace Hevo.Charting
                 IsShared = true,
                 RangePort = vp.ActiveRange,
                 AxisStyle = AxisStyleTrait.Create(AxisPlacement.Bottom, Colors.Gray),
-                GridStyle = GridStyleTrait.Create(GridOrientation.Vertical, LineStyle.Create(Color.FromArgb(40, 255, 255, 255), 1))
+                GridStyle = GridStyleTrait.Create(GridOrientation.Vertical, gridStyle ?? LineStyle.Create(Color.FromArgb(40, 255, 255, 255), 1))
+            });
+            return builder;
+        }
+
+        /// <summary>
+        /// X 轴 (schedule-driven):tick 位置和 label 都从 totalLength + indexToTime 推导,跟实际数据数组解耦。
+        /// 适合分时图 / 强弱评级 / 权重表达——这类业务即使数据只到达一半,X 轴也要画完整时段的 tick。
+        /// 跟 <see cref="AddDomainAxis{TX}"/> (data-driven) 并列,选用其一即可。
+        /// </summary>
+        /// <param name="builder"></param>
+        /// <param name="vp">视口端口集</param>
+        /// <param name="meta">label 格式化元信息</param>
+        /// <param name="totalLengthProvider">全网格逻辑长度,典型 <c>() => dataSource.LogicalLength</c></param>
+        /// <param name="indexToTime">逻辑索引 → 实际时间,典型 <c>idx => dataSource.IndexToTime(idx)</c></param>
+        /// <param name="strategyFactory">可选 strategy 工厂,null 时默认 <see cref="TradeTimeTickStrategy"/></param>
+        public static AxesBuilder AddScheduleDomainAxis(
+            this AxesBuilder builder,
+            ViewportPorts vp,
+            FieldMeta meta,
+            Func<int> totalLengthProvider,
+            Func<int, DateTime> indexToTime,
+            Func<ITickStrategy>? strategyFactory = null,
+            LineStyle? gridStyle = null)
+        {
+            if (!builder.Canvas.HasFeature<ViewportManagerFeature>()
+                && !builder.Canvas.HasFeature<Linked.ExternalViewportFeature>())
+                throw new InvalidOperationException(
+                    "请先在 Environment 阶段调用 env.SetupViewport(...) 配置视口策略。" +
+                    "(联动副图通过 SchemaContext.LinkedPane 装饰自动挂 ExternalViewportFeature 标记)");
+
+            builder.Canvas.Add(new AxisFeature(
+                new ScheduleTickProvider(totalLengthProvider, indexToTime, meta.Format, meta.Provider, strategyFactory),
+                "ScheduleDomainAxis")
+            {
+                Mapping = ScaleMapping.Domain,
+                IsShared = true,
+                RangePort = vp.ActiveRange,
+                AxisStyle = AxisStyleTrait.Create(AxisPlacement.Bottom, Colors.Gray),
+                GridStyle = GridStyleTrait.Create(GridOrientation.Vertical, gridStyle ?? LineStyle.Create(Color.FromArgb(40, 255, 255, 255), 1))
             });
             return builder;
         }
@@ -178,7 +229,8 @@ namespace Hevo.Charting
             FieldMeta meta,
             AxisPlacement placement = AxisPlacement.Right,
             AxisHandle? handle = null,
-            ITickStrategy? strategy = null) // 💥 核心：允许注入策略
+            ITickStrategy? strategy = null, // 💥 核心：允许注入策略
+            MirrorTickAnchor? broadcastTicksTo = null) // 💥 双轴主轴：把 tick 比例广播给同槽副轴
         {
             builder.Canvas.Add(new AxisFeature(
                 new NumericTickProvider(meta.Format, meta.Provider, strategy),
@@ -188,7 +240,79 @@ namespace Hevo.Charting
                 Handle = handle ?? new AxisHandle(),
                 RangePort = rangePort,
                 AxisStyle = AxisStyleTrait.Create(placement, Colors.Gray, fontSize: 11.0),
-                GridStyle = GridStyleTrait.Create(GridOrientation.Horizontal, LineStyle.Create(Color.FromArgb(40, 255, 255, 255), 1))
+                GridStyle = GridStyleTrait.Create(GridOrientation.Horizontal, LineStyle.Create(Color.FromArgb(40, 255, 255, 255), 1)),
+                BroadcastTicksTo = broadcastTicksTo
+            });
+            return builder;
+        }
+
+        /// <summary>
+        /// 双轴副轴：tick 比例完全镜像主轴,自身不画 grid (避免与主轴 grid 重影)。
+        /// 调用前提：先调用主轴的 <see cref="AddRangeAxis(AxesBuilder, DataPort{RealRange}, FieldMeta, AxisPlacement, AxisHandle?, ITickStrategy?, MirrorTickAnchor?)"/>
+        /// 并把同一个 <paramref name="mirrorFrom"/> 实例传给 broadcastTicksTo,确保同帧主轴先写、副轴后读。
+        /// </summary>
+        public static AxesBuilder AddMirroredRangeAxis(
+            this AxesBuilder builder,
+            DataPort<RealRange> rangePort,
+            FieldMeta meta,
+            MirrorTickAnchor mirrorFrom,
+            AxisPlacement placement = AxisPlacement.Right,
+            AxisHandle? handle = null)
+        {
+            if (mirrorFrom == null) throw new System.ArgumentNullException(nameof(mirrorFrom));
+
+            builder.Canvas.Add(new AxisFeature(
+                new NumericTickProvider(meta.Format, meta.Provider, new MirrorRatioTickStrategy(mirrorFrom)),
+                $"MirroredRangeAxis_{placement}")
+            {
+                Mapping = ScaleMapping.Value,
+                Handle = handle ?? new AxisHandle(),
+                RangePort = rangePort,
+                AxisStyle = AxisStyleTrait.Create(placement, Colors.Gray, fontSize: 11.0),
+                // GridStyle = null：副轴不画 grid,完全让位主轴。
+                MirrorTicksFrom = mirrorFrom
+            });
+            return builder;
+        }
+
+        /// <summary>
+        /// Y 轴（锚点感知）：grid 以 <paramref name="anchorPort"/> 为原点向外铺开，<paramref name="hintsPort"/>
+        /// 中的 high/low 太靠近普通 grid tick 时会让位（替换），但永远不让位 baseline。
+        /// 典型用法 —— 分时图：anchorPort = 昨收价（baseline 永远精确），hintsPort = 当日 high/low。
+        /// <para>
+        /// 不显式传 <paramref name="baseLineStyle"/> 时，扩展方法在 composition 阶段从 <paramref name="gridStyle"/>
+        /// 同色派生一支 +1px 的笔作为 baseline，保证 baseline 跟 grid 视觉一脉相承又略加重。
+        /// </para>
+        /// </summary>
+        public static AxesBuilder AddRangeAxis(
+            this AxesBuilder builder,
+            DataPort<RealRange> rangePort,
+            FieldMeta meta,
+            DataPort<double> anchorPort,
+            DataPort<RealRange> hintsPort,
+            AxisPlacement placement = AxisPlacement.Right,
+            AxisHandle? handle = null,
+            LineStyle? baseLineStyle = null,
+            LineStyle? gridStyle = null,
+            IHevoBrush? baselineTextBrush = null)
+        {
+            var resolvedGrid = gridStyle ?? LineStyle.Create(Color.FromArgb(40, 255, 255, 255), 1);
+            // baseline pen 不再自动 +1。业务想要 anchor 处加粗强调，显式传 baseLineStyle；
+            // 不传则 anchor tick 跟普通 grid 同 pen，纯靠 OverrideTextBrush / 文字着色区分。
+            var anchorLineStyle = baseLineStyle;
+            // AxisStyleTrait.BaseLineStyle 用于 axis tick mark 短线笔，与 grid 强调脱钩。
+            // 这里仍提供一支 tick mark pen（默认 = grid pen），业务可独立配置。
+            var tickMarkStyle = baseLineStyle ?? resolvedGrid;
+
+            builder.Canvas.Add(new AxisFeature(
+                new AnchoredNumericTickProvider(meta.Format, anchorPort, hintsPort, meta.Provider, baselineTextBrush, anchorLineStyle),
+                $"RangeAxis_{placement}")
+            {
+                Mapping = ScaleMapping.Value,
+                Handle = handle ?? new AxisHandle(),
+                RangePort = rangePort,
+                AxisStyle = AxisStyleTrait.Create(placement, Colors.Gray, baseLineStyle: tickMarkStyle, fontSize: 11.0),
+                GridStyle = GridStyleTrait.Create(GridOrientation.Horizontal, resolvedGrid)
             });
             return builder;
         }
@@ -229,6 +353,11 @@ namespace Hevo.Charting
                 PointerSnapMode = options.SnapMode,
                 ValidDataCountPort = options.ValidCountPort,
                 ZoomConfig = options.ZoomConfig,
+                BoxZoomConfig = options.BoxZoomConfig,
+                InertiaPanConfig = options.InertiaPanConfig,
+                DoubleClickResetConfig = options.DoubleClickResetConfig,
+                RequireClickToActivate = options.RequireClickToActivate,
+                DismissOnEscape = options.DismissOnEscape,
                 ZoomStrategy = options.ZoomStrategy ?? new SmartAdaptiveZoomStrategy(),
                 AvailabilityPort = availabilityPort
             });
@@ -270,7 +399,12 @@ namespace Hevo.Charting
             // 💥 新增可选配置参数
             ZoomOptions? zoomConfig = null,
             DataFetchOptions? fetchConfig = null,
-            IZoomStrategy? zoomStrategy = null)
+            IZoomStrategy? zoomStrategy = null,
+            BoxZoomOptions? boxZoomConfig = null,
+            InertiaPanOptions? inertiaPanConfig = null,
+            DoubleClickResetOptions? doubleClickResetConfig = null,
+            bool requireClickToActivate = false,
+            bool dismissOnEscape = false)
         {
             DataPort<DataAvailability>? availabilityPort = onRequireDataAsync != null
                 ? new DataPort<DataAvailability>("DataAvailability")
@@ -283,6 +417,11 @@ namespace Hevo.Charting
                 PointerSnapMode = snapMode,
                 ValidDataCountPort = validCountPort,
                 ZoomConfig = zoomConfig ?? new ZoomOptions(),
+                BoxZoomConfig = boxZoomConfig ?? new BoxZoomOptions(),
+                InertiaPanConfig = inertiaPanConfig ?? new InertiaPanOptions(),
+                DoubleClickResetConfig = doubleClickResetConfig ?? new DoubleClickResetOptions(),
+                RequireClickToActivate = requireClickToActivate,
+                DismissOnEscape = dismissOnEscape,
                 ZoomStrategy = zoomStrategy ?? new SmartAdaptiveZoomStrategy(),
                 AvailabilityPort = availabilityPort
             });

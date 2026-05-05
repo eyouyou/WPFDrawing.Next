@@ -13,8 +13,10 @@ namespace Hevo.Charting.Features
         // 放到最后执行
         public override FeaturePhase Phase => FeaturePhase.Interaction;
 
-        // 你想监听的那个引脚
+        /// <summary>要监听的目标端口(任意 DataPort&lt;T&gt;)。任意写入且值真变都会打印到 Debug 输出。</summary>
         public object TargetPort { get; init; } = null!;
+
+        /// <summary>调试日志前缀,用于在多个雷达同时挂载时区分输出。</summary>
         public string Label { get; init; } = "Debug";
 
         protected override void OnCompose(ChartCell chart, RenderContext ctx, IRenderFlow<DataBlackboard> flow)

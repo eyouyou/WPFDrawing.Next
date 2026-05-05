@@ -49,15 +49,24 @@ namespace Hevo.Charting.Layers
         }
     }
 
+    /// <summary>悬浮窗渲染数据包(每帧由 <see cref="TooltipWidgetFeature{TX}"/> 生成下发)。</summary>
+    /// <param name="AnchorPos">光标锚点(通常是十字光标交叉点的物理坐标)。</param>
+    /// <param name="Rows">行数据内存切片(Name + Value + 颜色),0-GC 传递。</param>
+    /// <param name="Background">背景画刷。</param>
+    /// <param name="CornerRadius">圆角半径(像素)。</param>
+    /// <param name="IsVisible">false 时 layer 直接退帧,不动 widget tree。</param>
+    /// <param name="PositionMode">停靠模式(Auto / TopLeft / TopRight / BottomLeft / BottomRight)。</param>
+    /// <param name="Offset">悬浮窗与锚点的像素偏移。</param>
+    /// <param name="PlotArea">绘图区边界,用于 Auto 模式智能避让计算。</param>
     public record TooltipWidgetTrait(
-                HevoPoint AnchorPos,                  // 光标锚点
-                ReadOnlyMemory<TooltipRow> Rows,      // 内存切片，0-GC 传递数据
+                HevoPoint AnchorPos,
+                ReadOnlyMemory<TooltipRow> Rows,
                 IHevoBrush Background,
                 double CornerRadius,
                 bool IsVisible,
-                TooltipPositionMode PositionMode,     // 停靠模式
-                HevoPoint Offset,                     // 偏移量
-                HevoRect PlotArea                     // 绘图区边界
+                TooltipPositionMode PositionMode,
+                HevoPoint Offset,
+                HevoRect PlotArea
             ) : IVisualTrait;
 
     public partial class TooltipWidgetLayer : ChartLayer
@@ -88,6 +97,10 @@ namespace Hevo.Charting.Layers
 
         public TooltipWidgetLayer()
         {
+            // Tooltip 跟着鼠标动属于高频交互,Level 设 Interaction 让 ChartCell 路由到 _overlayCanvas,
+            // 不要污染 _drawingCanvas (那里挂着 CandleLayer 这种 N 大但低频的内容,需要 BitmapCache 隔离)。
+            Level = ChartLayerType.Interaction;
+
             _panel = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(10) };
 
             _widgetContainer = new Border

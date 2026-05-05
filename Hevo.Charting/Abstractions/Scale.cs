@@ -109,6 +109,9 @@ namespace Hevo.Charting.Abstractions
     /// </summary>
     public interface ISnappableScale
     {
+        /// <summary>当前 scale 是否真的会量化。false 时 <see cref="Snap"/> 必须返回入参原值，调用方据此跳过 ratcheting 等量化专属路径。</summary>
+        bool SnapEnabled { get; }
+
         /// <summary>量化逻辑位移 / 坐标到 scale 约束的颗粒度（如整数）。返回 0 表示本次不足以产生边界变化。</summary>
         double Snap(double logicalValue);
     }
@@ -116,28 +119,40 @@ namespace Hevo.Charting.Abstractions
     /// <summary>
     /// 轴体 tick 刻度模型。Value 直接是 double 逻辑值（时间轴场景下为"索引-as-double"，
     /// DateTime 在 StylePolicy 里由外部数组反查）。和 RealRange / IScale 保持 double 统一契约。
+    ///
+    /// <para>
+    /// <b>OverrideStyle</b>：per-tick 视觉样式覆盖。null 时走 GridStyleTrait.LineStyle 默认笔；
+    /// 非 null 时该 tick 用 OverrideStyle.LinePen 绘制（替代旧的 <c>IsBaseLine + BaseLineStyle</c> 二元方案）。
+    /// 业务侧需要"0% 横线加粗"等强调时，由 <see cref="ITickStylePolicy.GetOverrideStyle"/> 返回 LineStyle 即可。
+    /// </para>
     /// </summary>
     public struct TickModel
     {
         public string Label;
         public double Value;
         public double Ratio;
-        public bool IsBaseLine;
+        public bool IsAnchor;             // 语义：基准锚点（如 Y=0%），供 Mirror 轴 / hint 让位逻辑使用
+        public LineStyle? OverrideStyle;
         public IHevoBrush? OverrideTextBrush;
     }
 
     /// <summary>
     /// 💥 刻度原材料：策略只负责"选哪些逻辑值"，物理屏幕百分比 (Ratio) 由 AxisFeature
     ///    统一通过 IScale.Normalize 兜底计算，保证与 series 像素级对齐。
+    /// <para>
+    /// <b>IsAnchor</b>：策略层语义标记——"此 tick 是基准锚点"（如 Y=0% 横线）。
+    /// 用于 strategy 内部逻辑（hint 让位等）。视觉强调由 <see cref="ITickStylePolicy.GetOverrideStyle"/>
+    /// 在 ApplyStyle 阶段独立决定，与本字段解耦。
+    /// </para>
     /// </summary>
     public readonly struct TickMathResult
     {
         public readonly double Value;
-        public readonly bool IsBaseLine;
+        public readonly bool IsAnchor;
 
-        public TickMathResult(double value, bool isBaseLine)
+        public TickMathResult(double value, bool isAnchor = false)
         {
-            Value = value; IsBaseLine = isBaseLine;
+            Value = value; IsAnchor = isAnchor;
         }
     }
     /// <summary>
@@ -150,6 +165,10 @@ namespace Hevo.Charting.Abstractions
 
         // 决定覆写的颜色 (代替另外写一个 Processor)
         IHevoBrush? GetOverrideBrush(double value);
+
+        // 决定覆写的整条线样式（grid 加粗强调等）。null 走 GridStyleTrait.LineStyle 默认笔。
+        // 替代旧的"IsBaseLine 二元 + BaseLineStyle 自动 +1"方案——业务侧每根 tick 自带 pen，纯 per-tick 控制。
+        LineStyle? GetOverrideStyle(double value);
     }
 
     /// <summary>
@@ -187,9 +206,10 @@ namespace Hevo.Charting.Abstractions
                 {
                     // Ratio 故意不设：由 AxisFeature 通过全局 IScale 统一填充
                     Value = math.Value,
-                    IsBaseLine = math.IsBaseLine,
-                    Label = stylePolicy.FormatLabel(math.Value), // 穿上文字衣服
-                    OverrideTextBrush = stylePolicy.GetOverrideBrush(math.Value) // 穿上颜色衣服
+                    IsAnchor = math.IsAnchor,                                  // 语义传播
+                    Label = stylePolicy.FormatLabel(math.Value),               // 穿上文字衣服
+                    OverrideTextBrush = stylePolicy.GetOverrideBrush(math.Value), // 穿上颜色衣服
+                    OverrideStyle = stylePolicy.GetOverrideStyle(math.Value)   // 穿上线样式衣服
                 };
             }
         }

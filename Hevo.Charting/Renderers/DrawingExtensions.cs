@@ -46,15 +46,29 @@ namespace Hevo.Charting.Renderers
         /// </summary>
         /// <param name="pen">画笔描述符。建议使用预冻结的静态实例以优化性能。</param>
         /// <param name="points">顶点集合：顺序连接的坐标列表。内部直接引用该对象，请确保录制后不被外部清空。</param>
-        public static void DrawPolyline(this IDrawingSink sink, HevoPen? pen, IList<HevoPoint> points)
+        public static void DrawPolyline(this IDrawingSink sink, HevoPen? pen, List<HevoPoint> points)
             => sink.Push(new DrawCmd(DrawOp.DrawPolyline, pen, null, default, points));
 
         /// <summary>
         /// 绘制不连续线段组 (批量连线)。
         /// </summary>
         /// <param name="points">坐标列表：按照 (p1, p2), (p3, p4)... 的配对逻辑绘制。列表总数应为偶数。</param>
-        public static void DrawLineSegments(this IDrawingSink sink, HevoPen pen, IList<HevoPoint> points)
+        public static void DrawLineSegments(this IDrawingSink sink, HevoPen pen, List<HevoPoint> points)
             => sink.Push(new DrawCmd(DrawOp.DrawLineSegments, pen, null, default, points));
+
+        /// <summary>
+        /// 绘制单段三次贝塞尔曲线 —— 走 WPF 原生 <c>StreamGeometryContext.BezierTo</c>,
+        /// 比"自己采样成 N 段 polyline"既丝滑又便宜(WPF 用渲染层硬件抗锯齿,N 段法则因每段都是直线段
+        /// 而在长边上看出折角)。GraphViewer 连线层即用这条路径。
+        /// </summary>
+        /// <param name="pen">描边画笔。</param>
+        /// <param name="p0">起点。</param>
+        /// <param name="c1">第一控制点。</param>
+        /// <param name="c2">第二控制点。</param>
+        /// <param name="p3">终点。</param>
+        public static void DrawCubicBezier(this IDrawingSink sink, HevoPen? pen, HevoPoint p0, HevoPoint c1, HevoPoint c2, HevoPoint p3)
+            // RefData 装两个控制点(数组分配是这条命令唯一的开销;一帧 N 条边 N 次小分配,可忽略)。
+            => sink.Push(new DrawCmd(DrawOp.DrawCubicBezier, pen, null, new DrawPayload(p0, p3), new[] { c1, c2 }));
 
         /// <summary>
         /// 绘制复杂矢量路径 (SVG 格式支持)。
@@ -169,17 +183,6 @@ namespace Hevo.Charting.Renderers
         public static DrawingStateScope PushTransform(this IDrawingSink sink, Matrix3x2 m)
         {
             sink.Push(new DrawCmd(DrawOp.PushTransform, null, null, new DrawPayload(m)));
-            return new DrawingStateScope(sink);
-        }
-
-        /// <summary>
-        /// 开启像素级防模糊伞。
-        /// 奇数线宽自动偏移半像素，实现 Crisp Edges 锐利边缘。
-        /// </summary>
-        public static DrawingStateScope PushPixelSnapping(this IDrawingSink sink, float strokeThickness = 1.0f)
-        {
-            float offset = (strokeThickness % 2 != 0) ? 0.5f : 0.0f;
-            sink.Push(new DrawCmd(DrawOp.PushGuidelineSet, null, null, new DrawPayload(offset)));
             return new DrawingStateScope(sink);
         }
 

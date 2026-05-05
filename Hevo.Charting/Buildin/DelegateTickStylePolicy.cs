@@ -1,4 +1,5 @@
-﻿using Hevo.Charting.Abstractions;
+using Hevo.Charting.Abstractions;
+using Hevo.Charting.Core;
 
 namespace Hevo.Charting.Buildin
 {
@@ -9,20 +10,20 @@ namespace Hevo.Charting.Buildin
     {
         private readonly Func<double, string> _formatter;
         private readonly Func<double, IHevoBrush?>? _brushSelector;
-        private readonly Func<double, bool>? _baseLineSelector;
+        private readonly Func<double, LineStyle?>? _styleSelector;
 
         public DelegateTickStylePolicy(
             Func<double, string> formatter,
             Func<double, IHevoBrush?>? brushSelector = null,
-            Func<double, bool>? baseLineSelector = null)
+            Func<double, LineStyle?>? styleSelector = null)
         {
             _formatter = formatter;
             _brushSelector = brushSelector;
-            _baseLineSelector = baseLineSelector;
+            _styleSelector = styleSelector;
         }
 
         public string FormatLabel(double value) => _formatter(value);
         public IHevoBrush? GetOverrideBrush(double value) => _brushSelector?.Invoke(value);
-        public bool IsBaseLine(double value) => _baseLineSelector?.Invoke(value) ?? false;
+        public LineStyle? GetOverrideStyle(double value) => _styleSelector?.Invoke(value);
     }
 }

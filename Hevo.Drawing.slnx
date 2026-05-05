@@ -5,4 +5,5 @@
   </Configurations>
   <Project Path="Hevo.Charting.CodeAnalysis/Hevo.Charting.CodeAnalysis.csproj" Id="8ef253f3-4977-4fa0-bd57-d3de28cd8c0d" />
   <Project Path="Hevo.Charting/Hevo.Charting.csproj" Id="ed78d99a-b467-470a-972e-76a1d8edba49" />
+  <Project Path="Hevo.Drawing.LowCodeDemo/Hevo.Drawing.LowCodeDemo.csproj" />
 </Solution>

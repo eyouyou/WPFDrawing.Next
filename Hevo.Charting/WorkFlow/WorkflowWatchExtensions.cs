@@ -112,7 +112,7 @@ namespace Hevo.Charting
         public static IWorkflow<TArgs> OnUIEvent<TArgs>(this UIElement element, RoutedEvent routedEvent)
             where TArgs : RoutedEventArgs
         {
-            ArgumentNullException.ThrowIfNull(element);
+            if (element is null) throw new ArgumentNullException(nameof(element));
 
             return new WorkflowEngine<TArgs>((next, error) =>
             {
@@ -134,7 +134,7 @@ namespace Hevo.Charting
         public static IWorkflow<TArgs> OnRoutedEvent<TArgs>(this UIElement element, RoutedEvent routedEvent)
             where TArgs : RoutedEventArgs
         {
-            ArgumentNullException.ThrowIfNull(element);
+            if (element is null) throw new ArgumentNullException(nameof(element));
 
             return new WorkflowEngine<TArgs>((next, error) =>
             {
@@ -310,12 +310,16 @@ namespace Hevo.Charting
                             if (!_isActive)
                             {
                                 // 💥 真·暂停：thread-pool 线程完全归还，Resume 时 TrySetResult 即刻唤醒
-                                await _resumeTcs.Task.WaitAsync(_cts.Token);
+                                // .NET 5 没有 Task.WaitAsync(CancellationToken)，手写一段等价逻辑
+                                using (_cts.Token.Register(static s => ((TaskCompletionSource)s!).TrySetCanceled(), _resumeTcs))
+                                {
+                                    await _resumeTcs.Task.ConfigureAwait(false);
+                                }
                                 if (_cts.IsCancellationRequested) break;
                             }
 
-                            _clock.Advance();
-                            next(_clock.Snapshot());
+                            // 融合 Advance+Snapshot,单次 Interlocked.Increment 取新值
+                            next(_clock.AdvanceAndSnapshot());
                         }
                     }
                     catch (OperationCanceledException) { /* Dispose 触发的 Cancel 正常退出（含 TaskCanceledException）*/ }

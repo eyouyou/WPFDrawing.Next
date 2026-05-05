@@ -1,81 +1,67 @@
-﻿using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
 
 namespace Hevo.Charting.CodeAnalysis
 {
     [Generator(LanguageNames.CSharp)]
-    public class TraitExtensionGenerator : IIncrementalGenerator
+    public class TraitExtensionGenerator : ISourceGenerator
     {
-        public void Initialize(IncrementalGeneratorInitializationContext context)
+        public void Initialize(GeneratorInitializationContext context)
         {
-            var classDeclarations = context.SyntaxProvider
-                .CreateSyntaxProvider(
-                    predicate: static (s, _) => s is ClassDeclarationSyntax c && c.BaseList != null,
-                    // 核心修改：使用新的扫描逻辑
-                    transform: static (ctx, _) => GetConsumedTraitsFromMethodBody(ctx))
-                .Where(static m => m != null && m.Any());
-
-            context.RegisterSourceOutput(classDeclarations.Collect(), GenerateCode!);
+            context.RegisterForSyntaxNotifications(() => new Receiver());
         }
 
-        // ==========================================
-        // 💥 核心修改：直接扫描 OnUpdate 里的 Get<T>()
-        // ==========================================
-        private static IEnumerable<INamedTypeSymbol>? GetConsumedTraitsFromMethodBody(GeneratorSyntaxContext context)
+        public void Execute(GeneratorExecutionContext context)
+        {
+            if (context.SyntaxContextReceiver is not Receiver receiver) return;
+            EmitAll(context, receiver.AllTraits);
+        }
+
+        private static void Inspect(GeneratorSyntaxContext context, HashSet<INamedTypeSymbol> sink)
         {
             var classDeclaration = (ClassDeclarationSyntax)context.Node;
+            if (classDeclaration.BaseList == null) return;
+
             var semanticModel = context.SemanticModel;
+            if (semanticModel.GetDeclaredSymbol(classDeclaration) is not INamedTypeSymbol) return;
 
-            if (semanticModel.GetDeclaredSymbol(classDeclaration) is not INamedTypeSymbol classSymbol)
-                return null;
-
-            // 查找名为 OnUpdate 的方法
             var onUpdateMethod = classDeclaration.Members
                 .OfType<MethodDeclarationSyntax>()
                 .FirstOrDefault(m => m.Identifier.Text == "OnUpdate");
 
-            if (onUpdateMethod == null) return null;
+            if (onUpdateMethod == null) return;
 
-            var traits = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
-
-            // 遍历方法体内的所有方法调用 (InvocationExpression)
             var invocations = onUpdateMethod.DescendantNodes().OfType<InvocationExpressionSyntax>();
             foreach (var invocation in invocations)
             {
-                // 寻找类似 data.Get<GridStyleTrait>() 的结构
                 if (invocation.Expression is MemberAccessExpressionSyntax memberAccess &&
                     memberAccess.Name is GenericNameSyntax genericName &&
                     genericName.Identifier.Text == "Get")
                 {
-                    // 提取尖括号里的类型 GridStyleTrait
                     var typeSyntax = genericName.TypeArgumentList.Arguments.FirstOrDefault();
                     if (typeSyntax != null)
                     {
                         var typeInfo = semanticModel.GetTypeInfo(typeSyntax);
                         if (typeInfo.Type is INamedTypeSymbol traitSymbol)
                         {
-                            traits.Add(traitSymbol);
+                            sink.Add(traitSymbol);
                         }
                     }
                 }
             }
-
-            return traits.Any() ? traits : null;
         }
 
-        private static void GenerateCode(SourceProductionContext context, ImmutableArray<IEnumerable<INamedTypeSymbol>> traitGroups)
+        private static void EmitAll(GeneratorExecutionContext context, HashSet<INamedTypeSymbol> traits)
         {
-            var uniqueTraits = traitGroups
-                    .SelectMany(t => t)
-                    .GroupBy(t => t.OriginalDefinition, SymbolEqualityComparer.Default)
-                    .Select(g => g.Key as INamedTypeSymbol)
-                    .Where(t => t != null)
-                    .ToList();
+            var uniqueTraits = traits
+                .GroupBy(t => t.OriginalDefinition, SymbolEqualityComparer.Default)
+                .Select(g => g.Key as INamedTypeSymbol)
+                .Where(t => t != null)
+                .ToList();
 
             if (!uniqueTraits.Any()) return;
 
@@ -91,10 +77,7 @@ namespace Hevo.Charting.CodeAnalysis
 
             foreach (var trait in uniqueTraits)
             {
-                if(trait == null)
-                {
-                    continue;
-                }
+                if (trait == null) continue;
                 var traitName = trait.Name;
                 var traitFullName = trait.ToDisplayString();
                 var methodName = traitName.EndsWith("Trait") ? traitName.Substring(0, traitName.Length - 5) : traitName;
@@ -105,7 +88,6 @@ namespace Hevo.Charting.CodeAnalysis
 
                 string methodGenericArgs = string.IsNullOrEmpty(typeParams) ? "<TLayer>" : $"<TLayer, {typeParams}>";
 
-                // 注意：这里依然保留对 IConsumes 的泛型约束，确保类型安全
                 sb.AppendLine($"        public static VisualProxy<TLayer> {methodName}{methodGenericArgs}(");
                 sb.AppendLine($"            this VisualProxy<TLayer> proxy, {traitFullName} trait)");
                 sb.AppendLine($"            where TLayer : IChartLayer, IConsumes<{traitFullName}>");
@@ -119,6 +101,20 @@ namespace Hevo.Charting.CodeAnalysis
             sb.AppendLine("}");
 
             context.AddSource("TraitExtensions.g.cs", SourceText.From(sb.ToString(), Encoding.UTF8));
+        }
+
+        private sealed class Receiver : ISyntaxContextReceiver
+        {
+            public HashSet<INamedTypeSymbol> AllTraits { get; } =
+                new(SymbolEqualityComparer.Default);
+
+            public void OnVisitSyntaxNode(GeneratorSyntaxContext context)
+            {
+                if (context.Node is ClassDeclarationSyntax c && c.BaseList != null)
+                {
+                    Inspect(context, AllTraits);
+                }
+            }
         }
     }
 }

@@ -32,7 +32,8 @@ namespace Hevo.Charting.Features
             double paddingRatio = 0.05,
             AutoScaleStrategy strategy = AutoScaleStrategy.Normal,
             DataPort<double>? referencePort = null,
-            DataPort<double>? baseLinePort = null) // 💥 架构红线：保持 DoubleRange 纯洁性，基准线必须走独立引脚
+            DataPort<double>? baseLinePort = null, // 💥 架构红线：保持 DoubleRange 纯洁性，基准线必须走独立引脚
+            DataPort<RealRange>? rawExtremaPort = null) // 视口内未经扩展的真实 high/low，给 AnchoredTick 使用
         {
             builder.Canvas.Add(new UniversalAutoScaleFeature
             {
@@ -41,14 +42,28 @@ namespace Hevo.Charting.Features
                 PaddingRatio = paddingRatio,
                 Strategy = strategy,
                 ReferencePort = referencePort,
-                BaseLinePort = baseLinePort
+                BaseLinePort = baseLinePort,
+                RawExtremaPort = rawExtremaPort
             });
             return builder;
         }
     }
 
     /// <summary>
-    /// 💥 宇宙级极值算子：基于视口 (Viewport) 动态切片计算极值，完美支持全场拖拽缩放
+    /// 💥 宇宙级极值算子：基于视口 (Viewport) 动态切片计算极值，完美支持全场拖拽缩放。
+    /// <para>
+    /// <b>典型用法</b>:用 <see cref="AutoScaleFeatureExtensions.SetupAutoScale"/> DSL 装配,例如分时图围绕昨收价对称:
+    /// <code>
+    /// env.SetupAutoScale(
+    ///     yRangePort: ports.PriceRange,
+    ///     valuePorts: new[] { ports.Price, ports.Avg },
+    ///     strategy:   AutoScaleStrategy.SymmetricReference,
+    ///     referencePort: ports.PrevClose);
+    /// </code>
+    /// </para>
+    /// <para>
+    /// <b>数据流</b>:Viewport.ActiveRange + ValuePorts 任一变化 → Watch 在写入链同步算 min/max → 按 Strategy 修剪 → 写回 YRangePort / BaseLinePort / RawExtremaPort。
+    /// </para>
     /// </summary>
     // 📌 历史 race 修复记录（2026-04-23）：
     //   TimeShareSchema 首帧 / resize 首帧偶发线画出 plotArea 外。
@@ -61,14 +76,28 @@ namespace Hevo.Charting.Features
         // 💥 铁律：执行阶段必须在 ScalePre(50)，确保在真实投影 (Project) 发生前算好极值
         public override FeaturePhase Phase => (FeaturePhase)50;
 
-        public required DataPort<ReadOnlyMemory<double>>[] ValuePorts { get; init; }
-        public required DataPort<RealRange> YRangePort { get; init; }
-        public DataPort<double>? ReferencePort { get; init; } // 仅在 SymmetricReference (分时图) 时需要
+        /// <summary>参与极值统计的所有数据列(K 线 OHLC、副指标等同口径堆叠)。视口内逐列扫 min/max。</summary>
+        public DataPort<ReadOnlyMemory<double>>[] ValuePorts { get; init; } = null!;
 
-        // 💥 接收外部传入的独立基准线引脚 (柱状图等需要从 0 或 BaseLine 向上/下画的图层消费)
+        /// <summary>计算结果输出端口(写回 RealRange)。下游 Axis / Series 共用同一根。</summary>
+        [PortDirection(PortDirection.Output)]
+        public DataPort<RealRange> YRangePort { get; init; } = null!;
+
+        /// <summary>对称参考值端口。仅 <see cref="AutoScaleStrategy.SymmetricReference"/> 用 —— 分时图传昨收价。</summary>
+        public DataPort<double>? ReferencePort { get; init; }
+
+        /// <summary>💥 基准线输出端口(0 / 昨收价 / 半轴悬浮等)。柱状图等"从基线向上/下画"的图层消费。架构红线:必须独立端口,不可塞回 RealRange 破坏其纯度。</summary>
+        [PortDirection(PortDirection.Output)]
         public DataPort<double>? BaseLinePort { get; init; }
 
+        /// <summary>视口内未经对称/padding 扩展的真实 high/low 输出端口。供 AnchoredNiceTick 把当日极值标在 Y 轴上。</summary>
+        [PortDirection(PortDirection.Output)]
+        public DataPort<RealRange>? RawExtremaPort { get; init; }
+
+        /// <summary>极值上下扩展比例(默认 5%),防止数据贴死画板上下边缘。</summary>
         public double PaddingRatio { get; init; } = 0.05;
+
+        /// <summary>极值数学策略:Normal / IncludeZero / SymmetricZero / SymmetricReference / ZeroWithSpace。</summary>
         public AutoScaleStrategy Strategy { get; init; } = AutoScaleStrategy.Normal;
 
         protected override void OnCompose(ChartCell chart, RenderContext ctx, IRenderFlow<DataBlackboard> flow)
@@ -205,6 +234,12 @@ namespace Hevo.Charting.Features
                         if (BaseLinePort != null && !double.IsNaN(baseLine))
                         {
                             board.WriteIfChanged(BaseLinePort, baseLine);
+                        }
+
+                        // 3. 视口内的真实 high/low（未经对称扩展），供 AnchoredTick 消费
+                        if (RawExtremaPort != null)
+                        {
+                            board.WriteIfChanged(RawExtremaPort, new RealRange(globalMin, globalMax));
                         }
                     }
                 }

@@ -13,6 +13,14 @@ namespace Hevo.Charting.DevTools
     /// </summary>
     public class MemoryRadarControl : Grid
     {
+        // 单例 frozen brush:跨所有 MemoryRadarControl 实例共享,且 FlashMemoryExpansion
+        // 不再 new 新 brush,数据扩张时直接 swap 引用。Freeze 让 WPF 走 fast-path 渲染。
+        private static readonly Brush s_idleFill = MakeFrozen(new SolidColorBrush(Color.FromRgb(45, 45, 50)));
+        private static readonly Brush s_flashFill = MakeFrozen(new SolidColorBrush(Color.FromRgb(40, 150, 60)));
+        private static readonly Brush s_thumbFill = MakeFrozen(new SolidColorBrush(Color.FromArgb(180, 0, 122, 204)));
+
+        private static Brush MakeFrozen(SolidColorBrush b) { b.Freeze(); return b; }
+
         private readonly Rectangle _totalMemoryBar;
         private readonly Rectangle _viewportThumb;
         private readonly TextBlock _statsText;
@@ -28,7 +36,7 @@ namespace Hevo.Charting.DevTools
             // 1. 底色条：代表物理总容量 (LogicalLength)
             _totalMemoryBar = new Rectangle
             {
-                Fill = new SolidColorBrush(Color.FromRgb(45, 45, 50)),
+                Fill = s_idleFill,
                 RadiusX = 4,
                 RadiusY = 4,
                 HorizontalAlignment = HorizontalAlignment.Stretch
@@ -37,7 +45,7 @@ namespace Hevo.Charting.DevTools
             // 2. 高亮滑块：代表屏幕视口 (ActiveRange)
             _viewportThumb = new Rectangle
             {
-                Fill = new SolidColorBrush(Color.FromArgb(180, 0, 122, 204)), // 半透明蓝色
+                Fill = s_thumbFill,
                 RadiusX = 4,
                 RadiusY = 4,
                 HorizontalAlignment = HorizontalAlignment.Left
@@ -152,13 +160,14 @@ namespace Hevo.Charting.DevTools
 
         private void FlashMemoryExpansion()
         {
-            // 数据进来时，背景条瞬间变成绿色，然后 300 毫秒恢复深灰
-            _totalMemoryBar.Fill = new SolidColorBrush(Color.FromRgb(40, 150, 60));
+            // 数据进来时，背景条瞬间变成绿色，然后 300 毫秒恢复深灰。
+            // brush 走静态 frozen 单例,既不分配也不 Freeze 临时对象。
+            _totalMemoryBar.Fill = s_flashFill;
 
             var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
             timer.Tick += (s, e) =>
             {
-                _totalMemoryBar.Fill = new SolidColorBrush(Color.FromRgb(45, 45, 50));
+                _totalMemoryBar.Fill = s_idleFill;
                 timer.Stop();
             };
             timer.Start();

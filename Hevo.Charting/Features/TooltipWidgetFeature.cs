@@ -1,37 +1,75 @@
 ﻿using Hevo.Charting.Core;
 using Hevo.Charting.Layers;
 using Hevo.Charting.LowCode;
+using Hevo.Charting.WorkFlow;
 using System.Windows;
 using System.Windows.Media;
 
 namespace Hevo.Charting.Features
 {
     /// <summary>
-    /// 💥 终极 0-GC 悬浮信息窗特征 (数据与坐标彻底解耦，拥抱 FieldMeta 与 HevoPoint)
+    /// 非泛型基类——仅用作类型识别(典型:<see cref="IFeatureContext.Remove{TFeature}"/>
+    /// 不接受泛型抽象,所以装饰器要批量摘 tooltip 必须有这个基类作为 anchor)。
     /// </summary>
-    public class TooltipWidgetFeature<TX> : ChartFeature
+    public abstract class TooltipWidgetFeature : ChartFeature { }
+
+    /// <summary>
+    /// 💥 终极 0-GC 悬浮信息窗特征 (数据与坐标彻底解耦，拥抱 FieldMeta 与 HevoPoint)。
+    /// <para>
+    /// <b>典型用法</b>:跟 Crosshair 共享同一个 hitPort 即可联动:
+    /// <code>
+    /// interactions.Add(new TooltipWidgetFeature&lt;DateTime&gt;
+    /// {
+    ///     HitStatePort   = hitPort,
+    ///     XAxisDataPort  = ports.Time,
+    ///     XMeta          = FieldMeta.Literal("时间", brush, "yyyy-MM-dd HH:mm"),
+    ///     PositionMode   = TooltipPositionMode.Auto,
+    /// });
+    /// </code>
+    /// </para>
+    /// <para>
+    /// <b>数据流</b>:HitStatePort + XAxisDataPort → 拼第一行;遍历所有 Layer 的 MetaTrait + DoubleSeriesDataTrait → 拼后续行 → 下发 TooltipWidgetTrait → TooltipWidgetLayer 排版渲染。
+    /// </para>
+    /// </summary>
+    public class TooltipWidgetFeature<TX> : TooltipWidgetFeature
     {
         public override FeaturePhase Phase => FeaturePhase.Interaction;
 
+        /// <summary>命中状态端口:由 <see cref="ChartInteractionFeature"/> 写入,Tooltip 据此决定显隐与定位。</summary>
         public DataPort<PointerHitState?> HitStatePort { get; init; } = null!;
+
+        /// <summary>X 轴原始数据端口(时间/索引值),用于 Tooltip 第一行的 X 字段显示。</summary>
         public DataPort<ReadOnlyMemory<TX>> XAxisDataPort { get; init; } = null!;
 
+        /// <summary>悬浮窗停靠模式。Auto = 智能避让(默认右下,撞边自动翻转);其他值锁死方向。</summary>
         public TooltipPositionMode PositionMode { get; init; } = TooltipPositionMode.Auto;
 
-        // 💥 换装轻量级的纯 float 偏移量
+        /// <summary>悬浮窗与十字光标交点的像素偏移,默认右下 12px。</summary>
         public HevoPoint Offset { get; init; } = new HevoPoint(12f, 12f);
 
-        // 💥 完美大一统：用 FieldMeta 替代之前所有零散的 Name, Format, Brush 属性！
+        /// <summary>X 字段元数据(名/格式/画刷)。null 时退化到"Time" + ToString + 白色。</summary>
         public FieldMeta? XMeta { get; init; }
 
+        // Tooltip 渲染层(Interaction 级)。
         private readonly TooltipWidgetLayer _layer = new();
+        // 默认半透明深色底,业务可在 OnCompose 替换。
         private readonly IHevoBrush _defaultBg = new HevoSolidBrush(Color.FromArgb(230, 30, 30, 30));
+        // 空行 trait 的单例,隐藏 Tooltip 时复用以避免每帧分配。
         private static readonly TooltipRow[] _emptyRows = Array.Empty<TooltipRow>();
+        // 行缓冲(64 行硬上限)。每帧从下标 0 累积,最后用 AsMemory(0, count) 切出活跃区。
         private readonly TooltipRow[] _rowBuffer = new TooltipRow[64];
+
+        // 💥 鼠标是否压在本 cell 上:hit 端口在联动 dashboard 下被镜像同步,无法回答
+        // "这次 hit 是不是我自己产生的"。直接订阅本 cell 的 MouseEnter/Leave 是最就近的判定源——
+        //   tooltip 仅在自家热区时弹出,镜像来的远端 hit 一律静默。单 cell 场景与改造前一致。
+        private bool _isMouseOverChart;
 
         protected override void OnCompose(ChartCell chart, RenderContext ctx, IRenderFlow<DataBlackboard> flow)
         {
             AttachLayer(_layer);
+
+            WithBoard(this.OnMouse(UIElement.MouseEnterEvent)).Subscribe(_ => { _isMouseOverChart = true; }).OwnedBy(this);
+            WithBoard(this.OnMouse(UIElement.MouseLeaveEvent)).Subscribe(_ => { _isMouseOverChart = false; }).OwnedBy(this);
         }
 
         protected override void OnProject(FeatureContext ctx)
@@ -40,8 +78,8 @@ namespace Hevo.Charting.Features
             var (hitState, _) = ctx.UsePort(HitStatePort);
             var (xData, _) = ctx.UsePort(XAxisDataPort);
 
-            // 越界隐藏
-            if (hitState == null || hitState.Value.IsOutOfBounds)
+            // 越界隐藏;鼠标不在本 cell 也隐藏(联动 dashboard 下镜像 hit 来自他 cell,本 cell 不应弹 tooltip)
+            if (hitState == null || hitState.Value.IsOutOfBounds || !_isMouseOverChart)
             {
                 PublishEmpty(ctx);
                 return;

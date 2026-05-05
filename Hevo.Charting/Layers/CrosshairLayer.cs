@@ -102,16 +102,16 @@ namespace Hevo.Charting.Layers
             if (plotTrait == null || plotTrait.Area.IsEmpty || interaction == null || !interaction.IsActive) return;
 
             HevoRect plot = plotTrait.Area;
-            // 假设你 InteractionTrait 内部也同步把 HighlightPoint 换成了 HevoPoint
-            HevoPoint p = interaction.HighlightPoint;
 
-            float clampedX = Math.Clamp(p.X, plot.Left, plot.Right);
-            float clampedY = Math.Clamp(p.Y, plot.Top, plot.Bottom);
+            float clampedX = Math.Clamp(interaction.HighlightX, plot.Left, plot.Right);
+            // HighlightY 为 null 表示上游本帧不提供 Y 焦点(水平方向无意义),layer 跳过水平线/Y 标签。
+            float? clampedY = interaction.HighlightY is float y ? Math.Clamp(y, plot.Top, plot.Bottom) : null;
 
             using (draw.PushClip(plot))
             {
                 draw.DrawLine(style.LinePen, new HevoPoint(clampedX, plot.Top), new HevoPoint(clampedX, plot.Bottom));
-                draw.DrawLine(style.LinePen, new HevoPoint(plot.Left, clampedY), new HevoPoint(plot.Right, clampedY));
+                if (clampedY is float cy)
+                    draw.DrawLine(style.LinePen, new HevoPoint(plot.Left, cy), new HevoPoint(plot.Right, cy));
             }
 
             if (interaction.Dots != null && interaction.Dots.Count > 0)
@@ -129,7 +129,7 @@ namespace Hevo.Charting.Layers
                     new HevoPoint(clampedX, plot.Bottom), TextAlignX.Center, TextAlignY.Top, interaction.LabelX.BackgroundBrush, style.TooltipBorderPen, (float)style.PaddingX, (float)style.PaddingY);
             }
 
-            if (interaction.YLabels != null && interaction.YLabels.Count > 0)
+            if (clampedY is float labelY && interaction.YLabels != null && interaction.YLabels.Count > 0)
             {
                 foreach (var lbl in interaction.YLabels)
                 {
@@ -137,11 +137,11 @@ namespace Hevo.Charting.Layers
                     // 如果为 null，就用当前的 plot.Left / Right 兜底，完美对齐带 Padding 的画布边缘！
                     double drawX = lbl.CustomPhysicalAnchor ?? (lbl.Placement == AxisPlacement.Right ? plot.Right : plot.Left);
 
-                    // 🚀 智能文本对齐避让：如果在左边/中间，向左排版；在右边向右排版
-                    var alignX = (lbl.CustomPhysicalAnchor.HasValue || lbl.Placement == AxisPlacement.Left) ? TextAlignX.Right : TextAlignX.Left;
+                    // 🚀 文本对齐严格按 Placement：左轴向左排版，右轴向右排版（CustomPhysicalAnchor 只决定贴在哪条轴上）
+                    var alignX = lbl.Placement == AxisPlacement.Right ? TextAlignX.Left : TextAlignX.Right;
 
                     draw.DrawText(lbl.Text, style.Typeface, style.TextBrush, (float)style.FontSize,
-                        new HevoPoint((float)drawX, clampedY), alignX, TextAlignY.Center, lbl.BackgroundBrush, style.TooltipBorderPen, (float)style.PaddingX, (float)style.PaddingY);
+                        new HevoPoint((float)drawX, labelY), alignX, TextAlignY.Center, lbl.BackgroundBrush, style.TooltipBorderPen, (float)style.PaddingX, (float)style.PaddingY);
                 }
             }
         }

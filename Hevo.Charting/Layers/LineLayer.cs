@@ -4,24 +4,31 @@ using System.Windows.Media;
 
 namespace Hevo.Charting.Core
 {
-    public record LineStyle(HevoPen LinePen, bool IsSmooth = false) : IVisualTrait
+    /// <summary>线段样式 trait。</summary>
+    /// <param name="LinePen">线条画笔(画刷 + 粗细 + 虚线模式)。</param>
+    /// <param name="UseSpline">true = 走 Catmull-Rom 样条平滑;false = 直线段。仅控制几何插值,与像素对齐 / AA 无关。</param>
+    /// <param name="SplineDetail">UseSpline=true 时每两个原始点间的细分段数,默认 8。
+    /// 调小渲染更省(肉眼差异不大),调大更圆滑但渲染开销线性增长;UseSpline=false 时此参数无效。</param>
+    public record LineStyle(HevoPen LinePen, bool UseSpline = false, int SplineDetail = 8) : IVisualTrait
     {
         // 💥 1. 核心工厂方法：接收最高抽象的 IHevoBrush
-        public static LineStyle Create(IHevoBrush brush, double thickness = 1.0, bool isSmooth = false)
+        // UseSpline 仅控制 LineLayer 的几何插值（Catmull-Rom 样条 vs 直线段），与像素对齐 / AA 都无关。
+        // 像素对齐由渲染器内部 PixelSnap + fill rect 路径自动处理（§12 / §13）。
+        public static LineStyle Create(IHevoBrush brush, double thickness = 1.0, bool useSpline = false)
         {
-            return new LineStyle(new HevoPen(brush, thickness), isSmooth);
+            return new LineStyle(new HevoPen(brush, thickness), useSpline);
         }
 
         // 语法糖：向下兼容 Color 调用
-        public static LineStyle Create(Color color, double thickness = 1.0, bool isSmooth = false)
+        public static LineStyle Create(Color color, double thickness = 1.0, bool useSpline = false)
         {
-            return new LineStyle(new HevoPen(new HevoSolidBrush(color), thickness), isSmooth);
+            return new LineStyle(new HevoPen(new HevoSolidBrush(color), thickness), useSpline);
         }
 
         // 语法糖：直接从资源键生成
-        public static LineStyle FromResource(string resourceKey, double thickness = 1.0, bool isSmooth = false)
+        public static LineStyle FromResource(string resourceKey, double thickness = 1.0, bool useSpline = false)
         {
-            return new LineStyle(new HevoPen(new HevoResourceBrush(resourceKey), thickness), isSmooth);
+            return new LineStyle(new HevoPen(new HevoResourceBrush(resourceKey), thickness), useSpline);
         }
 
         public static readonly LineStyle Default = Create(Colors.Blue, 1.0, false);
@@ -30,7 +37,7 @@ namespace Hevo.Charting.Core
     public static class LineLayerExtensions
     {
         // 💥 2. 核心扩展方法：参数升级为 IHevoBrush
-        public static VisualProxy<T> WithLine<T>(this VisualProxy<T> proxy, IHevoBrush? brush = null, double? thickness = null, bool? isSmooth = null)
+        public static VisualProxy<T> WithLine<T>(this VisualProxy<T> proxy, IHevoBrush? brush = null, double? thickness = null, bool? useSpline = null)
             where T : IChartLayer, IConsumes<LineStyle>
         {
             return proxy.UpdateData<LineStyle>(old =>
@@ -38,30 +45,31 @@ namespace Hevo.Charting.Core
                 var baseStyle = old ?? LineStyle.Default;
 
                 HevoPen newPen = baseStyle.LinePen;
+                bool finalUseSpline = useSpline ?? baseStyle.UseSpline;
 
-                // 如果外部传入了新画刷或新线宽，才需要重新构建 HevoPen
+                // 仅 brush / thickness 变更才需要重建 pen（UseSpline 是 LineStyle 自身字段，与 pen 无关）。
                 if (brush != null || thickness.HasValue)
                 {
                     // 💥 终极避坑：安全的多态获取！绝不用强转去拿 Color！
                     // 旧画刷可能是 Solid 也可能是 Resource，不管它是什么，直接复用它的 IHevoBrush 接口！
                     var b = brush ?? baseStyle.LinePen.Brush;
                     var t = thickness ?? baseStyle.LinePen.Thickness;
-                    newPen = new HevoPen(b, t);
+                    newPen = baseStyle.LinePen with { Brush = b, Thickness = t };
                 }
 
                 return baseStyle with
                 {
                     LinePen = newPen,
-                    IsSmooth = isSmooth ?? baseStyle.IsSmooth
+                    UseSpline = finalUseSpline
                 };
             });
         }
 
         // 💥 3. 语法糖扩展方法：保护外部业务层之前写死的 Color 代码不用大改
-        public static VisualProxy<T> WithLine<T>(this VisualProxy<T> proxy, Color color, double? thickness = null, bool? isSmooth = null)
+        public static VisualProxy<T> WithLine<T>(this VisualProxy<T> proxy, Color color, double? thickness = null, bool? useSpline = null)
             where T : IChartLayer, IConsumes<LineStyle>
         {
-            return proxy.WithLine(new HevoSolidBrush(color), thickness, isSmooth);
+            return proxy.WithLine(new HevoSolidBrush(color), thickness, useSpline);
         }
     }
 
@@ -69,6 +77,9 @@ namespace Hevo.Charting.Core
     {
         // 跨帧复用的工作缓冲(WPF/Skia 渲染均在同一 UI tick 内同步消费 front buffer,
         // 下一帧 OnUpdate 回到本方法时,上一帧引用已被 ChartCell.PostRender + back/front swap 后的 Clear 释放。)
+        // Capacity 是经验水位线:2048 ≈ 全屏可见 ~1500 根 K 线 + 头尾 trim 点的常态;
+        // 8192 = spline 默认 detail=8 时 _trimmedPoints * 4~8 倍展开,留出余量避免运行时扩容拷贝。
+        // 不暴露成配置:数值是"避免首次扩容"的优化下限,业务调小反而加重 GC、调大也不省内存。
         private readonly List<HevoPoint> _screenPoints = new(2048);
         private readonly List<HevoPoint> _trimmedPoints = new(2048);
         private readonly List<HevoPoint> _smoothPoints = new(8192);
@@ -76,7 +87,8 @@ namespace Hevo.Charting.Core
         public LineLayer()
         {
             Name = "LineSeries";
-            Mode = RenderMode.Hardware;
+            // [全 WPF 实验] 同 CandleLayer 注释,Skia 全屏特定尺寸 ±1 列错位临时全切 WPF。
+            Mode = RenderMode.Software;
             Level = ChartLayerType.Main;
         }
 
@@ -98,18 +110,24 @@ namespace Hevo.Charting.Core
 
             if (area.Width <= 0 || area.Height <= 0 || rangeX.Span <= 0 || rangeY.Span <= 0) return;
 
-            int count = doubleSeries!.FieldValues[0].Length;
+            int count = doubleSeries.FieldValues[0].Length;
 
-            // 采样口径与 UniversalAutoScaleFeature 对齐:Floor/Ceiling 在非整数 rangeX 时天然具备 ±1 视觉 padding。
-            int startIndex = Math.Clamp((int)Math.Floor(rangeX.Min), 0, count - 1);
-            int endIndex = Math.Clamp((int)Math.Ceiling(rangeX.Max), 0, count - 1);
+            // 视口可见 domain 区间:用 Denormalize 拿到 plotArea 真实覆盖的边界(兼容 CategoryScale 的 ±Offset 与反向 Scale)。
+            // permissive 采样:Floor/Ceiling 各往外扩一根,确保跨过 plotArea 边界的 chord 也能被 TrimPolylineToPlotArea 精确裁出。
+            // 是否出现"边缘半段"是 Scale.SnapEdges + Interaction 决定的涌现行为,不在 Layer 这一层做硬编码取舍。
+            double leftDomain = axis.DomainScale.Denormalize(0.0, rangeX);
+            double rightDomain = axis.DomainScale.Denormalize(1.0, rangeX);
+            double visibleMin = Math.Min(leftDomain, rightDomain);
+            double visibleMax = Math.Max(leftDomain, rightDomain);
+            int startIndex = Math.Clamp((int)Math.Floor(visibleMin), 0, count - 1);
+            int endIndex = Math.Clamp((int)Math.Ceiling(visibleMax), 0, count - 1);
 
             if (startIndex > endIndex) return;
 
             _screenPoints.Clear();
             _trimmedPoints.Clear();
 
-            ReadOnlySpan<double> doubleSpan = doubleSeries!.FieldValues[0].Span;
+            ReadOnlySpan<double> doubleSpan = doubleSeries.FieldValues[0].Span;
 
             for (int i = startIndex; i <= endIndex; i++)
             {
@@ -130,10 +148,10 @@ namespace Hevo.Charting.Core
             TrimPolylineToPlotArea(_screenPoints, area, _trimmedPoints);
             if (_trimmedPoints.Count < 2) return;
 
-            if (style.IsSmooth)
+            if (style.UseSpline)
             {
                 _smoothPoints.Clear();
-                SplineAlgorithm.GetCatmullRomSpline(_trimmedPoints, 0.5, 8, _smoothPoints);
+                SplineAlgorithm.GetCatmullRomSpline(_trimmedPoints, style.SplineDetail, _smoothPoints);
                 draw.DrawPolyline(style.LinePen, _smoothPoints);
             }
             else
@@ -182,9 +200,10 @@ namespace Hevo.Charting.Core
     public static class SplineAlgorithm
     {
         /// <summary>
-        /// 0-GC 版:输出写入调用方提供的 result 缓冲。alpha 当前未使用(预留接口)。
+        /// 0-GC 版 Catmull-Rom 样条:每两个原始点之间细分 <paramref name="detail"/> 段,结果写入调用方提供的 <paramref name="result"/> 缓冲。
+        /// 注:历史上有 alpha 参数(centripetal 形式),实现里从未生效已删除;若未来要做 centripetal 再单开一个重载。
         /// </summary>
-        public static void GetCatmullRomSpline(List<HevoPoint> points, double alpha, int detail, List<HevoPoint> result)
+        public static void GetCatmullRomSpline(List<HevoPoint> points, int detail, List<HevoPoint> result)
         {
             if (points.Count < 2)
             {

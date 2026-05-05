@@ -376,19 +376,24 @@ namespace Hevo.Charting
         /// </summary>
         public static IWorkflow<T> Throttle<T>(this IWorkflow<T> source, TimeSpan interval)
         {
+            // 用 Stopwatch.GetTimestamp() 替代 DateTime.Now：
+            //   DateTime.Now 走 OS 时间 + TimeZone offset 计算,单次 ~100ns 级别;
+            //   Stopwatch.GetTimestamp() 直接 QPC 调用,~10ns,对每帧 mouse move 命中显著。
+            long intervalTicks = (long)((double)interval.Ticks * System.Diagnostics.Stopwatch.Frequency / TimeSpan.TicksPerSecond);
+
             return new WorkflowEngine<T>((next, error) =>
             {
-                DateTime lastEmitTime = DateTime.MinValue;
+                long lastEmitTicks = long.MinValue / 2; // 留足空间避免首次差值 underflow
                 object gate = new object();
 
                 return source.Subscribe(data =>
                 {
                     lock (gate)
                     {
-                        var now = DateTime.Now;
-                        if ((now - lastEmitTime) >= interval)
+                        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+                        if ((now - lastEmitTicks) >= intervalTicks)
                         {
-                            lastEmitTime = now;
+                            lastEmitTicks = now;
                             next(data);
                         }
                     }
@@ -400,48 +405,60 @@ namespace Hevo.Charting
         /// 防抖算子 (Debounce)：必须在上游保持静默达到指定时间后，才放行最后一个信号。如果期间再来信号，倒计时清零重置。
         /// 适用于：窗口拖拽调整大小 (Resize) 结束、搜索框打字停顿后统一发起网络请求。
         /// </summary>
+        // 实现方式:用单例 System.Threading.Timer + Change() 重置语义。
+        //   旧实现每个上游事件都 new CancellationTokenSource + Task.Delay + ContinueWith + 闭包(~3-5 alloc/事件),
+        //   resize / mouse drag 一秒灌进 60 个事件等于 180-300 个对象,直接进 Gen0 GC 噪音。
+        //   新实现 setup 阶段 new 一个 Timer,每次新数据只调 Timer.Change(delay, infinite) 重新计时,
+        //   per-emit 零分配。延迟到达后 Timer 在 ThreadPool 触发,经 syncContext 回主线程发射。
         public static IWorkflow<T> Debounce<T>(this IWorkflow<T> source, TimeSpan delay)
         {
             return new WorkflowEngine<T>((next, error) =>
             {
-                CancellationTokenSource? currentCts = null;
                 object gate = new object();
+                T pendingData = default!;
+                bool hasPending = false;
 
                 // 💥 线程调度保护核心：捕获调用管线装配时的同步上下文 (如 WPF 的 Dispatcher)
                 var syncContext = SynchronizationContext.Current;
+
+                // SendOrPostCallback 在 Subscribe scope 一次性 new,Post 时不再 per-fire 闭包分配。
+                // state 槽位塞 boxed T(引用类型 T 不装箱;值类型 T 装箱仅在 Debounce 实际 fire 时一次,
+                // 远少于上游高频事件)。
+                SendOrPostCallback postCallback = state =>
+                {
+                    try { next((T)state!); }
+                    catch (Exception ex) { error(ex); }
+                };
+
+                Timer? timer = null;
+                timer = new Timer(_ =>
+                {
+                    T toEmit;
+                    lock (gate)
+                    {
+                        // 取走 + 清零;Dispose 后侥幸触发的 stray callback 看到 hasPending=false 安全退出。
+                        if (!hasPending) return;
+                        toEmit = pendingData;
+                        hasPending = false;
+                        pendingData = default!;
+                    }
+
+                    if (syncContext != null) syncContext.Post(postCallback, toEmit);
+                    else
+                    {
+                        try { next(toEmit); }
+                        catch (Exception ex) { error(ex); }
+                    }
+                }, null, Timeout.Infinite, Timeout.Infinite);
 
                 var sub = source.Subscribe(data =>
                 {
                     lock (gate)
                     {
-                        try
-                        {
-                            currentCts?.Cancel();
-                            currentCts?.Dispose();
-                        }
-                        catch (ObjectDisposedException) { }
-
-                        currentCts = new CancellationTokenSource();
-                        var token = currentCts.Token;
-
-                        Task.Delay(delay, token).ContinueWith(t =>
-                        {
-                            if (t.Status == TaskStatus.RanToCompletion && !token.IsCancellationRequested)
-                            {
-                                // 💥 线程回传：Task.Delay 是在后台线程结束的，必须用捕获的上下文把数据安全推回主线程！
-                                if (syncContext != null)
-                                {
-                                    syncContext.Post(_ => next(data), null);
-                                }
-                                else
-                                {
-                                    next(data);
-                                }
-                            }
-                        },
-                        token,
-                        TaskContinuationOptions.ExecuteSynchronously,
-                        TaskScheduler.Default);
+                        pendingData = data;
+                        hasPending = true;
+                        // Change() 重置已 armed 的定时器到新的 delay,内部状态机原地更新,无堆分配。
+                        timer.Change(delay, Timeout.InfiniteTimeSpan);
                     }
                 }, error);
 
@@ -450,12 +467,9 @@ namespace Hevo.Charting
                 {
                     lock (gate)
                     {
-                        try
-                        {
-                            currentCts?.Cancel();
-                            currentCts?.Dispose();
-                        }
-                        catch { }
+                        timer.Dispose();
+                        hasPending = false;
+                        pendingData = default!;
                     }
                 }));
             });

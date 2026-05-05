@@ -26,13 +26,18 @@ namespace Hevo.Charting.Features
     {
         public override FeaturePhase Phase => FeaturePhase.Series;
 
+        /// <summary>柱体高度数据源(每根索引对应一个 double 值)。Slicer 删除后世界索引 == 数组下标。</summary>
         public DataPort<ReadOnlyMemory<double>> DataPort { get; init; } = null!;
+
+        /// <summary>Y 轴量程引脚:由 <see cref="UniversalAutoScaleFeature"/> 算好后流入,决定柱体在画布上的纵向归一化基准。</summary>
         public DataPort<RealRange> YRangePort { get; init; } = null!;
 
         // Viewport 由 ChartFeature 基类统一持有（L6 / §B.2.6）
 
+        /// <summary>字段元数据:控制图例文本/颜色/数值格式。Resolver 还会被 Crosshair 圆点/Tooltip 复用。</summary>
         public FieldMeta Meta { get; init; } = FieldMeta.Literal("", new HevoSolidBrush(Colors.Red));
 
+        /// <summary>柱宽相对单格距离的比例(0~1)。0.6 即柱体占满 60%、两侧各留 20% 空隙,不影响坐标对齐。</summary>
         public double BarWidthRatio { get; init; } = 0.6;
 
         private readonly BarLayer _layer = new();

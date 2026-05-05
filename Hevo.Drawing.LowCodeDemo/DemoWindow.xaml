@@ -1,0 +1,8 @@
+<Window x:Class="Hevo.Drawing.LowCodeDemo.DemoWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Hevo.Drawing.LowCodeDemo"
+        Title="低代码蓝图编辑器 Demo" Height="768" Width="1366"
+        Background="#FF1A1B1F" WindowStartupLocation="CenterScreen">
+    <local:LowCodeDemoView/>
+</Window>

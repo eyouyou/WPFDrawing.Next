@@ -4,17 +4,15 @@
 		<TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
 		<Nullable>enable</Nullable>
 		<UseWPF>true</UseWPF>
-		<ImplicitUsings>enable</ImplicitUsings>
+		<!-- LangVersion=preview 同时锁定 .NET 5 SDK 5.0.408 (net5 LangVersion=preview 才能解锁 record struct / global using),
+		     在 net8 上无副作用 — 详见 CLAUDE.md "维持 .NET 5 兼容" 一节。 -->
+		<LangVersion>preview</LangVersion>
 
 		<EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
 		<CompilerGeneratedFilesOutputPath>obj\Generated</CompilerGeneratedFilesOutputPath>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 	</PropertyGroup>
 
-	<ItemGroup>
-		<PackageReference Include="SkiaSharp" Version="3.119.2" />
-		<PackageReference Include="SkiaSharp.Views.WPF" Version="3.119.2" />
-	</ItemGroup>
 	<ItemGroup>
 		<ProjectReference Include="..\Hevo.Charting.CodeAnalysis\Hevo.Charting.CodeAnalysis.csproj">
 			<ReferenceOutputAssembly>false</ReferenceOutputAssembly>

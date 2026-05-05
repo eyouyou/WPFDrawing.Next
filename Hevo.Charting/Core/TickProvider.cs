@@ -127,8 +127,103 @@ namespace Hevo.Charting.Core
             return ctx.UseMemo((_format, _provider),
                     args => new DelegateTickStylePolicy(val =>
                     {
-                        if (Math.Abs(val) < 1e-6) val = 0;
+                        if (Math.Abs(val) < MathTolerance.NumericEqual) val = 0;
                         return val.FormatValue(args._format, args._provider);
+                    })).Value;
+        }
+    }
+
+    /// <summary>
+    /// 锚点感知 Y 轴提供者：把 anchor / high-low hints 端口喂给 <see cref="AnchoredNiceTickStrategy"/>。
+    ///
+    /// 典型场景——分时图：
+    /// <list type="bullet">
+    ///   <item><c>anchorPort</c> = 昨收价（grid 原点 + baseline）</item>
+    ///   <item><c>hintsPort</c> = 当日 high/low（尽量显示，离 grid 太近时让位 grid，永远不让位 baseline）</item>
+    /// </list>
+    /// 端口值通过 <see cref="RefBox{T}"/> 喂给策略，保持 0-GC 与 X 轴 <c>DomainTickProvider</c> 一致。
+    /// </summary>
+    public class AnchoredNumericTickProvider : ITickProvider
+    {
+        private readonly string _format;
+        private readonly IHevoFormatter? _provider;
+        private readonly DataPort<double> _anchorPort;
+        private readonly DataPort<RealRange> _hintsPort;
+        private readonly IHevoBrush? _baselineTextBrush;
+        private readonly LineStyle? _baselineLineStyle;
+
+        // 终身只分配一次的盒子——provider 实例本身寿命跟图表一致
+        private readonly RefBox<double> _anchorBox = new() { Value = double.NaN };
+        private readonly RefBox<RealRange> _hintsBox = new() { Value = RealRange.Empty };
+
+        /// <summary>
+        /// 锚点感知 Y 轴 Provider。两个端口均必填以满足 HEVO003 (UsePort 必须无条件调用)；
+        /// 如果业务只要其中一种锚点，把另一个端口写一个永远 NaN/Empty 的常量即可。
+        /// </summary>
+        /// <param name="baselineTextBrush">
+        /// 可选：baseline 标签独立着色。非 null 时通过 <see cref="ITickStylePolicy.GetOverrideBrush"/>
+        /// 命中 anchor 值返回该笔刷（优先级最高），不命中放行 null，回落到 baseline 线笔/轴默认色。
+        /// </param>
+        /// <param name="baselineLineStyle">
+        /// 可选：anchor 处 grid 线 per-tick 样式覆盖（如"0% 线加粗"）。非 null 时通过
+        /// <see cref="ITickStylePolicy.GetOverrideStyle"/> 在 anchor 值返回该 LineStyle，
+        /// 由 GridLineLayer 在该 tick 用这条 pen 替代默认 grid pen。
+        /// </param>
+        public AnchoredNumericTickProvider(
+            string format,
+            DataPort<double> anchorPort,
+            DataPort<RealRange> hintsPort,
+            IHevoFormatter? provider = null,
+            IHevoBrush? baselineTextBrush = null,
+            LineStyle? baselineLineStyle = null)
+        {
+            _format = format;
+            _provider = provider;
+            _anchorPort = anchorPort;
+            _hintsPort = hintsPort;
+            _baselineTextBrush = baselineTextBrush;
+            _baselineLineStyle = baselineLineStyle;
+        }
+
+        public ITickStrategy GetStrategy(FeatureContext ctx)
+        {
+            // 1. 同步喂盒子（每帧；UsePort 顺序固定，符合 HEVO003）
+            var (anchor, _) = ctx.UsePort(_anchorPort);
+            _anchorBox.Value = anchor;
+
+            var (hints, _) = ctx.UsePort(_hintsPort);
+            _hintsBox.Value = hints;
+
+            // 2. 终身 1 次构造策略实例
+            return ctx.UseMemo(this, _ => new AnchoredNiceTickStrategy(_anchorBox, _hintsBox)).Value;
+        }
+
+        public ITickStylePolicy GetStyle(FeatureContext ctx)
+        {
+            // 闭包捕获 _anchorBox（引用稳定）以便 brush / styleSelector 每次读到最新 anchor。
+            // _anchorBox 由 GetStrategy 在同一帧先填，调用顺序见 AxisFeature.OnProject。
+            var anchorBox = _anchorBox;
+            var baselineBrush = _baselineTextBrush;
+            var baselineLine = _baselineLineStyle;
+            return ctx.UseMemo((_format, _provider, baselineBrush, baselineLine, anchorBox),
+                args => new DelegateTickStylePolicy(
+                    formatter: val =>
+                    {
+                        if (Math.Abs(val) < MathTolerance.NumericEqual) val = 0;
+                        return val.FormatValue(args._format, args._provider);
+                    },
+                    brushSelector: args.baselineBrush == null ? null : val =>
+                    {
+                        var anchor = args.anchorBox.Value;
+                        if (double.IsNaN(anchor)) return null;
+                        // 判 val 是否就是 anchor(典型:把昨收价那一根 tick 高亮上色)
+                        return Math.Abs(val - anchor) < MathTolerance.NumericEqual ? args.baselineBrush : null;
+                    },
+                    styleSelector: args.baselineLine == null ? null : val =>
+                    {
+                        var anchor = args.anchorBox.Value;
+                        if (double.IsNaN(anchor)) return null;
+                        return Math.Abs(val - anchor) < MathTolerance.NumericEqual ? args.baselineLine : null;
                     })).Value;
         }
     }

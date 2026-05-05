@@ -54,7 +54,7 @@ namespace Hevo.Charting.Buildin
 
                     if (ratio - lastRatio >= minRatioGap)
                     {
-                        yield return new TickMathResult(i, isBaseLine: false);
+                        yield return new TickMathResult(i, isAnchor: false);
                         lastRatio = ratio;
                     }
 
@@ -133,7 +133,7 @@ namespace Hevo.Charting.Buildin
             for (double val = start; val <= end + epsilon; val += niceStep)
             {
                 bool isBase = Math.Abs(val) < 1e-6;
-                yield return new TickMathResult(val, isBaseLine: isBase);
+                yield return new TickMathResult(val, isAnchor: isBase);
             }
         }
 

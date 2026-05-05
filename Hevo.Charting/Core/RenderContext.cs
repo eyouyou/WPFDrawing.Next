@@ -21,20 +21,16 @@ namespace Hevo.Charting.Core
         public static IDisposable GetActiveSession(DependencyObject element)
             => (IDisposable)element.GetValue(ActiveSessionProperty);
 
-        // 这一步是点睛之笔：确保控件死的时候，属性一定会被清空
+        // 设计决策:不自动 dispose lifeTimeSession。
+        //   原因:WPF 没有干净的"真死"事件——Unloaded 在 tab 切换/Visibility 切换都会触发,
+        //   提前 Dispose 会把 compose 期的所有订阅烧光,Resume 接不回来。
+        //   tab 切换期间由 ChartCell.OnCellUnloaded/OnCellLoaded 走 Suspend/Resume 路径暂停/恢复活动,
+        //   session 全程留着,资源不会被误烧。
+        //
+        //   业务侧要彻底回收(如 Window 关闭、动态移除 cell 不再用)时,显式调 <see cref="ChartCell.Shutdown"/>。
         public static void BindTo(ChartCell cell, IDisposable session)
         {
-            // 1. 设置新 Session (旧的会自动 Dispose)
             cell.SetValue(ActiveSessionProperty, session);
-
-            // 2. 挂载一个一次性的清理器，防止重复挂载 Unloaded
-            void handler(object s, RoutedEventArgs e)
-            {
-                cell.Unloaded -= handler;
-                cell.ClearValue(ActiveSessionProperty); // 这里触发最终的 Dispose
-            }
-
-            cell.Unloaded += handler;
         }
     }
 
@@ -42,7 +38,7 @@ namespace Hevo.Charting.Core
     /// 该 Session 生命周期与 <see cref="ChartCell"/> 的Load和UnLoaded 绑定
     /// </summary>
     // 修复 §B.2.4（方案 B 最小合并）：ChartSession 实现 IDisposableHost，
-    // 让 `.DisposeWith(session)` 与 `.DisposeWith(feature)` 走同一契约。
+    // 让 `.OwnedBy(session)` 与 `.OwnedBy(feature)` 走同一契约。
     // Feature / Schema 的 IDisposableHost 实现保留独立，scope 分离不变——
     // Feature 级订阅仍随 Decompose 释放，不会被升级到 chart 级泄漏（参见 §B.2.5）。
     public sealed class ChartSession : IDisposable, IDisposableHost
@@ -192,16 +188,19 @@ namespace Hevo.Charting.Core
         /// 【核心】提交事务并同步更新图层。
         /// 将所有草稿合并到真实存储，并根据变更情况标脏图层，最后触发 Layer.Update。
         /// </summary>
-        public void SubmitSync(IEnumerable<IChartLayer> layers)
+        // 参数走 IReadOnlyList 而非 IEnumerable:
+        //   foreach 在接口上会装箱出 IEnumerator<T> 引用类型,每帧 1 次堆分配。
+        //   ActiveLayers 本来就是 IReadOnlyList,for + 索引 0 分配。
+        public void SubmitSync(IReadOnlyList<IChartLayer> layers)
         {
             // 1. 合并全局变更
             bool globalChanged = !_globalDraft.IsEmpty;
             if (globalChanged) _liveGlobalData.CommitFrom(_globalDraft);
 
             // 2. 极速判脏循环
-            foreach (var layer in layers)
+            for (int i = 0; i < layers.Count; i++)
             {
-                if (layer is not ChartLayer cl) continue;
+                if (layers[i] is not ChartLayer cl) continue;
 
                 var liveLocalBag = _liveLocalMap.GetValue(cl, _ => new VisualDataBag());
                 bool hasLocalDraft = _transactionMap.TryGetValue(cl, out var draftBag) && !draftBag.IsEmpty;
@@ -221,6 +220,13 @@ namespace Hevo.Charting.Core
                     if (hasLocalDraft) cl.MarkDirty();
                     continue;
                 }
+
+                // ==========================================
+                // 💥 Bag 级"无变化"短路:本帧 global 没动 + 此 layer 的 local 没动
+                // ⇒ 它跟踪的任何 trait ref 都不可能变 ⇒ 跳过 CheckIfDirty 的 foreach。
+                // hover / idle 帧通常只有 1 个 layer 的 local 被写,其余全部命中此短路。
+                // ==========================================
+                if (!globalChanged && !hasLocalDraft) continue;
 
                 // ==========================================
                 // 💥 策略 B：针对【工作状态】图层 (O(1) 引用指纹碰撞)

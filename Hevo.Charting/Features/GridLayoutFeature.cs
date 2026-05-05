@@ -41,9 +41,20 @@ namespace Hevo.Charting.Features
     {
         public override FeaturePhase Phase => FeaturePhase.Layout;
 
+        // 一个图最多一个 GridLayoutFeature —— 多个并存会让 PlotAreaTrait 互相覆盖,
+        // 历史白屏 bug 的根因。Add 检测同类型已存在时自动替换。
+        public override bool IsSingleton => true;
+
+        /// <summary>左侧边距(给 Y 轴留位)。中间列固定吃 1*,所以这里只决定左边栏宽。</summary>
         public ChartLength Left { get; set; } = ChartLength.Pixel(0);
+
+        /// <summary>右侧边距(双 Y 轴右边或 Tooltip 安全留白)。</summary>
         public ChartLength Right { get; set; } = ChartLength.Pixel(0);
+
+        /// <summary>顶部边距(预留给 Header / 标题等浮层)。</summary>
         public ChartLength Top { get; set; } = ChartLength.Pixel(0);
+
+        /// <summary>底部边距(给 X 轴时间栏留位)。</summary>
         public ChartLength Bottom { get; set; } = ChartLength.Pixel(0);
 
         protected override void OnCompose(ChartCell chart, RenderContext ctx, IRenderFlow<DataBlackboard> flow)

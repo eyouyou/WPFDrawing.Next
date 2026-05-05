@@ -22,6 +22,11 @@ namespace Hevo.Charting.Core
 
         private readonly ChartCell _cell = new();
 
+        /// <summary>
+        /// 暴露内部 ChartCell。诊断 / 缓存策略 / 视图操作的统一入口。
+        /// </summary>
+        public ChartCell Cell => _cell;
+
         public ChartHost() => Content = _cell;
 
         private static void OnSchemaChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)

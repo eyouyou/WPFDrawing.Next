@@ -52,8 +52,22 @@ namespace Hevo.Charting.WorkFlow
             object[] listenPorts,
             Action<DataBlackboard> sideEffect)
         {
-            // 💥 直接把原汁原味的 sideEffect 传给底层核芯！
+#if DEBUG
+            // 拓扑追踪闭环:跟 WatchAsync 对称,把 sideEffect 包在 EnterScope(owner) 里。
+            // 否则 sync Watch 回调里的 board.Read(...) 因为 _currentCaller.Value == null
+            // 不会被 RecordRead 记录,导致 TopologyInspector 漏掉这条 feature → port 的连线。
+            object owner = DevTools.TopologyTracer.SetupContext.Value ?? "UnknownOwner";
+            Action<DataBlackboard> tracedAction = b =>
+            {
+                using (DevTools.TopologyTracer.EnterScope(owner))
+                {
+                    sideEffect(b);
+                }
+            };
+            return AttachWatchCore(flow, listenPorts, tracedAction);
+#else
             return AttachWatchCore(flow, listenPorts, sideEffect);
+#endif
         }
 
         // ==========================================
@@ -284,12 +298,16 @@ namespace Hevo.Charting.WorkFlow
             });
         }
 
-        public static void DisposeWith(this IDisposable subscription, IDisposableHost host)
+        /// <summary>
+        /// 把当前 IDisposable 的完整生命周期托管给 host（schema / feature / session）。
+        /// 含义不止 dispose——host 在 Suspend / Resume 时也会级联通知（IPausable），
+        /// 业务子类（如 AutoRefreshSchema）还会顺手做 IRefreshable 级联。
+        /// </summary>
+        public static T OwnedBy<T>(this T subscription, IDisposableHost host) where T : class, IDisposable
         {
-            if (subscription != null)
-            {
-                host.RegisterDisposable(subscription);
-            }
+            if (subscription is null) throw new ArgumentNullException(nameof(subscription));
+            host.RegisterDisposable(subscription);
+            return subscription;
         }
     }
 }

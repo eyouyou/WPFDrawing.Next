@@ -36,6 +36,17 @@ namespace Hevo.Charting
             _trigger.Push(GetSnapshot());
         }
 
+        /// <summary>
+        /// 强制把当前 snapshot 重推给所有订阅者,但不改 IsActive 状态。
+        /// 跟 Suspend/Resume 解耦——适合多 schema 共享数据源的场景:
+        /// schema 在 OnResume 里调一次,自己的 chart pipe 收到 push → port 更新 → layer 重绘,
+        /// 既能唤醒自己又不会影响其他正在使用同一数据源的 schema。
+        /// </summary>
+        public void RepublishLatest()
+        {
+            if (_isActive) _trigger.Push(GetSnapshot());
+        }
+
         // ==========================================
         // 🔪 后厨案板 (写缓冲区)：专门应对复杂的网络数据合并与增删
         // ==========================================
@@ -66,13 +77,19 @@ namespace Hevo.Charting
                 {
                     _readSnapshot = new TItem[_buffer.Count];
                 }
+                else if (_buffer.Count == 0 && _readSnapshot.Length > 0)
+                {
+                    // 归零路径：SwitchContext 清 buffer 后必须把展示柜也清空，
+                    // 否则 _readSnapshot[0] 仍持有上一上下文的引用，依赖它计算 LogicalLength
+                    // 的子类（如 KLineDataSource）会把"归零信号"误报成"未变化"，下游 Watch 收不到。
+                    _readSnapshot = Array.Empty<TItem>();
+                }
 
                 // 2. 物理拷贝：把后厨数据端到前台
                 _buffer.CopyTo(_readSnapshot);
 
-                // 3. 拨动时钟
-                _dataClock.Advance();
-                VersionToken newVersion = _dataClock.Snapshot();
+                // 3. 拨动时钟(融合 Advance+Snapshot,单次 Interlocked.Increment 取新值)
+                VersionToken newVersion = _dataClock.AdvanceAndSnapshot();
 
                 // 4. 💥 关键点：传出的是物理数组，但告诉外层有效长度是 _buffer.Count！
                 _trigger.Push(new DataSnapshot<TItem>(_readSnapshot, _buffer.Count, newVersion));
@@ -98,7 +115,7 @@ namespace Hevo.Charting
     /// 适用于需要在同一 Context 下发起多种 TRequest 的复杂流（典型代表：KLine 分页的 History / Range / Latest）；
     /// 90% 只需"身份 + 拉一次"的业务请改继承 3 参精简版 <see cref="ReactiveDataSource{TSource, TContext, TItem}"/>。
     /// </summary>
-    public abstract class ReactiveDataSource<TSource, TContext, TRequest, TResponse, TItem> : DataSource<TSource, TItem>
+    public abstract class ReactiveDataSource<TSource, TContext, TRequest, TResponse, TItem> : DataSource<TSource, TItem>, Hevo.Charting.Abstractions.IRefreshable
         where TSource : ReactiveDataSource<TSource, TContext, TRequest, TResponse, TItem>
     {
         protected readonly struct RequestEnvelope
@@ -235,16 +252,32 @@ namespace Hevo.Charting
             if (IsActive) return;
             _pipelineSub ??= BuildPipeline();
             base.Resume();
-
-            var refreshReq = OnBuildRefreshRequest();
-            if (Context != null && refreshReq != null)
-                _requestBus.Push(new RequestEnvelope(refreshReq, null, CancellationToken.None));
+            // 自动 fire 已撤回——刷新策略由上层（如 AutoRefreshSchema）通过 IRefreshable 级联触发，框架不做默认。
         }
 
         /// <summary>
-        /// 子类重载以在 Resume 时补一次定制刷新请求（如 KLine 拉最新 N 根）。默认返回 null 表示不发补刷。
+        /// 子类重载以指定刷新时发什么 Request（KLine 拉最新 N 根之类）。返回 null = 本数据源对刷新无定义、无操作。
         /// </summary>
         protected virtual TRequest? OnBuildRefreshRequest() => default;
+
+        /// <summary>
+        /// IRefreshable 实现：用 OnBuildRefreshRequest() 产出的 Request 重发一次（不切身份）。
+        /// Context 未设置或 OnBuildRefreshRequest 返回 null 时静默返回 0。
+        /// 子类（如 3 参精简版）可重写定制刷新语义。
+        /// </summary>
+        public virtual Task<int> RefreshAsync(CancellationToken token = default)
+        {
+            if (Context == null) return Task.FromResult(0);
+            var req = OnBuildRefreshRequest();
+            if (req == null) return Task.FromResult(0);
+
+            var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _requestBus.Push(new RequestEnvelope(req, tcs, token));
+            return tcs.Task;
+        }
+
+        // 显式实现 IRefreshable.RefreshAsync 转发到强类型版本（Task<int> 是 Task 的子类，自动协变兼容）
+        Task Hevo.Charting.Abstractions.IRefreshable.RefreshAsync(CancellationToken token) => RefreshAsync(token);
 
         public override void Dispose()
         {
@@ -305,6 +338,13 @@ namespace Hevo.Charting
         public void Load(TContext context) => SwitchContext(context, Unit.Default);
         public Task<int> LoadAsync(TContext context, CancellationToken token = default)
             => SwitchContextAsync(context, Unit.Default, token);
+
+        /// <summary>
+        /// 3 参精简版的刷新语义：用当前 Context 推一次 Unit 请求（不切身份、不清 buffer）。
+        /// Context 未设置时静默返回 0。子类可继续重写以定制（如 MarketStrengthDataSource 永远拉 DateTime.Today）。
+        /// </summary>
+        public override Task<int> RefreshAsync(CancellationToken token = default)
+            => Context != null ? RequestAsync(Unit.Default, token) : Task.FromResult(0);
     }
 
     public readonly record struct AlignedTuple<TVal1, TVal2>(DateTime Time, TVal1 Value1, TVal2 Value2);

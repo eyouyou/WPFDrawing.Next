@@ -4,6 +4,12 @@ using System.Windows.Media;
 
 namespace Hevo.Charting.Core
 {
+    /// <summary>蜡烛图渲染数据包(冷热分离的双 layer 共用此结构)。</summary>
+    /// <param name="StartIndex">本切片首根 K 线的世界索引(动态层 = 末根索引;静态层 = 0)。</param>
+    /// <param name="Opens">开盘价数组。</param>
+    /// <param name="Highs">最高价数组。</param>
+    /// <param name="Lows">最低价数组。</param>
+    /// <param name="Closes">收盘价数组。</param>
     public record CandleData(
             int StartIndex,
             ReadOnlyMemory<double> Opens,
@@ -11,6 +17,11 @@ namespace Hevo.Charting.Core
             ReadOnlyMemory<double> Lows,
             ReadOnlyMemory<double> Closes) : IVisualTrait;
 
+    /// <summary>蜡烛图样式。</summary>
+    /// <param name="UpBrush">阳线(收 ≥ 开)柱体填充。A 股惯例为红色。</param>
+    /// <param name="DownBrush">阴线(收 &lt; 开)柱体填充。A 股惯例为绿色。</param>
+    /// <param name="WickPen">影线画笔(上下影线共用)。</param>
+    /// <param name="BodyPadding">柱体相对单格距离的内缩比例,0.2 即两侧各留 10% 空隙。</param>
     public record CandleStyle(
         IHevoBrush UpBrush,
         IHevoBrush DownBrush,
@@ -43,6 +54,8 @@ namespace Hevo.Charting.Core
     public partial class CandleLayer : ChartLayer
     {
         // 跨帧复用,首次 OnUpdate 后 capacity 锁定在水位线,后续帧 0 分配。
+        // 256 ≈ 单屏典型 K 线根数(120~250)的常态上限;512 = wick 走 LineSegments 每根 K 线 2 个端点。
+        // 不暴露成配置:作用纯粹是"避免首次扩容拷贝",业务调小反加重 GC,调大也不省内存。
         private readonly List<HevoRect> _upRects = new(256);
         private readonly List<HevoRect> _downRects = new(256);
         private readonly List<HevoPoint> _wicks = new(512);
@@ -50,7 +63,7 @@ namespace Hevo.Charting.Core
         public CandleLayer()
         {
             Name = "CandleStick";
-            Mode = RenderMode.Hardware;
+            Mode = RenderMode.Software;
             Level = ChartLayerType.Main;
         }
 
@@ -148,20 +161,11 @@ namespace Hevo.Charting.Core
             {
                 if (_wicks.Count > 0)
                 {
-                    using (draw.PushPixelSnapping((float)style.WickPen.Thickness))
-                    {
-                        draw.DrawLineSegments(style.WickPen, _wicks);
-                    }
+                    draw.DrawLineSegments(style.WickPen, _wicks);
                 }
 
-                if (_upRects.Count > 0 || _downRects.Count > 0)
-                {
-                    using (draw.PushPixelSnapping(0.0f))
-                    {
-                        if (_upRects.Count > 0) draw.DrawRectangles(style.UpBrush, null, _upRects);
-                        if (_downRects.Count > 0) draw.DrawRectangles(style.DownBrush, null, _downRects);
-                    }
-                }
+                if (_upRects.Count > 0) draw.DrawRectangles(style.UpBrush, null, _upRects);
+                if (_downRects.Count > 0) draw.DrawRectangles(style.DownBrush, null, _downRects);
             }
         }
     }

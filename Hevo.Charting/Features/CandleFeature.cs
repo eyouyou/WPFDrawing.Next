@@ -106,7 +106,7 @@ namespace Hevo.Charting.Features
         // 静态层：负责绘制屏幕上已经确定、不再跳动的历史 K 线。拖拽时整块平移，性能极高。
         private readonly CandleLayer _staticLayer = new();
         // 动态层：永远只负责绘制“最后一根”正在实时跳动的 K 线，以及挂载十字光标等热数据。
-        private readonly CandleLayer _dynamicLayer = new();
+        private readonly CandleLayer _dynamicLayer = new() { Level = ChartLayerType.Interaction };
 
         /// <summary>
         /// 💥 初始化图层与注册元数据 (仅在组件挂载时执行一次)

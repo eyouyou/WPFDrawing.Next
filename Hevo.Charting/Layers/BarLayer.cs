@@ -4,7 +4,13 @@ using Hevo.Charting.Renderers;
 
 namespace Hevo.Charting.Layers
 {
+    /// <summary>柱状图渲染数据包。</summary>
+    /// <param name="Values">每根索引的高度值(允许 NaN 跳过)。</param>
+    /// <param name="Brush">默认画刷;若同帧也下发了 <see cref="BarPaletteTrait"/> 则被其覆盖。</param>
+    /// <param name="WidthRatio">柱宽相对单位距离的比例(0~1),默认 60%。</param>
     public record BarDataTrait(ReadOnlyMemory<double> Values, IHevoBrush Brush, double WidthRatio = 0.6) : IVisualTrait;
+
+    /// <summary>柱状图动态调色板。Resolver != null 时按值/索引动态算色,适用红涨绿跌、阈值高亮等场景。</summary>
     public record BarPaletteTrait(IBrushResolver<double>? Resolver) : IVisualTrait;
 
     public partial class BarLayer : ChartLayer
@@ -15,7 +21,8 @@ namespace Hevo.Charting.Layers
         public BarLayer()
         {
             Name = "BarLayer";
-            Mode = RenderMode.Hardware;
+            // [全 WPF 实验] 同 CandleLayer 注释,Skia 全屏特定尺寸 ±1 列错位临时全切 WPF。
+            Mode = RenderMode.Software;
             Level = ChartLayerType.Main;
         }
 
@@ -36,8 +43,17 @@ namespace Hevo.Charting.Layers
             var span = bData.Values.Span;
             int count = span.Length;
 
-            int startIndex = Math.Clamp((int)Math.Floor(xAxis.Viewport.Min), 0, count - 1);
-            int endIndex = Math.Clamp((int)Math.Ceiling(xAxis.Viewport.Max), 0, count - 1);
+            // 视口可见 domain 区间:用 Denormalize 拿到 plotArea 真实覆盖的边界(兼容 CategoryScale 的 ±Offset 与反向 Scale)。
+            // 采样口径采用 permissive 策略——只要柱子的任何部分(中心 ± halfRatio)与可见区间相交,就纳入渲染,
+            // 由 72-73 行的像素 clip 负责切掉溢出部分。是否出现"半根"是 Scale.SnapEdges + Interaction 决定的涌现行为,
+            // 不在 Layer 这一层做硬编码取舍。
+            double halfRatio = bData.WidthRatio * 0.5;
+            double leftDomain = scale.DomainScale.Denormalize(0.0, xAxis.Viewport);
+            double rightDomain = scale.DomainScale.Denormalize(1.0, xAxis.Viewport);
+            double visibleMin = Math.Min(leftDomain, rightDomain);
+            double visibleMax = Math.Max(leftDomain, rightDomain);
+            int startIndex = Math.Clamp((int)Math.Ceiling(visibleMin - halfRatio), 0, count - 1);
+            int endIndex = Math.Clamp((int)Math.Floor(visibleMax + halfRatio), 0, count - 1);
             if (startIndex > endIndex) return;
 
             HevoRect area = plotArea.Area;
@@ -92,14 +108,12 @@ namespace Hevo.Charting.Layers
             }
 
             // 💥 批量提交给渲染器 (相同颜色的柱子一次性 Draw 完，性能无敌)
-            using (draw.PushPixelSnapping(0.0f))
+            // 像素对齐由 renderer 在 DrawRectangles 分发时统一完成（fill 走原 rect、无需 snap）。
+            foreach (var kvp in _batchedRects)
             {
-                foreach (var kvp in _batchedRects)
+                if (kvp.Value.Count > 0)
                 {
-                    if (kvp.Value.Count > 0)
-                    {
-                        draw.DrawRectangles(kvp.Key, null, kvp.Value);
-                    }
+                    draw.DrawRectangles(kvp.Key, null, kvp.Value);
                 }
             }
         }

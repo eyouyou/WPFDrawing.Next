@@ -20,7 +20,10 @@ namespace Hevo.Charting.Features
         // 💥 布局算完 (Layout) 之后就可以立刻执行它的投影了
         public override FeaturePhase Phase => FeaturePhase.Layout;
 
+        /// <summary>绘图区底色画刷。null = 透明(继承 chart 整体背景)。</summary>
         public IHevoBrush? BackgroundBrush { get; init; }
+
+        /// <summary>绘图区边框样式。null = 不画边框。</summary>
         public LineStyle? BorderStyle { get; init; }
 
         private readonly PlotAreaDecorLayer _layer = new();

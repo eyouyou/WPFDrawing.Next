@@ -70,8 +70,21 @@ namespace Hevo.Charting.Core
 
     // ==========================================
     // 💥 最小粒度的字段描述 (彻底抽象化！)
+    // 设计选型:record class 而非 record struct。
+    // 4 个字段全是引用 (IHevoString / IBrushResolver / string / IHevoFormatter?),
+    // 即"指针沙拉",struct 的内联值数据红利消失;且创建集中在 schema build 一次性,
+    // GC 不构成压力。class 在 C# 9 LangVersion 下原生支持 with 表达式,且
+    // FieldMeta? 是 8B 引用 (struct 下是 40B Nullable<FieldMeta>),整体更轻。
     // ==========================================
-    public record struct FieldMeta(
+    /// <summary>
+    /// 字段元数据(图例 / 头部 / Tooltip / Crosshair 共用的最小描述单元)。
+    /// 业务侧极少直接 new,通常走静态工厂(Literal / Resource / Mixed / Dynamic)。
+    /// </summary>
+    /// <param name="Name">显示名(支持字面量 + 多语言资源 Key)。</param>
+    /// <param name="Resolver">画刷解析器(纯色 = StaticBrushResolver;阈值变色 = ThresholdBrushResolver 等)。</param>
+    /// <param name="Format">数值格式字符串,默认 "G"。</param>
+    /// <param name="Provider">自定义格式化器(IHevoFormatter&lt;T&gt;);null 时走 IFormattable.ToString。</param>
+    public record class FieldMeta(
         IHevoString Name,
         IBrushResolver<double> Resolver,
         string Format = "G",
@@ -100,8 +113,11 @@ namespace Hevo.Charting.Core
     }
 
     /// <summary>
-    /// 💥 统一的元数据包：支持 1~N 列数据
+    /// 统一的元数据包:支持 1~N 列数据。
+    /// 数据流:Series Feature 在 OnCompose / OnProject 时下发到自家 Layer 的 board → Crosshair / Tooltip / Header 反向 Read 用于渲染。
     /// </summary>
+    /// <param name="GroupName">图例分组名(如"Candle"、"MACD"、"成交量")。</param>
+    /// <param name="Fields">字段元数据数组(开高低收 / 主副指标线等)。</param>
     public record MetaTrait(string GroupName, params FieldMeta[] Fields) : IVisualTrait
     {
         // 极简构建：单线静态指标
@@ -113,18 +129,18 @@ namespace Hevo.Charting.Core
             => new(groupKey, FieldMeta.Resource(textKey, brushKey, format));
     }
 
-    // ==========================================
-    // 💥 热数据分离：彻底恢复纯净，只有数据切片，不带任何杂质！(每帧发布)
-    // 完全都是用double
-    // ==========================================
+    /// <summary>
+    /// 热数据通用切片(纯 double 数组,每帧由 Series Feature 下发)。
+    /// 数据流:Series 写入 → Crosshair 算交点 / Tooltip 算行值 / Header 算最新值 全靠 Read 这根。
+    /// FieldValues 与 <see cref="MetaTrait.Fields"/> 一一对应:索引 i 的列对应第 i 个字段的实时数据。
+    /// </summary>
     public record DoubleSeriesDataTrait(params ReadOnlyMemory<double>[] FieldValues) : IVisualTrait;
-    //public record FloatSeriesDataTrait(params ReadOnlyMemory<double>[] FieldValues) : IVisualTrait;
 
-    // ==========================================
-    // 💥 新增外挂能力包：动态颜色特质！
-    // 只有像 K 线、MACD 红绿柱这种需要根据数据算颜色的组件，才需要发布这个 Trait！
-    // 签名：(fieldIndex, localIndex) => Brush
-    // ==========================================
+    /// <summary>
+    /// 动态颜色外挂包:只有红涨绿跌 / 多空底色这类业务才需要发布。
+    /// Evaluator 签名 = (fieldIndex, localIndex) → IHevoBrush。
+    /// 由 Series Feature 下发,Crosshair 圆点 / Header 颜色块从此处取色。
+    /// </summary>
     public record DynamicColorTrait(Func<int, int, IHevoBrush> Evaluator) : IVisualTrait;
 
     /// <summary>

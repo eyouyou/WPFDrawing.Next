@@ -1,16 +1,21 @@
 ﻿using Hevo.Charting.Abstractions;
 using Hevo.Charting.Features;
+using Hevo.Charting.Linked;
 using Hevo.Charting.LowCode;
 using Hevo.Charting.WorkFlow;
 
 namespace Hevo.Charting.Core
 {
+    /// <summary>
+    /// 渲染管线对 Schema 的最小依赖契约。<see cref="ChartCell.ExecutePipeline"/> 每帧只需要这两个方法。
+    /// 把 Schema 与 Feature 集合解耦,允许未来出现非 Reactive 的 Schema 变体。
+    /// </summary>
     public interface IFeatureProjector
     {
-        // 它的唯一职责：把所有 Feature 挨个 Project 一遍
+        /// <summary>把所有 Feature 按 Phase 顺序 Project 一遍(读黑板 → 算 trait → 下发图层)。</summary>
         void ProjectAll(RenderContext ctx);
 
-        // 💥 优雅契约：向外部暴露一个高度语义化的“环境失效”方法
+        /// <summary>声明环境(尺寸 / 主题 / 数据上下文)已失效,下一帧所有 Feature 走 FullPass 重算。典型由 ChartCell.SizeChanged / TabResume 触发。</summary>
         void InvalidateEnvironment();
     }
 
@@ -57,29 +62,64 @@ namespace Hevo.Charting.Core
         /// <typeparam name="TFeature">要检查的特征类型</typeparam>
         /// <returns>如果已存在该类型的特征则返回 true，否则返回 false</returns>
         bool HasFeature<TFeature>(Func<TFeature, bool>? predicate = null) where TFeature : ChartFeature;
+
+        /// <summary>
+        /// 🎯 抓取特征实例
+        /// 找到第一个匹配的 feature 实例并返回——典型:装饰器(<see cref="Linked.SchemaContext.Decorate"/>)
+        /// 拿到现有 feature 直接 mutate 字段(避免 Remove + Add 丢失原配置)。
+        /// </summary>
+        TFeature? Find<TFeature>(Func<TFeature, bool>? predicate = null) where TFeature : ChartFeature;
     }
 
-    // ==========================================
-    // 💥 响应式图纸：接入状态时钟与 UI 事务热插拔机制
-    // [核心哲学]：所有视觉特征 (Feature) 的增删改查必须具备原子性。
-    // ==========================================
+    /// <summary>
+    /// 响应式图纸基类。
+    /// <para>
+    /// <b>子类只需实现两件事</b>:
+    /// <list type="bullet">
+    ///   <item><see cref="DefineDataFlow"/> —— 组装数据管线,末端 .BindTo(chart) 注册主流。</item>
+    ///   <item><see cref="DefineFeatures"/> —— 用 IFeatureContext 装配视觉/交互 Feature。</item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// <b>核心机制</b>:
+    /// 1) 状态时钟(StateClock):环境变化拨动 _environmentClock,ProjectAll 检测到与 _renderedToken 不同步 → FullPass 全重算;
+    /// 2) 脏 Feature 集(SubscriptionRegistry):port 写入命中订阅者后入脏名单,只重算这部分;
+    /// 3) 事务舱(Transact):运行时 Add/Remove Feature 走原子 Diff,杜绝画面撕裂;
+    /// 4) IPausable 生命周期:挂载在 ChartCell.Loaded/Unloaded/IsVisibleChanged 上自动 Suspend/Resume,Tab 切换零开销。
+    /// </para>
+    /// </summary>
     public abstract class ReactiveSchema : ChartSchema, IFeatureContext, IFeatureProjector, IDisposableHost, Hevo.Charting.Abstractions.IPausable
     {
+        // 主数据流当前推送的最新 board 引用。volatile 保证 cross-thread 读到的不是部分初始化值。
         private volatile DataBlackboard? _latestBoard;
+
+        /// <summary>当前主数据流的最新黑板(只读暴露,典型用于 dashboard 镜像桥)。null = 管线尚未推送过任何数据。</summary>
         public DataBlackboard? CurrentBoard => _latestBoard;
+
+        // 宿主 ChartCell 的反向引用。OnApplyTemplate → ComposeAll 时绑定;DecomposeAll 时清空。
         private ChartCell? _attachedChart;
 
         // 💥 L6 / §B.2.6：顶层视口基类上提。
         // 原先 21 个业务 Schema 都要 `private readonly ViewportPorts VP = new();`，纯样板。
         // 现在由基类统一持有，子类直接用 this.Viewport；Feature 由 Add(...) 自动注入。
-        // 需要二套独立视口（罕见的双 X 轴）时，Schema 可自行 `new ViewportPorts()` 并在
-        // Feature 初始化块里显式传入，自动注入逻辑会尊重外部设置。
-        protected ViewportPorts Viewport { get; } = new();
+        //
+        // 💥 Linked Dashboard 支持(2026-05)：通过 SchemaContext 注入外部 ViewportPorts/HitPort。
+        // 默认是 Standalone(自建端口);宿主 ChartCell 上设了 SchemaContext.AttachedProperty 时,
+        // InitializeRegistry 会覆盖为 dashboard 注入的那份。schema body 全程透明读 Viewport / HitPort。
+        protected ViewportPorts Viewport => _context.Viewport;
 
+        /// <summary>本 schema 的指针 hit 端口。独立=自建;dashboard 注入时=共享。</summary>
+        protected DataPort<PointerHitState?> HitPort => _context.HitPort;
+
+        private SchemaContext _context = SchemaContext.Standalone();
+
+        // 装配期累积的所有 Feature(顺序 = Add 顺序,真正执行顺序由下面的 _orderedFeatures 决定)。
         private readonly List<ChartFeature> _features = new();
+        // 按 FeaturePhase 排序后的执行序列。每次 Add/Remove 透过 Transact 重排,稳态零分配。
         private ChartFeature[] _orderedFeatures = Array.Empty<ChartFeature>();
         internal List<ChartFeature> Features => _features; // 只读暴露，禁止外部修改顺序
 
+        /// <summary>订阅注册表:port → Feature 集合 + 脏队列。Feature 在 OnCompose 中通过 ctx 隐式登记,ProjectAll 弹脏。</summary>
         public SubscriptionRegistry Registry { get; private set; } = null!;
 
         // 修复 H3：预分配脏 Feature 集合缓冲，替代 ProjectAll 里每帧的 new HashSet<>() 分配。
@@ -118,6 +158,13 @@ namespace Hevo.Charting.Core
 #endif
         }
 
+        // ==========================================
+        // 💥 BoardActivated 事件(2026-05):dashboard 镜像桥的钩子
+        //     当 schema 的主数据流首次推送(或重新刷新)新 board 时触发,
+        //     dashboard 在此 attach 端口镜像桥,让多 cell 共享 hit/viewport 状态。
+        // ==========================================
+        public event Action<DataBlackboard>? BoardActivated;
+
         public void RegisterDisposable(IDisposable disposable)
         {
             _disposables.Add(disposable);
@@ -134,11 +181,22 @@ namespace Hevo.Charting.Core
             return resource;
         }
 
+        /// <summary>
+        /// 💥 反查托管资源——跟 <see cref="Own{T}(T)"/> 对偶（一边添加，一边查询）。
+        /// 子类可在 OnResume 等钩子里用 <c>foreach (var r in Owned&lt;IRefreshable&gt;())</c> 做按接口级联，
+        /// 比如 AutoRefreshSchema 用它实现 Resume 时自动刷新。
+        /// </summary>
+        protected IEnumerable<T> Owned<T>() where T : class
+        {
+            for (int i = 0; i < _disposables.Count; i++)
+                if (_disposables[i] is T t) yield return t;
+        }
+
         // ==========================================
         // 💥 Phase 11 / §H：IPausable 生命周期
         // 设计要点：
         //   1. `_disposables.OfType<IPausable>()` 自动捞所有托管的数据源/触发器，子类 0 改动
-        //      （业务代码现在 `ds.DisposeWith(this)` 或 `this.Own(ds)` 就够了）。
+        //      （业务代码现在 `ds.OwnedBy(this)` 或 `this.Own(ds)` 就够了）。
         //   2. Schema 级定时器（如 KLine 心跳 Interval 订阅）不直接是 IPausable，由子类
         //      重载 `OnSuspend() / OnResume()` 自行管理（比如取消/重建 CancellationTokenSource）。
         //   3. Resume 末尾强制 InvalidateEnvironment 触发一次全量重绘，保证首帧看到最新数据。
@@ -306,6 +364,17 @@ namespace Hevo.Charting.Core
         {
             if (_features.Contains(feature)) return this;
 
+            // 💥 单例语义:GridLayoutFeature / ViewportManagerFeature 这种同类型只该有一个,
+            // 在此自动替换。以前靠 SetupLayout / SetupViewport 扩展方法手动 Remove<T>()
+            // 维护(GridLayoutFeature.cs 注释里那条"致命防线"),低代码反射路径绕过扩展方法 →
+            // 双重添加 → 历史"白屏" bug 复发。把单例语义抬到 Add 这一层,凡 IsSingleton=true
+            // 的 feature 进来就先把同类型旧实例清掉,所有调用方一视同仁。
+            if (feature.IsSingleton)
+            {
+                var existing = _features.FirstOrDefault(f => f.GetType() == feature.GetType());
+                if (existing != null) Remove<ChartFeature>(f => ReferenceEquals(f, existing));
+            }
+
             // 💥 L6 / §B.2.6：自动注入顶层 Viewport。
             // 外部显式设置了自定义 VP（罕见的双 X 轴场景）时不覆盖，尊重业务意图。
             if (feature.Viewport is null) feature.Viewport = this.Viewport;
@@ -374,6 +443,13 @@ namespace Hevo.Charting.Core
             return targets.Any();
         }
 
+        public TFeature? Find<TFeature>(Func<TFeature, bool>? predicate = null) where TFeature : ChartFeature
+        {
+            IEnumerable<TFeature> targets = _features.OfType<TFeature>();
+            if (predicate != null) targets = targets.Where(predicate);
+            return targets.FirstOrDefault();
+        }
+
         public IFeatureContext Seed<T>(T trait) where T : class, IVisualTrait
         {
             _attachedChart?.Seed(trait);
@@ -403,6 +479,10 @@ namespace Hevo.Charting.Core
             }
         }
 
+        /// <summary>
+        /// 每帧渲染主循环:① 检测环境时钟是否同步(决定是否 FullPass);② 弹脏 Feature 集;③ 任意脏数据则在 board 读锁下按 Phase 顺序 Project 全部脏 Feature。
+        /// 单帧锁定保证所有 Feature 看到的是同一时刻黑板快照,杜绝高低点倒挂等"时空撕裂"。
+        /// </summary>
         public void ProjectAll(RenderContext ctx)
         {
             // 防空拦截：管线尚未就绪
@@ -448,11 +528,15 @@ namespace Hevo.Charting.Core
             _renderedToken = targetToken;
         }
 
+        /// <summary>子类在此组装所有视觉/交互 Feature。一帧只调一次,生命周期 = ChartCell.OnApplyTemplate。</summary>
+        /// <param name="canvas">提供 Add/Remove/Find 等门面 API,直接 this 实例。</param>
         protected abstract void DefineFeatures(IFeatureContext canvas);
 
-        // 💥 源头水管定义：子类在里面组装一条 IRenderFlow 并 `.BindTo(chart)` 注册为主数据流。
-        // Ambient 作用域自动捕获该流到 _pendingMainFlow，BuildAndActivatePipeline 接续驱动 Feature 帧。
-        // 与 DefineFeatures 对齐为 void，允许子类多语句装配（加载任务、订阅、心跳等）。
+        /// <summary>
+        /// 子类在此组装数据管线,末端必须调 .BindTo(chart) 注册为主数据流。
+        /// Ambient 作用域(_composingSchema 线程槽)自动捕获到 _pendingMainFlow,BuildAndActivatePipeline 接续驱动 Feature 帧。
+        /// 允许多语句装配(创建数据源 / 订阅 WebSocket / 启动心跳定时器等)。
+        /// </summary>
         protected abstract void DefineDataFlow(ChartCell chart);
 
         // ==========================================
@@ -491,6 +575,8 @@ namespace Hevo.Charting.Core
         private void InitializeRegistry(ChartCell chart)
         {
             _attachedChart = chart;
+            // dashboard 在 ChartCell 上注入 LinkedMaster/LinkedPane 时覆盖默认 Standalone。
+            if (SchemaContext.GetAttached(chart) is { } injected) _context = injected;
             Registry = new SubscriptionRegistry();
 #if DEBUG
             var myTracer = DevTools.TracerRegistry.Get(this);
@@ -501,6 +587,9 @@ namespace Hevo.Charting.Core
 
             this.Environment().SetupLayout(left: layout.Left, top: layout.Top, right: layout.Right, bottom: layout.Bottom);
             DefineFeatures(this);
+            // 💥 装饰钩子:dashboard 注入的 SchemaContext 在此摘除独占 feature(视口管家 / tooltip)
+            // 并挂 ExternalViewportFeature 标记。schema body 全无感知。
+            _context.Decorate(this);
             _orderedFeatures = _features.OrderBy(f => f.Phase).ToArray();
         }
 
@@ -547,7 +636,7 @@ namespace Hevo.Charting.Core
                     $"{GetType().Name}.DefineDataFlow 必须调用 .BindTo(chart) 注册主数据流");
 
             // 3b. 主数据流挂钩：每次推送时对齐 _latestBoard + OnPortUpdated 监听
-            var mainFlow = _pendingMainFlow!;
+            var mainFlow = _pendingMainFlow;
             _pendingMainFlow = null;
             var dataPlotWorkflow = mainFlow.Do(board =>
             {
@@ -556,6 +645,9 @@ namespace Hevo.Charting.Core
                     if (_latestBoard != null) _latestBoard.OnPortUpdated -= Blackboard_OnPortUpdated;
                     _latestBoard = board;
                     board.OnPortUpdated += Blackboard_OnPortUpdated;
+
+                    // 💥 通知外部观察者(典型:LinkedKLineDashboard 的镜像桥),board 已切换
+                    BoardActivated?.Invoke(board);
                 }
             });
             IRenderFlow<DataBlackboard> featureFlow = mainFlow.Wrap(dataPlotWorkflow);

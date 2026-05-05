@@ -123,19 +123,24 @@ namespace Hevo.Charting
     public record HevoResourceBrush(string ResourceKey) : IHevoBrush;
 
     /// <summary>
-    /// 画笔描述符 (支持虚线、端点样式)
+    /// 画笔描述符 (支持虚线、端点样式、抗锯齿)
+    /// 像素对齐：renderer 内部对所有 stroke vertex 做 snap（中心落在像素 .5 / .0），
+    /// 配合 IsAntialias=true 让 H/V 线由 AA scanline 算法渲染为精确 1 像素，斜线段呈现平滑边缘。
+    /// thickness 写多少 = 物理多少像素（1 → 1px、2 → 2px、1.5 sub-pixel 行为由 Skia 决定）。
     /// </summary>
     /// <param name="Brush"></param>
     /// <param name="Thickness"></param>
     /// <param name="DashArray"></param>
     /// <param name="LineCap"></param>
     /// <param name="LineJoin"></param>
+    /// <param name="IsAntialias">true(默认) = AA on，斜线段平滑、H/V 由 snap 保证锐利；false = AA off，全部按 scanline 整数边界</param>
     public record HevoPen(
         IHevoBrush Brush,
         double Thickness,
         double[]? DashArray = null, // 传 null 就是实线
         int LineCap = 0,           // 对应 Flat/Round/Square
-        int LineJoin = 0           // 对应 Miter/Bevel/Round
+        int LineJoin = 0,          // 对应 Miter/Bevel/Round
+        bool IsAntialias = true    // 默认开 AA：1px series 斜线段开箱即得平滑
     );
 
     /// <summary>

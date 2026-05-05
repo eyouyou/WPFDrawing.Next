@@ -31,9 +31,15 @@ namespace Hevo.Charting.Core
         /// </summary>
         public static readonly CategoryScale Edge = new(0.0);
 
+        /// <summary>
+        /// 纯折线图/分时图专用 + 整根对齐：数据点死死钉在格子边缘 (0 偏移，首尾绝对贴边)
+        /// </summary>
+        public static readonly CategoryScale EdgeSnapped = new(0.0, SnapEdges: true);
+
         // ==========================================
         // ISnappableScale：量化到整数索引（仅当 SnapEdges 开启时生效）
         // ==========================================
+        public bool SnapEnabled => SnapEdges;
         public double Snap(double logicalValue) => SnapEdges ? Math.Round(logicalValue) : logicalValue;
 
         // ==========================================

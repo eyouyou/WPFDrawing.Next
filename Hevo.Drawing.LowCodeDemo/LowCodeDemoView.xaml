@@ -1,0 +1,61 @@
+<UserControl x:Class="Hevo.Drawing.LowCodeDemo.LowCodeDemoView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:chart="clr-namespace:Hevo.Charting.Core;assembly=Hevo.Charting"
+             Background="#FF1A1B1F">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="380"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- 工具栏 -->
+        <StackPanel Grid.Row="0" Grid.ColumnSpan="2" Orientation="Horizontal"
+                    Background="#FF24262C">
+            <Button x:Name="btnAddDataSource" Content="+ 数据源" Margin="6,4" Padding="10,4"/>
+            <Button x:Name="btnAddTrait"       Content="+ Trait"   Margin="6,4" Padding="10,4"/>
+            <Button x:Name="btnAddFeature"     Content="+ Feature" Margin="6,4" Padding="10,4"/>
+            <Separator Margin="6,4"/>
+            <Button x:Name="btnExportJson"  Content="导出 JSON"  Margin="6,4" Padding="10,4"/>
+            <Button x:Name="btnImportJson"  Content="导入 JSON"  Margin="6,4" Padding="10,4"
+                    ToolTip="把右侧 JSON 预览框里的蓝图 JSON 反序列化回画布，自动布局节点"/>
+            <Button x:Name="btnAutoLayout"  Content="自动布局"   Margin="6,4" Padding="10,4"
+                    ToolTip="按 Category 分列、按入度纵向排开，一键整理乱拖之后的画布"/>
+            <Separator Margin="6,4"/>
+            <TextBlock VerticalAlignment="Center" Margin="4,0,4,0" Foreground="#FFC0C8D0" Text="上下文:"/>
+            <TextBox x:Name="tbContext" Width="150" VerticalContentAlignment="Center" Margin="0,4" Padding="6,2"
+                     Background="#FF14151A" Foreground="#FFE0E6EC" BorderBrush="#FF33353A"
+                     Text="USZA300059"
+                     ToolTip="内置 SinWaveDataSource 填任意字符串；TimeShareDataSource 填证券代码如 USHA600000"/>
+            <Button x:Name="btnRunBlueprint" Content="运行蓝图" Margin="6,4" Padding="10,4"
+                    ToolTip="把当前画布编译成 ChartBlueprint 并在预览窗口中运行"/>
+            <Separator Margin="6,4"/>
+            <Button x:Name="btnClear" Content="清空" Margin="6,4" Padding="10,4"/>
+            <TextBlock Foreground="#FFA0A8B0" VerticalAlignment="Center" Margin="20,0,0,0"
+                       Text="左键拖节点 / 右键平移 / 滚轮缩放 / 输出→输入拖连线 / Del 删节点 / Ctrl+Z 撤销 / Ctrl+Y 重做"/>
+        </StackPanel>
+
+        <!-- 画布 -->
+        <chart:ChartHost Grid.Row="1" Grid.Column="0" x:Name="lowCodeHost"/>
+
+        <!-- JSON 预览 -->
+        <Grid Grid.Row="1" Grid.Column="1" Background="#FF202229">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <TextBlock Text="蓝图 JSON 预览" Foreground="#FFC0C8D0" Margin="8,8,8,4" FontSize="13"/>
+            <TextBox Grid.Row="1" x:Name="jsonPreview" Margin="6,0,6,6"
+                     Background="#FF14151A" Foreground="#FFE0E6EC"
+                     FontFamily="Consolas" FontSize="11"
+                     IsReadOnly="True"
+                     VerticalScrollBarVisibility="Auto"
+                     HorizontalScrollBarVisibility="Auto"
+                     AcceptsReturn="True" TextWrapping="NoWrap"/>
+        </Grid>
+    </Grid>
+</UserControl>

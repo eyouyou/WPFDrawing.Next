@@ -44,7 +44,7 @@ namespace Hevo.Charting
             // 3. 收尾：对接图表级联生命周期
             return contextFlow
                    .BindTo(feature.Chart)
-                   .DisposeWith(feature);
+                   .OwnedBy(feature);
         }
 
         // ==========================================

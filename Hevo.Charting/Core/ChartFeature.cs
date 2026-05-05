@@ -94,25 +94,30 @@ namespace Hevo.Charting.Core
         //   定点修（给该 Feature 补 UsePort，或补一个 UseTrait<T>() API）。
         public (T Value, bool IsChanged) UsePort<T>(DataPort<T> port)
         {
-            // 1. 隐式订阅：将当前 Feature 登记为引脚观察者
-            if (_currentFeature != null && _registry != null) _registry.Subscribe(port, _currentFeature);
-
-            // 2. 0-GC 拉取物理数据
+            // 1. 0-GC 拉取物理数据
             T val = _board.Read(port);
 
-            // 3. 拉取该引脚在黑板上的最新纪元令牌
+            // 2. 拉取该引脚在黑板上的最新纪元令牌
             VersionToken currentToken = _board.GetVersion(port);
             bool changed = false;
 
-            // 4. 💥 架构级防御：使用 VersionToken 对齐版本！
-            // 只用 != 判断，彻底免疫长周期运行带来的整数溢出风险
-            if (!_portTokens.TryGetValue(port, out var lastToken) || lastToken != currentToken)
+            // 3. 💥 架构级防御：用 VersionToken 对齐版本 + 顺手做"首次访问"探测
+            //    隐式 Subscribe 只在 Feature 首次见到 port 时跑一次,跨帧稳态零 lock / 零 dict 改动。
+            //    Decompose 走 _context.Reset() 会清空 _portTokens,Transact 重装后首帧自动重新订阅。
+            if (!_portTokens.TryGetValue(port, out var lastToken))
             {
+                // 首次:登记订阅 + 落桩 token
+                if (_currentFeature != null && _registry != null) _registry.Subscribe(port, _currentFeature);
+                _portTokens[port] = currentToken;
                 changed = true;
-                _portTokens[port] = currentToken; // 更新本地记录，对齐最新纪元
+            }
+            else if (lastToken != currentToken)
+            {
+                _portTokens[port] = currentToken;
+                changed = true;
             }
 
-            // 5. 环境突变拦截：如果外部（如 SizeChanged）要求全量重绘
+            // 4. 环境突变拦截：如果外部（如 SizeChanged）要求全量重绘
             // 则强制将本帧获取的所有数据视为“变脏”，以触发下游彻底重新计算投影
             if (_isFullPass) changed = true;
 
@@ -134,19 +139,22 @@ namespace Hevo.Charting.Core
             {
                 var port = ports[i];
 
-                // 1. 隐式订阅
-                if (_currentFeature != null && _registry != null)
-                    _registry.Subscribe(port, _currentFeature);
-
-                // 2. 0-GC 物理拉取
+                // 0-GC 物理拉取
                 buffer[i] = _board.Read(port);
 
-                // 3. 对齐 VersionToken 防抖查脏
+                // 顺手用 _portTokens 是否存在条目作为"首次访问"信号 —— 首次才做隐式订阅。
                 VersionToken currentToken = _board.GetVersion(port);
-                if (!_portTokens.TryGetValue(port, out var lastToken) || lastToken != currentToken)
+                if (!_portTokens.TryGetValue(port, out var lastToken))
                 {
-                    changed = true;
+                    if (_currentFeature != null && _registry != null)
+                        _registry.Subscribe(port, _currentFeature);
                     _portTokens[port] = currentToken;
+                    changed = true;
+                }
+                else if (lastToken != currentToken)
+                {
+                    _portTokens[port] = currentToken;
+                    changed = true;
                 }
             }
 
@@ -179,6 +187,17 @@ namespace Hevo.Charting.Core
         private readonly List<IDisposable> _disposables = new();
 
         public virtual FeaturePhase Phase => FeaturePhase.Series;
+
+        /// <summary>
+        /// true = 同类型已存在时,<see cref="ReactiveSchema.Add"/> 自动把旧实例 Remove 后再加新的,
+        /// 保证 canvas 上至多一个该类型实例。典型:<see cref="Features.GridLayoutFeature"/> /
+        /// <see cref="Features.ViewportManagerFeature"/> 这种"全局布局/状态管家",一个图只该有一个。
+        /// 默认 false:多实例合理(LineSeries / Axis / Crosshair 这类可同图多份)。
+        /// 历史 workaround:以前在 <c>SetupLayout</c> / <c>SetupViewport</c> 等扩展方法里手动
+        /// <c>Remove&lt;T&gt;()</c> 防双重叠加(参 GridLayoutFeature.cs 注释"致命防线")。低代码反射
+        /// 路径不走这些扩展方法 → 双添加 → 历史"白屏"复发。把语义抬到 Add 这一层就堵死。
+        /// </summary>
+        public virtual bool IsSingleton => false;
 
         // ==========================================
         // 💥 Phase 11 / §H：IPausable 生命周期（与 ReactiveSchema 对称）
@@ -246,6 +265,9 @@ namespace Hevo.Charting.Core
         {
 #if DEBUG
             using var scope = DevTools.TopologyTracer.EnterScope(this);
+            // 拿到挂在 schema 上的 tracer(若拓扑面板没开,Get 返回 null,后续插桩走 null 短路)
+            var tracer = DevTools.TracerRegistry.Get(Schema);
+            long start = tracer != null ? System.Diagnostics.Stopwatch.GetTimestamp() : 0L;
 #endif
 
             // 修复 H1：复用持久化的 _context 实例，不再每帧 new FeatureContext。
@@ -263,6 +285,15 @@ namespace Hevo.Charting.Core
             _context.BeginProject(ctx, board);
             OnProject(_context);
             _context.EndProject();
+
+#if DEBUG
+            // 把这一帧 OnProject 耗时喂回 tracer,UI 显示 "x.x ms" perf 徽章用。
+            if (tracer != null)
+            {
+                long elapsed = System.Diagnostics.Stopwatch.GetTimestamp() - start;
+                tracer.RecordFeatureCost(this, elapsed);
+            }
+#endif
         }
 
         protected virtual void ComposeCore(ChartCell chart, RenderContext ctx) { }
@@ -296,7 +327,7 @@ namespace Hevo.Charting.Core
         }
 
         /// <summary>
-        /// 💥 暴露给 DisposeWith 的生命周期注册接口
+        /// 💥 暴露给 OwnedBy 的生命周期注册接口
         /// </summary>
         public void RegisterDisposable(IDisposable disposable)
         {
@@ -304,6 +335,16 @@ namespace Hevo.Charting.Core
             {
                 _disposables.Add(disposable);
             }
+        }
+
+        /// <summary>
+        /// 反查托管资源——跟 ReactiveSchema.Owned 对称。
+        /// 用于按接口级联（feature 子类需要时可在 OnResume 里 <c>foreach (var x in Owned&lt;IXxx&gt;())</c>）。
+        /// </summary>
+        protected IEnumerable<T> Owned<T>() where T : class
+        {
+            for (int i = 0; i < _disposables.Count; i++)
+                if (_disposables[i] is T t) yield return t;
         }
 
         public sealed override void Decompose(ChartCell chart, RenderContext ctx)
@@ -333,10 +374,10 @@ namespace Hevo.Charting.Core
     public static class RenderFlowLifecycleExtensions
     {
         /// <summary>
-        /// 💥 将当前 Rx 流的生命周期强制绑定到指定的 Feature 上！
-        /// Feature 被卸载时，自动 Dispose 该流，绝不泄漏内存。
+        /// 💥 将当前 Rx 流的生命周期强制托管给指定的 Feature。
+        /// Feature 被卸载时自动 Dispose 该流，且 Suspend / Resume 期间正确级联——绝不泄漏内存。
         /// </summary>
-        public static IRenderFlow<T> DisposeWith<T>(this IRenderFlow<T> source, ChartFeature feature)
+        public static IRenderFlow<T> OwnedBy<T>(this IRenderFlow<T> source, ChartFeature feature)
         {
             var intercepted = new WorkflowEngine<T>((next, error) =>
             {

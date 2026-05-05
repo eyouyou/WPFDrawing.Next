@@ -3,16 +3,15 @@ using System.Windows;
 
 namespace Hevo.Charting.Core
 {
-    /// <summary>
-    /// 承载图表整体可用视区大小的特质
-    /// </summary>
+    /// <summary>承载图表整体可用视区大小(由 ChartCell 的 SizeChanged 推送)。</summary>
     public record ViewportSizeTrait(double Width, double Height) : IVisualTrait;
     // =================================================================
     // 1. 彻底正交的坐标系特质 (ECS Components)
     // =================================================================
 
     /// <summary>
-    /// 物理绘制区域 (通常由 ChartCell 的 SizeChanged 触发并挂载在 Shared)
+    /// 物理绘制区域。由 GridLayoutFeature 通过 ExecuteGrid3x3Layout 算出后挂在 Shared,
+    /// 所有 Layer/Feature 直接读取避免重复计算。
     /// </summary>
     public record PlotAreaTrait(HevoRect Area) : IVisualTrait
     {
@@ -20,37 +19,44 @@ namespace Hevo.Charting.Core
     }
 
     /// <summary>
-    /// X 轴逻辑视口 (通常挂载在 Shared，供所有常规图层共享)
+    /// X 轴逻辑视口(通常挂在 Shared,供所有常规图层共享)。
     /// </summary>
+    /// <param name="Viewport">当前可见区间(逻辑域)。</param>
+    /// <param name="World">数据全域(World ⊇ Viewport),供分页/缩小到全景使用。default = 与 Viewport 相同。</param>
     public record XAxisTrait(RealRange Viewport, RealRange World = default) : IVisualTrait
     {
         public static readonly XAxisTrait Default = new(RealRange.Empty, RealRange.Empty);
     }
 
-    /// <summary>
-    /// Y 轴逻辑视口 (通常挂载在特定的 Layer 上，实现同屏多轨 Y 轴)
-    /// </summary>
+    /// <summary>Y 轴逻辑视口。挂在 Layer-local 黑板上,实现同屏多轨 Y 轴(每个 Layer 自己的 RangePort 独立)。</summary>
     public record YAxisTrait(RealRange Viewport) : IVisualTrait
     {
         public static readonly YAxisTrait Default = new(RealRange.Empty);
     }
 
     /// <summary>
-    /// 全局比例尺策略：彻底剥离几何 X/Y 概念，回归数学本质
+    /// 全局比例尺策略:把 X/Y 从几何方向解耦成自变量(Domain)/因变量(Value)的纯数学映射。
+    /// 业务侧通常直接选用预设(Default / LineMode / CandleMode / LogCandleMode);
+    /// 如需自定义自变量(如时间日历)或对数纵轴,直接 new 一个传入即可。
     /// </summary>
+    /// <param name="DomainScale">自变量比例尺(时间、K线索引、类别)。</param>
+    /// <param name="ValueScale">因变量比例尺(价格、成交量、MACD 值)。</param>
     public record ScaleStrategyTrait(
-        IScale DomainScale, // 自变量比例尺（原 XScale，如：时间、K线索引、类别）
-        IScale ValueScale   // 因变量比例尺（原 YScale，如：价格、成交量、MACD值）
+        IScale DomainScale,
+        IScale ValueScale
     ) : IVisualTrait
     {
         // 经典折线图模式：两边都是连续的线性映射，对齐边缘
         public static readonly ScaleStrategyTrait Default = new(CategoryScale.Edge, new LinearScale());
 
+        // 折线图 + 整根对齐：端点贴边（首末点正好落在 plotArea 左右边沿），pan/zoom ratchet 到整数索引
+        public static readonly ScaleStrategyTrait LineMode = new(CategoryScale.EdgeSnapped, new LinearScale());
+
         // 经典 K 线模式：自变量强制带有 +0.5 的居中偏移，因变量是线性映射
-        public static readonly ScaleStrategyTrait CandleMode = new(CategoryScale.Centered, new LinearScale());
+        public static readonly ScaleStrategyTrait CandleMode = new(CategoryScale.CenteredSnapped, new LinearScale());
 
         // 对数 K 线模式：自变量居中偏移，因变量是对数映射 (适合查看长期趋势)
-        public static readonly ScaleStrategyTrait LogCandleMode = new(CategoryScale.Centered, new LogarithmicScale());
+        public static readonly ScaleStrategyTrait LogCandleMode = new(CategoryScale.EdgeSnapped, new LogarithmicScale());
     }
 
     // =================================================================

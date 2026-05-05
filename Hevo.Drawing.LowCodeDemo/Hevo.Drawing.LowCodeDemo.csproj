@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>9.0</LangVersion>
+    <UseWPF>true</UseWPF>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>obj\Generated</CompilerGeneratedFilesOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 维持构建顺序，不以 OutputItemType=Analyzer 形式参与，避免与下面的 dll 形成双重注册 -->
+    <ProjectReference Include="..\Hevo.Charting.CodeAnalysis\Hevo.Charting.CodeAnalysis.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
+    <Analyzer Include="..\Hevo.Charting.CodeAnalysis\bin\$(Configuration)\netstandard2.0\Hevo.Charting.CodeAnalysis.dll" />
+    <ProjectReference Include="..\Hevo.Charting\Hevo.Charting.csproj" />
+  </ItemGroup>
+
+</Project>

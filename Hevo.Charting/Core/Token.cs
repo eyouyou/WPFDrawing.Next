@@ -46,6 +46,16 @@
         {
             return new VersionToken(Interlocked.Read(ref _currentTicks));
         }
+
+        /// <summary>
+        /// 💥 推进 + 快照融合:Interlocked.Increment 本身返回新值,
+        /// 替代分离的 Advance() + Snapshot() 双 barrier 写法,每次写入少一次 Interlocked.Read。
+        /// 高频热路径(ForceWrite / DataSource Publish / Watch Tick)上节省内存屏障。
+        /// </summary>
+        public VersionToken AdvanceAndSnapshot()
+        {
+            return new VersionToken(Interlocked.Increment(ref _currentTicks));
+        }
     }
 
     /// <summary>

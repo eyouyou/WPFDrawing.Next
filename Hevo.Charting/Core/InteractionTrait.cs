@@ -3,34 +3,37 @@ using Hevo.Charting.Layers;
 
 namespace Hevo.Charting.Core
 {
-    /// <summary>
-    /// 万能标签契约 (The Label Contract)
-    /// </summary>
-    /// <param name="Text"></param>
-    /// <param name="BackgroundBrush"></param>
-    /// <param name="Placement"></param>
-    /// <param name="CustomPhysicalAnchor"></param>
+    /// <summary>万能标签契约:十字光标的 X/Y 标签共用此结构。</summary>
+    /// <param name="Text">显示文本(已格式化好)。</param>
+    /// <param name="BackgroundBrush">标签底色,通常取 CrosshairStyleTrait.LabelBrush。</param>
+    /// <param name="Placement">所属轴方位,决定文本对齐方向(左轴右对齐,右轴左对齐)。</param>
+    /// <param name="CustomPhysicalAnchor">CrosshairFeature 通过 AxisLayoutRegistryTrait 雷达扫描到的轴绝对像素。null 时画工退化到 plotArea 边缘兜底。</param>
     public record AxisLabel(
             string Text,
             IHevoBrush BackgroundBrush,
             AxisPlacement Placement = AxisPlacement.Left,
-
-            // 💥 核心：雷达扫描到的确切物理像素将被注入到这里！
-            // 如果有值，画工就会死死吸附在这个像素上 (支持图表中心悬浮轴)
-            // 只有当为 null 时，画工(Layer)才会退化到去吸附带有 Padding 的图表边缘。
             double? CustomPhysicalAnchor = null
         );
 
-    // Tooltip 行模型
-    // 💥 Name 升级为 IHevoString，完美衔接多语言字典！Value 是实时数值，保留 string！
+    /// <summary>Tooltip 行数据。Name 是多语言可解析的 IHevoString;Value 是已格式化的实时字符串。</summary>
     public record TooltipRow(IHevoString Name, string Value, IHevoBrush? ValueBrush = null);
 
     /// <summary>
-    /// 十字光标传递给渲染层的交互特质
+    /// 十字光标传递给渲染层的交互特质——纯渲染数据,layer 无须了解上游业务。
     /// </summary>
+    /// <param name="IsActive">是否绘制十字光标</param>
+    /// <param name="HighlightX">垂直线/X 标签/交点的横坐标(active 时一定有值)</param>
+    /// <param name="HighlightY">
+    /// 水平线/Y 标签的纵坐标。null = 上游告知本帧无意义的 Y(典型场景:联动 dashboard 中
+    /// 镜像 hit 来自邻居 cell),layer 直接跳过水平方向绘制。
+    /// </param>
+    /// <param name="LabelX">X 轴标签</param>
+    /// <param name="YLabels">Y 轴标签集合</param>
+    /// <param name="Dots">数据交点</param>
     public record InteractionTrait(
         bool IsActive,
-        HevoPoint HighlightPoint,
+        float HighlightX,
+        float? HighlightY,
         AxisLabel? LabelX,
         IReadOnlyList<AxisLabel>? YLabels,
         IReadOnlyList<CrosshairDotInfo>? Dots

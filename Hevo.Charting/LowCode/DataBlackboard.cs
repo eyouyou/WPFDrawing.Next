@@ -38,14 +38,34 @@ namespace Hevo.Charting.LowCode
 
         // ==========================================
         // 💥 给业务层暴露的三大神器 (支持 using 语法)
+        // 返回 readonly struct + duck-typed Dispose:每次 using 0 堆分配。
+        // 旧实现是 class 包装,Interaction / Viewport / Paging hot path 每次 mouse / scroll 事件都 new 一个
+        // scope 对象;改成 struct 后稳态零 GC。所有 caller 用 `using (...)` 形式,API 调用面不变。
         // ==========================================
-        public IDisposable AcquireReadLock() { _rwLock.EnterReadLock(); return new ReadLockScope(this); }
-        public IDisposable AcquireWriteLock() { _rwLock.EnterWriteLock(); return new WriteLockScope(this); }
-        public IDisposable AcquireUpgradeableReadLock() { _rwLock.EnterUpgradeableReadLock(); return new UpgradeableReadLockScope(this); }
+        public ReadLockScope AcquireReadLock() { _rwLock.EnterReadLock(); return new ReadLockScope(this); }
+        public WriteLockScope AcquireWriteLock() { _rwLock.EnterWriteLock(); return new WriteLockScope(this); }
+        public UpgradeableReadLockScope AcquireUpgradeableReadLock() { _rwLock.EnterUpgradeableReadLock(); return new UpgradeableReadLockScope(this); }
 
-        private class ReadLockScope : IDisposable { private readonly DataBlackboard _b; public ReadLockScope(DataBlackboard b) => _b = b; public void Dispose() => _b._rwLock.ExitReadLock(); }
-        private class WriteLockScope : IDisposable { private readonly DataBlackboard _b; public WriteLockScope(DataBlackboard b) => _b = b; public void Dispose() => _b._rwLock.ExitWriteLock(); }
-        private class UpgradeableReadLockScope : IDisposable { private readonly DataBlackboard _b; public UpgradeableReadLockScope(DataBlackboard b) => _b = b; public void Dispose() => _b._rwLock.ExitUpgradeableReadLock(); }
+        public readonly struct ReadLockScope : IDisposable
+        {
+            private readonly DataBlackboard _b;
+            internal ReadLockScope(DataBlackboard b) { _b = b; }
+            public void Dispose() => _b._rwLock.ExitReadLock();
+        }
+
+        public readonly struct WriteLockScope : IDisposable
+        {
+            private readonly DataBlackboard _b;
+            internal WriteLockScope(DataBlackboard b) { _b = b; }
+            public void Dispose() => _b._rwLock.ExitWriteLock();
+        }
+
+        public readonly struct UpgradeableReadLockScope : IDisposable
+        {
+            private readonly DataBlackboard _b;
+            internal UpgradeableReadLockScope(DataBlackboard b) { _b = b; }
+            public void Dispose() => _b._rwLock.ExitUpgradeableReadLock();
+        }
 
         // ==========================================
         // 字典修改属于结构性变化，必须上排他写锁
@@ -122,9 +142,8 @@ namespace Hevo.Charting.LowCode
             // 2. 0-GC 裸写物理桶
             _memory.Set<DataPort<T>, T>(port, value);
 
-            // 3. 拨动时钟
-            _boardClock.Advance();
-            _portTokens[port] = _boardClock.Snapshot();
+            // 3. 拨动时钟(融合 Advance+Snapshot,单次 Interlocked.Increment 取新值,省一次 barrier)
+            _portTokens[port] = _boardClock.AdvanceAndSnapshot();
 
             // 4. 路由拦截 (此时必在 WriteLock 的保护伞下)
             if (_transactionDepth > 0)
@@ -209,11 +228,15 @@ namespace Hevo.Charting.LowCode
 
     // ==========================================
     // 💥 3. 定向花名册订阅系统 (双缓冲安全版)
+    // 单锁守护 _portSubscribers + _dirtyFeatures：
+    //   - NotifyPortUpdated 是 ForceWrite 后的高频路径,原双锁嵌套(先 _portSubscribers
+    //     再 _dirtyLock)每次进出两套 monitor,合并后省一半 lock 开销。
+    //   - Subscribe / PopDirtyFeatures / UnsubscribeAll 几乎都在 UI 线程上,合锁后
+    //     竞争面没变化。
     // ==========================================
     public class SubscriptionRegistry
     {
-        // 💥 核心修复：保护脏名单的读写锁
-        private readonly object _dirtyLock = new object();
+        private readonly object _gate = new object();
         private readonly HashSet<ChartFeature> _dirtyFeatures = new();
 
         // 记录引脚与 Feature 的订阅关系 (通常在 UI 线程建树时操作)
@@ -227,7 +250,7 @@ namespace Hevo.Charting.LowCode
 #endif
 
             // 简单加锁防止建树期的并发
-            lock (_portSubscribers)
+            lock (_gate)
             {
                 if (!_portSubscribers.TryGetValue(port, out var features))
                 {
@@ -244,20 +267,15 @@ namespace Hevo.Charting.LowCode
         /// </summary>
         public bool NotifyPortUpdated(object port)
         {
-            bool hasDirty = false;
-            lock (_portSubscribers)
+            lock (_gate)
             {
                 if (_portSubscribers.TryGetValue(port, out var features) && features.Count > 0)
                 {
-                    // 💥 安全锁入脏名单
-                    lock (_dirtyLock)
-                    {
-                        foreach (var f in features) _dirtyFeatures.Add(f);
-                    }
-                    hasDirty = true;
+                    foreach (var f in features) _dirtyFeatures.Add(f);
+                    return true;
                 }
+                return false;
             }
-            return hasDirty;
         }
 
         /// <summary>
@@ -268,7 +286,7 @@ namespace Hevo.Charting.LowCode
         /// </summary>
         public bool PopDirtyFeatures(HashSet<ChartFeature> target)
         {
-            lock (_dirtyLock)
+            lock (_gate)
             {
                 if (_dirtyFeatures.Count == 0) return false;
 
@@ -282,13 +300,9 @@ namespace Hevo.Charting.LowCode
         /// <summary>彻底抹除某个 Feature 的所有订阅记录</summary>
         public void UnsubscribeAll(ChartFeature feature)
         {
-            lock (_dirtyLock)
+            lock (_gate)
             {
                 _dirtyFeatures.Remove(feature);
-            }
-
-            lock (_portSubscribers)
-            {
                 foreach (var subscribers in _portSubscribers.Values)
                 {
                     subscribers.Remove(feature);
