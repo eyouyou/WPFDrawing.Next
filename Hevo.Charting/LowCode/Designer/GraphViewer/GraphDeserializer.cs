@@ -179,8 +179,11 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             //(GraphSerializer 把每个 OutputPort 都写了 binding,所以这里能直接读)。
             foreach (var op in node.OutputPorts)
             {
-                if (fm.PortBindings.TryGetValue(op.Id, out var gid))
-                    globalIdToOutput[gid] = (node.Id, op.Id);
+                if (fm.PortBindings.TryGetValue(op.Id, out var raw))
+                {
+                    var gid = PortBindingValue.ExtractSingle(raw);
+                    if (!string.IsNullOrEmpty(gid)) globalIdToOutput[gid] = (node.Id, op.Id);
+                }
             }
             return node;
         }
@@ -227,10 +230,10 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             foreach (var kv in fm.PortBindings)
             {
                 if (!inputsById.TryGetValue(kv.Key, out var inputPort)) continue; // OUTPUT binding,跳过
-                // 扇入端口:CSV 拆开,逐个还原
+                // PortBindingValue 统一识别 string / list / JSON array / CSV(<v1 兼容)。
                 var ids = inputPort.IsArray
-                    ? kv.Value.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).ToArray()
-                    : new[] { kv.Value.Trim() };
+                    ? PortBindingValue.ExtractList(kv.Value)
+                    : (IReadOnlyList<string>)new[] { PortBindingValue.ExtractSingle(kv.Value) };
                 foreach (var id in ids)
                 {
                     if (string.IsNullOrEmpty(id)) continue;
@@ -262,9 +265,9 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             {
                 foreach (var kv in fm.PortBindings)
                 {
-                    // 扇入端口 CSV
-                    foreach (var id in kv.Value.Split(','))
-                        if (IsViewportId(id.Trim())) return true;
+                    // 单端口 / 扇入数组 / 老 CSV 一并枚举,任何一根碰到 well-known id 就 return。
+                    foreach (var id in PortBindingValue.ExtractList(kv.Value))
+                        if (IsViewportId(id)) return true;
                 }
             }
             return false;

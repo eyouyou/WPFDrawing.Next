@@ -28,11 +28,12 @@ namespace Hevo.Charting.LowCode.Designer
             ChartCell chart,
             ChartBlueprint blueprint,
             object dataSource,
-            IWorkflow<DataSnapshot<TItem>> stream)
+            IWorkflow<DataSnapshot<TItem>> stream,
+            BlueprintHandlerRegistry? handlers = null)
         {
             if (chart is null) throw new ArgumentNullException(nameof(chart));
 
-            var schema = new DynamicChartSchema<TItem>(blueprint, dataSource, stream);
+            var schema = new DynamicChartSchema<TItem>(blueprint, dataSource, stream, handlers);
             chart.Template = schema;
             return schema;
         }
@@ -43,11 +44,12 @@ namespace Hevo.Charting.LowCode.Designer
         public static DynamicChartSchema<TItem> Run<TSource, TItem>(
             ChartCell chart,
             ChartBlueprint blueprint,
-            DataSource<TSource, TItem> dataSource)
+            DataSource<TSource, TItem> dataSource,
+            BlueprintHandlerRegistry? handlers = null)
             where TSource : DataSource<TSource, TItem>
         {
             if (dataSource is null) throw new ArgumentNullException(nameof(dataSource));
-            return Run(chart, blueprint, dataSource, dataSource.Stream);
+            return Run(chart, blueprint, dataSource, dataSource.Stream, handlers);
         }
     }
 }

@@ -475,8 +475,11 @@ namespace Hevo.Charting.DevTools
                 var ft = new FormattedText(node.Label, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, _font, 12, isSelected ? Brushes.White : Brushes.LightGray, 1.0);
                 dc.DrawText(ft, new Point(node.Bounds.Left + 10, node.Bounds.Top + (node.Bounds.Height - ft.Height) / 2));
 
+#if DEBUG
                 // Per-feature 性能徽章:tier 2 + 有采样数据时,右上角小字显示平均 OnProject 耗时。
                 // 颜色阈值: <0.3ms 海绿(健康) / <1ms 黄色(关注) / >=1ms 橘红(瓶颈嫌疑)
+                // 💥 TopologyTracer.FeatureCost 仅在 DEBUG 编译条件下声明,Release 不存在该字段 ——
+                //    整段徽章逻辑包在 #if DEBUG 里跟字段定义对齐,否则 Release 编译挂掉。
                 if (node.Tier == 2 && _tracer != null
                     && _tracer.FeatureCost.TryGetValue(node.Id, out var cost) && cost.Samples > 0)
                 {
@@ -491,6 +494,7 @@ namespace Hevo.Charting.DevTools
                         _font, 9, badgeColor, 1.0);
                     dc.DrawText(badgeFt, new Point(node.Bounds.Right - badgeFt.Width - 4, node.Bounds.Top + 2));
                 }
+#endif
 
                 dc.Pop();
             }
@@ -610,10 +614,16 @@ namespace Hevo.Charting.DevTools
         private double ComputePulseStrength(string nodeId, long nowTicks)
         {
             if (_tracer == null) return 0;
+#if DEBUG
+            // 💥 TopologyTracer.LastHitTicks 仅 DEBUG 编译声明,Release 永远拿不到 hit → 直接返回 0,
+            //    脉冲特效消失,符合"DevTools 在 Release 上是 no-op"的整体语义。
             if (!_tracer.LastHitTicks.TryGetValue(nodeId, out long lastTicks)) return 0;
             double elapsedSec = (nowTicks - lastTicks) / (double)Stopwatch.Frequency;
             if (elapsedSec >= PulseDurationSec) return 0;
             return 1 - elapsedSec / PulseDurationSec;
+#else
+            return 0;
+#endif
         }
 
         // Tier 名称映射 — 数字 tier 对人不友好。

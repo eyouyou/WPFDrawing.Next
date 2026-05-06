@@ -208,7 +208,8 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             _readers[prop.Name] = reader;
         }
 
-        // PortBindings 字段(ScalarMappings / VectorMappings)按字典编辑——每行 "字段名 → portId"。
+        // ScalarMappings / VectorMappings 按字典编辑——每行 "字段名 → portId"。
+        // PortBindings 不在编辑器里直接编辑 (它由画布连线反推,见 GraphSerializer.ToBlueprint)。
         private void BuildMappingEditor(StackPanel host, string title, IDictionary<string, string> dict)
         {
             var box = new StackPanel { Margin = new Thickness(8, 12, 8, 4) };

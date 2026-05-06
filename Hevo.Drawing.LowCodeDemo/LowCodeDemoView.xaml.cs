@@ -10,6 +10,7 @@ using Hevo.Charting.Core;
 using Hevo.Charting.Features;
 using Hevo.Charting.Layers;
 using Hevo.Charting.LowCode.Designer;
+using Hevo.Charting.LowCode.Designer.Converters;
 using Hevo.Charting.LowCode.Designer.GraphViewer;
 using Hevo.Charting.LowCode.Designer.GraphViewer.Wrappers;
 
@@ -19,11 +20,9 @@ namespace Hevo.Drawing.LowCodeDemo
     {
         private GraphSchema? _graphSchema;
 
-        private static readonly JsonSerializerOptions _jsonOptions = new()
-        {
-            WriteIndented = true,
-            NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals,
-        };
+        // 全局共享一份 options —— 蓝图导入/导出走同一份 schema 才能保证 Color / IHevoBrush /
+        // NaN / Infinity 等坑点全程对齐。详见低代码.md §8.10 + 优化方案 §7。
+        private static readonly JsonSerializerOptions _jsonOptions = BlueprintJsonOptions.Default;
 
         /// <summary>
         /// 可选。把工具栏文本框里的字符串转换为数据源的运行时上下文。

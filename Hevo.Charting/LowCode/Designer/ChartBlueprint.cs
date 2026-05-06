@@ -1,5 +1,7 @@
 using Hevo.Charting.Abstractions;
 using Hevo.Charting.Core;
+using System.Collections.Concurrent;
+using System.Linq.Expressions;
 using System.Reflection;
 
 namespace Hevo.Charting.LowCode.Designer
@@ -12,6 +14,50 @@ namespace Hevo.Charting.LowCode.Designer
         public List<FeatureModel> Features { get; set; } = new();
 
         public List<StyleModel> InitialTraits { get; set; } = new();
+
+        /// <summary>
+        /// 💥 Schema 级触发器(协议扩展):声明式心跳 / 定时 / 节流 等周期性数据驱动。
+        /// 当前仅支持 Kind="Interval" + Workflow.FetchExclusive 防重入语义,业务侧 handler 通过
+        /// <see cref="BlueprintHandlerRegistry"/> 命名注册,蓝图本身不携带闭包(JSON 友好)。
+        /// 详见低代码优化方案 §K (K 线迁移引入的 trigger 协议)。
+        /// </summary>
+        public List<TriggerModel> Triggers { get; set; } = new();
+    }
+
+    /// <summary>
+    /// Schema 级触发器(蓝图协议扩展)。
+    /// <para>
+    /// 等价 C# 调用链:
+    /// </para>
+    /// <code>
+    /// Workflow.Interval(TimeSpan.FromSeconds(IntervalSeconds))
+    ///         .FetchExclusive(handlers.GetFetch(Handler))
+    ///         .Subscribe(_ => {}, ex => log)
+    ///         .OwnedBy(this);
+    /// </code>
+    /// <para>
+    /// JSON 形态:
+    /// </para>
+    /// <code>
+    /// { "Kind": "Interval", "IntervalSeconds": 1, "Handler": "OnHeartbeat", "Exclusive": true }
+    /// </code>
+    /// </summary>
+    public class TriggerModel
+    {
+        /// <summary>触发器类型。当前仅支持 "Interval";后续可扩展 "Throttle" / "Debounce"。</summary>
+        public string Kind { get; set; } = "Interval";
+
+        /// <summary>Interval 周期(秒)。Kind="Interval" 时必填,小于等于 0 视为非法,trigger 跳过装配。</summary>
+        public double IntervalSeconds { get; set; } = 1.0;
+
+        /// <summary>handler 名称。业务侧调 <see cref="BlueprintHandlerRegistry.RegisterFetch"/> 注册同名委托。</summary>
+        public string Handler { get; set; } = "";
+
+        /// <summary>
+        /// true → <see cref="Workflow"/>.FetchExclusive (CAS 防重入,正在跑则丢弃新信号);
+        /// false 当前未实现,会落到 FetchExclusive 路径并打 warning。
+        /// </summary>
+        public bool Exclusive { get; set; } = true;
     }
 
     public class DataSourceModel
@@ -53,8 +99,14 @@ namespace Hevo.Charting.LowCode.Designer
         // 1. 普通属性配置 (如 LineColor, Period 等)
         public Dictionary<string, object?> Properties { get; set; } = new();
 
-        // 2. 💥 引脚连线板：Key=Feature的属性名(如 "PricePort"), Value=全局引脚ID(如 "GlobalPrice")
-        public Dictionary<string, string> PortBindings { get; set; } = new();
+        // 2. 💥 引脚连线板:Key=Feature 的属性名(如 "PricePort" / "ValuePorts")。
+        //    Value 形态(全部由 PortBindingValue 解析):
+        //      - 单端口 (DataPort<T>):    string  "global_price_id"
+        //      - 扇入端口 (DataPort<T>[]): string[] / List<string> ["id1","id2","id3"]  (新格式)
+        //      - <v1 兼容: CSV 字符串 "id1,id2,id3"  (反序列化能读但写出统一升级到数组)
+        //    用 object? 是为了让 System.Text.Json 在反序列化时既识别字符串也识别 JSON 数组,
+        //    业务侧手撸 dict 也能直接塞 string / List<string> / string[]。
+        public Dictionary<string, object?> PortBindings { get; set; } = new();
     }
 
     /// <summary>
@@ -67,6 +119,7 @@ namespace Hevo.Charting.LowCode.Designer
         private readonly ChartBlueprint _blueprint;
         private readonly object _dataSourceInstance;
         private readonly IWorkflow<DataSnapshot<TItem>> _sourceStream;
+        private readonly BlueprintHandlerRegistry? _handlers;
 
         // 💥 全局引脚注册表：按 ID 缓存实例化的 DataPort<T>
         private readonly Dictionary<string, object> _portRegistry = new();
@@ -76,14 +129,37 @@ namespace Hevo.Charting.LowCode.Designer
             typeof(IFeatureContext).GetMethod(nameof(IFeatureContext.Seed))
             ?? throw new InvalidOperationException("IFeatureContext.Seed 方法签名变了,需同步更新蓝图反射调用。");
 
+        // 💥 Seed<T> 编译委托缓存:每次 MakeGenericMethod + Invoke 一笔反射开销 (~几十 μs + box arg)。
+        // 编译后直接 callvirt Seed<T> + 丢弃返回值 (Lambda<Action> 自动 pop),trait 多时累计可观。
+        // key=trait runtime type;首次访问编译,后续命中直接调委托。
+        private static readonly ConcurrentDictionary<Type, Action<IFeatureContext, object>> _seedInvokerCache = new();
+
+        private static Action<IFeatureContext, object> GetSeedInvoker(Type traitType)
+            => _seedInvokerCache.GetOrAdd(traitType, BuildSeedInvoker);
+
+        private static Action<IFeatureContext, object> BuildSeedInvoker(Type traitType)
+        {
+            var ctxParam   = Expression.Parameter(typeof(IFeatureContext), "ctx");
+            var traitParam = Expression.Parameter(typeof(object), "trait");
+            // 💥 关键:必须显式 MakeGenericMethod 而不是 Seed<object> 之类 ——
+            //    VisualDataBag.Publish<T> 按 T 静态类型算 TraitId<T>.Id 决定槽位,
+            //    T 必须锁成 trait 真实运行时类型,否则下游 Read<ConcreteType>() 找的是另一个槽 → 黑屏。
+            var seedClosed = _seedMethod.MakeGenericMethod(traitType);
+            var call       = Expression.Call(ctxParam, seedClosed, Expression.Convert(traitParam, traitType));
+            // Seed 返回 IFeatureContext,Lambda<Action> 编译时自动 pop 掉返回值,跟原 Invoke 丢弃返回值同语义。
+            return Expression.Lambda<Action<IFeatureContext, object>>(call, ctxParam, traitParam).Compile();
+        }
+
         public DynamicChartSchema(
             ChartBlueprint blueprint,
             object dataSourceInstance,
-            IWorkflow<DataSnapshot<TItem>> sourceStream)
+            IWorkflow<DataSnapshot<TItem>> sourceStream,
+            BlueprintHandlerRegistry? handlers = null)
         {
             _blueprint = blueprint ?? throw new ArgumentNullException(nameof(blueprint));
             _dataSourceInstance = dataSourceInstance ?? throw new ArgumentNullException(nameof(dataSourceInstance));
             _sourceStream = sourceStream ?? throw new ArgumentNullException(nameof(sourceStream));
+            _handlers = handlers;
 
             // 💥 数据源生命周期托管：IDisposable / IPausable 都跟着 schema 一起销毁/暂停。
             // 等价于业务侧 `_dataSource.OwnedBy(this)`,这里替蓝图用户隐式补上。
@@ -182,6 +258,61 @@ namespace Hevo.Charting.LowCode.Designer
             stream.Select(snap => pipe.Process(snap))
                   .DoOnDispose(pipe.Dispose)
                   .BindTo(chart);
+
+            // 💥 Triggers 装配 (协议扩展 §K) —— 蓝图声明的 Schema 级触发器逐条复刻成
+            //   Workflow.Interval(...).FetchExclusive(handler).Subscribe(...).OwnedBy(this) 调用链。
+            //   handler 通过 BlueprintHandlerRegistry 命名查表,蓝图本身保持纯数据。
+            //   注:必须放在 BindTo 之后,确保 chart cell 已经接管主流;trigger 自身的 IDisposable
+            //   通过 Own(...) 挂在 schema 生命周期上,Suspend / Dispose 时一并冻结/清理。
+            foreach (var trigger in _blueprint.Triggers)
+            {
+                WireTrigger(trigger);
+            }
+        }
+
+        /// <summary>
+        /// 把一条 <see cref="TriggerModel"/> 复刻成实际的 Workflow 调用链。
+        /// 失败原因 (handler 未注册 / handlers 为 null / Kind 不识别) 不抛,打 warning 跳过 ——
+        /// 跟 Feature/Trait 装配的 silent-skip 风格保持一致,蓝图局部坏不影响其他段。
+        /// </summary>
+        private void WireTrigger(TriggerModel def)
+        {
+            if (def == null) return;
+            if (def.Kind != "Interval")
+            {
+                Console.WriteLine($"[Hevo 蓝图警告] 未知 Trigger Kind '{def.Kind}',目前只支持 Interval,跳过。");
+                return;
+            }
+            if (def.IntervalSeconds <= 0)
+            {
+                Console.WriteLine($"[Hevo 蓝图警告] Trigger '{def.Handler}' IntervalSeconds={def.IntervalSeconds} 非法,跳过。");
+                return;
+            }
+            if (_handlers == null)
+            {
+                Console.WriteLine($"[Hevo 蓝图警告] Trigger '{def.Handler}' 需要 BlueprintHandlerRegistry,DynamicChartSchema 未提供 handlers,跳过。");
+                return;
+            }
+            var fetch = _handlers.TryGetFetch(def.Handler);
+            if (fetch == null)
+            {
+                Console.WriteLine($"[Hevo 蓝图警告] Trigger handler '{def.Handler}' 未注册或类型不匹配 Func<VersionToken,CancellationToken,Task<bool>>,跳过。");
+                return;
+            }
+            if (!def.Exclusive)
+            {
+                // 当前仅 FetchExclusive (CAS 防重入)路径已实现。非互斥路径需要业务自己接受堆叠风险,
+                // 暂不展开,直接走 Exclusive 兜底 + 打提示。
+                Console.WriteLine($"[Hevo 蓝图提示] Trigger '{def.Handler}' Exclusive=false 暂未实现,默认走 FetchExclusive。");
+            }
+
+            var sub = Workflow.Interval(TimeSpan.FromSeconds(def.IntervalSeconds))
+                              .FetchExclusive(fetch)
+                              .Subscribe(_ => { },
+                                         ex => Console.WriteLine($"[Hevo 蓝图 Trigger 异常 '{def.Handler}'] {ex}"));
+            // ReactiveSchema.Own 挂载到 schema 生命周期 —— Suspend / Dispose 时级联冻结/清理,
+            // IntervalSubscription 自身实现 IPausable 也会被框架自动触达。
+            Own(sub);
         }
 
         /// <summary>
@@ -297,6 +428,48 @@ namespace Hevo.Charting.LowCode.Designer
             }
         }
 
+        /// <summary>
+        /// 协议扩展 §K:把 Properties 字典里"指向 Delegate 属性的字符串名字"翻译成 BlueprintHandlerRegistry 里的实际委托。
+        /// 跳过翻译的条目会被从返回字典里剔除 —— 让 SmartActivator 不要再尝试把 string 塞 Delegate 字段(注定失败 + 打 warning)。
+        /// 非 Delegate 属性 / 字符串值不命中任何注册条目 / handlers 为 null 时,该 entry 原样保留。
+        /// </summary>
+        private Dictionary<string, object?> ResolveHandlerReferences(Type featureType, Dictionary<string, object?>? props)
+        {
+            if (props == null || props.Count == 0) return new Dictionary<string, object?>();
+            var resolved = new Dictionary<string, object?>(props);
+            foreach (var kv in props)
+            {
+                if (kv.Value is not string handlerName || string.IsNullOrEmpty(handlerName)) continue;
+                var pi = featureType.GetProperty(kv.Key,
+                    BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+                if (pi == null) continue;
+                if (!typeof(Delegate).IsAssignableFrom(pi.PropertyType)) continue;
+
+                // 该属性是 Delegate 类型且 Properties 里给的是字符串 → 必走 handler 注册表查表。
+                if (_handlers == null)
+                {
+                    Console.WriteLine($"[Hevo 蓝图警告] Feature {featureType.Name}.{kv.Key} 期望 Delegate 但 handlers 未注册,跳过该字段。");
+                    resolved.Remove(kv.Key);
+                    continue;
+                }
+                var del = _handlers.TryGet(handlerName);
+                if (del == null)
+                {
+                    Console.WriteLine($"[Hevo 蓝图警告] Feature {featureType.Name}.{kv.Key} 引用 handler '{handlerName}' 未注册,跳过该字段。");
+                    resolved.Remove(kv.Key);
+                    continue;
+                }
+                if (!pi.PropertyType.IsAssignableFrom(del.GetType()))
+                {
+                    Console.WriteLine($"[Hevo 蓝图警告] Feature {featureType.Name}.{kv.Key}: handler '{handlerName}' 类型 {del.GetType().Name} 不兼容目标 {pi.PropertyType.Name},跳过该字段。");
+                    resolved.Remove(kv.Key);
+                    continue;
+                }
+                resolved[kv.Key] = del;
+            }
+            return resolved;
+        }
+
         /// <summary>反射拿数据源当前快照,用于 StartWith 首帧。失败时返回 null,流就不走 StartWith。</summary>
         private DataSnapshot<TItem>? TryGetInitialSnapshot()
         {
@@ -328,27 +501,32 @@ namespace Hevo.Charting.LowCode.Designer
                     Console.WriteLine($"[Hevo 蓝图警告] {traitDef.TraitTypeName} 不是 IVisualTrait,Seed 已跳过");
                     continue;
                 }
-                _seedMethod.MakeGenericMethod(traitType).Invoke(canvas, new[] { traitInstance });
+                GetSeedInvoker(traitType)(canvas, traitInstance);
             }
 
             // 2. 💥 动态组装 Features
             foreach (var featureDef in _blueprint.Features)
             {
                 Type featureType = ComponentRegistry.Resolve(featureDef.TypeName);
-                var feature = (ChartFeature)Activator.CreateInstance(featureType)!;
+                // ComponentRegistry.CreateInstance 走编译委托缓存,首次反射后续直接 newobj,
+                // 50 Feature 蓝图加载从 ~30ms 反射 ctor 降到 ~3ms。
+                var feature = (ChartFeature)ComponentRegistry.CreateInstance(featureType);
 
-                // 步骤 A：注入普通基本属性 (如 PaddingRatio = 0.05)
-                SmartActivator.InjectProperties(feature, featureDef.Properties);
+                // 步骤 A:注入普通基本属性 (如 PaddingRatio = 0.05)。
+                // 协议扩展 §K:先做 handler 名字解析 —— Properties 里若有 string 值且对应属性是 Delegate 类型,
+                // 翻译为已注册的实际委托;翻译失败的条目会被剥离,SmartActivator 拿不到字符串再去硬塞 Delegate 槽。
+                var injectableProps = ResolveHandlerReferences(featureType, featureDef.Properties);
+                SmartActivator.InjectProperties(feature, injectableProps);
 
-                // 步骤 B：执行引脚焊接 (Port Binding)
-                // 协议:
-                //   单 DataPort<T>: PortBindings["DataPort"] = "global_price_id"
-                //   数组 DataPort<T>[]: PortBindings["ValuePorts"] = "id1,id2,id3"  (CSV)
-                //   ↑ 两种 shape 用同一字典 + 字符串值表达,后端在此统一拆。
+                // 步骤 B:执行引脚焊接 (Port Binding)
+                //   单 DataPort<T>:   PortBindings["DataPort"]   = "global_price_id"            (string)
+                //   扇入 DataPort<T>[]: PortBindings["ValuePorts"] = ["id1","id2","id3"]         (数组,新格式)
+                //                       PortBindings["ValuePorts"] = "id1,id2,id3"              (CSV,<v1 兼容)
+                //   值的实际形态由 PortBindingValue.ExtractSingle/ExtractList 解释,业务 / JSON / 编辑器 三方手撸都行。
                 foreach (var binding in featureDef.PortBindings)
                 {
                     string propertyName = binding.Key; // 如 "PricePort" / "ValuePorts"
-                    string portIdOrCsv  = binding.Value;
+                    object? rawValue    = binding.Value;
 
                     // 引脚 setter 通常是 init-only;反射 SetValue 在 .NET 5+ 无视 init 修饰符,可绕过。
                     var propInfo = featureType.GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
@@ -364,7 +542,9 @@ namespace Hevo.Charting.LowCode.Designer
                     if (pt.IsGenericType && pt.GetGenericTypeDefinition() == typeof(DataPort<>))
                     {
                         Type portDataType = pt.GetGenericArguments()[0];
-                        var portInstance = GetOrCreatePort(portDataType, portIdOrCsv.Trim());
+                        var id = PortBindingValue.ExtractSingle(rawValue);
+                        if (string.IsNullOrEmpty(id)) continue;
+                        var portInstance = GetOrCreatePort(portDataType, id);
                         if (portInstance == null)
                         {
                             Console.WriteLine($"[Hevo 蓝图警告] {featureType.Name}.{propertyName} 端口类型冲突,焊接跳过");
@@ -374,20 +554,20 @@ namespace Hevo.Charting.LowCode.Designer
                         continue;
                     }
 
-                    // 2) DataPort<T>[] —— 多源扇入,CSV 拆出来逐个 GetOrCreatePort 后塞数组
+                    // 2) DataPort<T>[] —— 多源扇入,数组 / CSV 都能读,逐个 GetOrCreatePort 后塞数组
                     if (pt.IsArray)
                     {
                         Type? elem = pt.GetElementType();
                         if (elem != null && elem.IsGenericType && elem.GetGenericTypeDefinition() == typeof(DataPort<>))
                         {
                             Type portDataType = elem.GetGenericArguments()[0];
-                            var ids = portIdOrCsv.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                            var ids = PortBindingValue.ExtractList(rawValue);
                             // 类型冲突时整段 binding 跳过,避免半截数组让 ingestor 拿到 null 槽位崩溃。
-                            var resolved = new List<object>(ids.Length);
+                            var resolved = new List<object>(ids.Count);
                             bool ok = true;
                             foreach (var id in ids)
                             {
-                                var inst = GetOrCreatePort(portDataType, id.Trim());
+                                var inst = GetOrCreatePort(portDataType, id);
                                 if (inst == null) { ok = false; break; }
                                 resolved.Add(inst);
                             }

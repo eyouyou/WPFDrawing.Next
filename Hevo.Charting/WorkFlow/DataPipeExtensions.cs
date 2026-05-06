@@ -25,6 +25,21 @@ namespace Hevo.Charting.WorkFlow
             builder.InternalPipe.AddIngestor(new ColumnPublishIngestor<TBlock>(cfg.Publishers));
             return builder.Seal();
         }
+
+        /// <summary>
+        /// SoA 列流的"裸 pipe"重载 —— 给蓝图自定义 <see cref="LowCode.Designer.IPipelinePolicy"/>
+        /// 用,该路径拿到的是 <see cref="UniversalDataPipe{TItem}"/> 而非 fluent <c>DataPipeBuilder</c>。
+        /// 不返回 <c>IWorkflow&lt;DataBlackboard&gt;</c>(policy 不需要 BindTo,管线由 DynamicChartSchema 接管),
+        /// 仅注册列发布 ingestor 即可。
+        /// </summary>
+        public static void LinkSoAColumnStream<TBlock>(
+                    this UniversalDataPipe<TBlock> pipe,
+                    Action<SoAColumnConfigurator<TBlock>> configure)
+        {
+            var cfg = new SoAColumnConfigurator<TBlock>(pipe);
+            configure(cfg);
+            pipe.AddIngestor(new ColumnPublishIngestor<TBlock>(cfg.Publishers));
+        }
     }
 
     /// <summary>

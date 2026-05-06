@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Benchmark 不在 .NET 5 兼容硬约束里(README §2),可独立 TFM。
+         WPF 不需要,因为 benchmark 仅测反射 / 序列化逻辑,不涉及 UI 渲染。 -->
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>preview</LangVersion>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- BenchmarkDotNet 强烈要求 Release 配置才出准数 -->
+    <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" Version="0.14.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Hevo.Charting\Hevo.Charting.csproj" />
+  </ItemGroup>
+
+</Project>
