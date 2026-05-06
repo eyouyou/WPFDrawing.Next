@@ -7,12 +7,14 @@ WPF/.NET 8 金融图表引擎与示例业务图。本文档是项目入口指南
 ## 1. 仓库范围
 
 主要工作面:
-- `Hevo.Charting`:核心图表引擎、workflow、schema、feature、blackboard、渲染管线
+- `Hevo.Charting`:核心图表引擎、workflow、schema、feature、blackboard、渲染管线、低代码蓝图
 - `Hevo.Charting.CodeAnalysis`:Roslyn 生成器(尤其 PortGenerator)
-- `Hevo.Drawing`:基于新框架的示例/业务图
-- `DataAnalysis`:仍待迁移的旧业务/图表代码
+- `Hevo.Charting.Tests`:xUnit 测试集(蓝图 RoundTrip / DryRun / ComponentRegistry / NodePortCache 等)
+- `Hevo.Charting.Benchmarks`:BenchmarkDotNet 基准(低代码子系统 §1–§8 优化)
+- `Hevo.Charting.Mcp`:MCP server,把蓝图能力暴露给 LLM
+- `Hevo.Drawing.LowCodeDemo`:蓝图 + Node Editor 的可视化运行宿主(WPF)
 
-业务工作请聚焦 `Hevo.Charting` / `Hevo.Charting.CodeAnalysis` / `Hevo.Drawing`,除非用户明确点名 legacy。
+业务工作请聚焦 `Hevo.Charting` / `Hevo.Charting.CodeAnalysis` / `Hevo.Drawing.LowCodeDemo`,其余按需。
 
 ---
 
@@ -57,7 +59,7 @@ WPF/.NET 8 金融图表引擎与示例业务图。本文档是项目入口指南
 ```bash
 dotnet build "Hevo.Charting/Hevo.Charting.csproj" -nologo
 dotnet build "Hevo.Charting.CodeAnalysis/Hevo.Charting.CodeAnalysis.csproj" -nologo
-dotnet build "Hevo.Drawing/Hevo.Drawing.Sample.csproj" -nologo
+dotnet build "Hevo.Drawing.LowCodeDemo/Hevo.Drawing.LowCodeDemo.csproj" -nologo
 ```
 
 整解决方案编译:
@@ -66,10 +68,16 @@ dotnet build "Hevo.Drawing/Hevo.Drawing.Sample.csproj" -nologo
 dotnet build "Hevo.Drawing.slnx" -nologo
 ```
 
+跑测试 / 基准:
+
+```bash
+dotnet test "Hevo.Charting.Tests/Hevo.Charting.Tests.csproj" -nologo
+dotnet run -c Release --project "Hevo.Charting.Benchmarks/Hevo.Charting.Benchmarks.csproj" -- --filter "*"
+```
+
 注意:
-- 整 sln 编译当前可能失败,因为 `DataAnalysis` 依赖缺失的 legacy 命名空间,且 `Hevo.Charting` 引用了缺失的 `SimpleCharting/SimpleCharting.csproj`。
-- 仅修改新框架或新框架业务时,优先编译受影响的项目,不要跑整 sln。
-- 仓库无独立测试项目,目前依赖 build 验证。
+- 仅修改单模块时优先单项目 build,避免被 WPF `_wpftmp` 重编译拖慢节奏。
+- `Hevo.Charting.Mcp` 通过 ProjectReference 间接依赖 WPF 运行时,目前 Windows-only。
 
 ---
 
