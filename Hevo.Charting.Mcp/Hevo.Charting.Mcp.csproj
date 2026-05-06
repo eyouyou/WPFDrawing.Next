@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!--
+      技术约束:Hevo.Charting 锁 net8.0-windows + UseWPF (WPF 渲染层耦合无法剥离),
+      MCP server 作为下游消费方只能锁同 TFM 才能 ProjectReference 进来。
+
+      但 MCP server 自身不渲染任何 UI:
+        - 不写 <UseWPF>true</UseWPF> → 不引入 WPF 设计时支持包,只透传 Hevo.Charting 的 WPF 引用
+        - <OutputType>Exe</OutputType> → 控制台 stdio 进程,不是 WinExe
+        - 业务上仍是 Windows-only 二进制(继承自 Hevo.Charting 约束)
+
+      与原任务"net8.0 跨平台跑"目标的 gap:
+      要彻底跨平台需先把 Hevo.Charting 的 WPF 渲染层从核心 schema/blueprint 模型切出去
+      —— 这是单独的工程改造,不在本次 MCP server 的最小可用范围。
+    -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>preview</LangVersion>
+    <RootNamespace>Hevo.Charting.Mcp</RootNamespace>
+    <AssemblyName>Hevo.Charting.Mcp</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Hevo.Charting\Hevo.Charting.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol" Version="1.2.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>

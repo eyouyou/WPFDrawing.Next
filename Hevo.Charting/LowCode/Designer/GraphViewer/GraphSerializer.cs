@@ -159,9 +159,11 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                             : $"{edge.FromNodeId}_{edge.FromPortId}";
                     }).Distinct().ToList();
 
+                    // 扇入端口写 List<string> → JSON 数组形态,可读性 + diff 友好(优化方案 §8)。
+                    // 单端口仍写 string —— 反序列化时 PortBindingValue.ExtractSingle/List 都能识别。
                     bool isArrayPort = inputsById.TryGetValue(grp.Key, out var port) && port.IsArray;
                     fm.PortBindings[grp.Key] = isArrayPort
-                        ? string.Join(",", ids)
+                        ? (object)ids
                         : ids.LastOrDefault() ?? string.Empty;
                 }
 

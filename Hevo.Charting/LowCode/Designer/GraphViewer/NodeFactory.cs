@@ -1,6 +1,7 @@
 using Hevo.Charting.Abstractions;
 using Hevo.Charting.Core;
 using Hevo.Charting.LowCode;
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Reflection;
 
@@ -17,8 +18,39 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
     {
         public enum Kind { DataSource, Trait, Feature, Unknown }
 
+        // 💥 反射结果终身缓存:Type / PropertyInfo / Port (record) 都不可变,程序集生命周期内永不失效。
+        // 编辑器里反复 CreateNode / ListByKind 的反射开销从 O(N×props) 收敛成首次扫描后 O(1)。
+        // ConcurrentDictionary 防 picker 异步预览 + 主线程 CreateNode 同时撞上。
+        private static readonly ConcurrentDictionary<Type, Kind> _classifyCache = new();
+        private static readonly ConcurrentDictionary<Type, (Port[] inputs, Port[] outputs)> _featurePortCache = new();
+        private static readonly ConcurrentDictionary<Type, (Port[] scalars, Port[] vectors)> _dataSourcePortCache = new();
+        // Trait 默认 props 的不可变快照模板,CreateNode 内拷给目标 dict (调用方需要可写 dict 编辑节点)。
+        private static readonly ConcurrentDictionary<Type, KeyValuePair<string, object?>[]> _traitDefaultsCache = new();
+
+        /// <summary>
+        /// 预热反射缓存。Bootstrap 阶段批量调一次,把 ComponentRegistry 里所有已知类型的 shape 一次性扫好,
+        /// 业务首屏 CreateNode 跟 picker 滚动都不再触发反射。
+        /// 重复调用安全(GetOrAdd 命中现有 entry 即跳过)。
+        /// </summary>
+        public static void PrewarmCache(IEnumerable<Type> types)
+        {
+            foreach (var t in types)
+            {
+                var kind = Classify(t);
+                switch (kind)
+                {
+                    case Kind.Feature: ScanFeaturePorts(t); break;
+                    case Kind.Trait: GetTraitDefaultsSnapshot(t); break;
+                    case Kind.DataSource: ScanDataSourceOutputs(t); break;
+                }
+            }
+        }
+
         /// <summary>判断一个类型属于 GraphViewer 哪种节点。</summary>
         public static Kind Classify(Type type)
+            => _classifyCache.GetOrAdd(type, ClassifyCore);
+
+        private static Kind ClassifyCore(Type type)
         {
             if (typeof(ChartFeature).IsAssignableFrom(type)) return Kind.Feature;
             if (typeof(IVisualTrait).IsAssignableFrom(type)) return Kind.Trait;
@@ -62,6 +94,8 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                 case Kind.DataSource:
                 {
                     var (scalars, vectors) = ScanDataSourceOutputs(type);
+                    // 拼一根 outputs 数组给 Node 用。scalars/vectors 是缓存里的 immutable Port[],
+                    // 不能直接 share 拼接结果(下游可能改 Node.OutputPorts 引用),所以 Concat → ToArray 出独立拷贝。
                     outputs = scalars.Concat(vectors).ToArray();
 
                     // 把字段→portId 的初始映射放进 Properties,为 GraphSerializer 写出 ScalarMappings/VectorMappings 用。
@@ -165,10 +199,14 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
         /// <summary>
         /// 扫 Feature 上的 <see cref="DataPort{T}"/> 属性,按 <see cref="PortDirectionAttribute"/> 分流入/出。
         /// 不带标记的默认 Input(覆盖 95% 的 series feature 场景)。
-        /// 数组型(<c>DataPort&lt;T&gt;[]</c>)目前直接跳过 —— 蓝图 PortBindings 是 Dictionary&lt;string,string&gt;,
-        /// 不支持一对多焊接;典型例 <see cref="UniversalAutoScaleFeature.ValuePorts"/> 仍需业务侧 IPipelinePolicy 接管。
+        /// 数组型(<c>DataPort&lt;T&gt;[]</c>)由 PortBindings 数组形态焊接 (优化方案 §8):
+        /// PortBindings value 接受 string / List&lt;string&gt; / 老 CSV,统一由 PortBindingValue 解析。
+        /// 结果走 <see cref="_featurePortCache"/> 终身缓存,reflection 只跑一次。
         /// </summary>
         private static (Port[] inputs, Port[] outputs) ScanFeaturePorts(Type featureType)
+            => _featurePortCache.GetOrAdd(featureType, ScanFeaturePortsCore);
+
+        private static (Port[] inputs, Port[] outputs) ScanFeaturePortsCore(Type featureType)
         {
             var inputs = new List<Port>();
             var outputs = new List<Port>();
@@ -223,7 +261,10 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             return null;
         }
 
-        private static (List<Port> scalars, List<Port> vectors) ScanDataSourceOutputs(Type dsType)
+        private static (Port[] scalars, Port[] vectors) ScanDataSourceOutputs(Type dsType)
+            => _dataSourcePortCache.GetOrAdd(dsType, ScanDataSourceOutputsCore);
+
+        private static (Port[] scalars, Port[] vectors) ScanDataSourceOutputsCore(Type dsType)
         {
             var scalars = new List<Port>();
             var vectors = new List<Port>();
@@ -256,7 +297,7 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                         IsInput: false));
                 }
             }
-            return (scalars, vectors);
+            return (scalars.ToArray(), vectors.ToArray());
         }
 
         private static bool IsScalarType(Type t)
@@ -282,30 +323,47 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
         ///    若类上有 "Default" 静态预设,把预设实例的 ctor 参数值拆出来塞 Properties,
         ///    让编辑器一打开就有可改的初始值,运行时走 ctor 注入而不是 Preset 路径。
         /// 3. 既无无参 ctor 也无 Default → 退而求其次塞 Preset 字符串(老路径,保留兼容)。
+        ///
+        /// 走 <see cref="_traitDefaultsCache"/> 缓存:同 type 反射只跑一次,后续 CreateNode 直接拷快照。
+        /// 浅拷贝足够 —— 模板里的 value 都是 immutable 标量(string / Color / 数值),节点之间 sharing 也安全。
         /// </summary>
         private static void SeedTraitDefaults(Type type, Dictionary<string, object?> props)
         {
-            if (type.GetConstructor(Type.EmptyTypes) != null) return;
+            var snapshot = GetTraitDefaultsSnapshot(type);
+            for (int i = 0; i < snapshot.Length; i++)
+                props[snapshot[i].Key] = snapshot[i].Value;
+        }
+
+        private static KeyValuePair<string, object?>[] GetTraitDefaultsSnapshot(Type type)
+            => _traitDefaultsCache.GetOrAdd(type, BuildTraitDefaultsSnapshot);
+
+        private static KeyValuePair<string, object?>[] BuildTraitDefaultsSnapshot(Type type)
+        {
+            if (type.GetConstructor(Type.EmptyTypes) != null) return Array.Empty<KeyValuePair<string, object?>>();
             const BindingFlags F = BindingFlags.Public | BindingFlags.Static | BindingFlags.IgnoreCase;
             object? defaultPreset =
                 (type.GetField("Default", F)?.GetValue(null))
                 ?? (type.GetProperty("Default", F)?.GetValue(null));
             if (defaultPreset == null)
             {
-                if (HasStaticPreset(type, "Default")) props["Preset"] = "Default";
-                return;
+                if (HasStaticPreset(type, "Default"))
+                    return new[] { new KeyValuePair<string, object?>("Preset", "Default") };
+                return Array.Empty<KeyValuePair<string, object?>>();
             }
             var ctor = type.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
                 .OrderByDescending(c => c.GetParameters().Length)
                 .FirstOrDefault();
-            if (ctor == null) { props["Preset"] = "Default"; return; }
+            if (ctor == null) return new[] { new KeyValuePair<string, object?>("Preset", "Default") };
+
+            var list = new List<KeyValuePair<string, object?>>();
             foreach (var p in ctor.GetParameters())
             {
                 if (string.IsNullOrEmpty(p.Name)) continue;
                 var prop = type.GetProperty(p.Name, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
                 if (prop == null) continue;
-                props[p.Name] = prop.GetValue(defaultPreset);
+                list.Add(new KeyValuePair<string, object?>(p.Name, prop.GetValue(defaultPreset)));
             }
+            return list.ToArray();
         }
 
         // C# 关键字别名表 —— 让端口的 DataTypeName 更"自然"(int / double 而非 Int32 / Double)。

@@ -39,6 +39,8 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             FeatureCategoryRegistry.Register<DataPagingFeature>(FeatureCategory.Environment);
 
             FeatureCategoryRegistry.Register<AxisFeature>(FeatureCategory.Axes);
+            FeatureCategoryRegistry.Register<Wrappers.ScheduleDomainAxisFeature>(FeatureCategory.Axes);
+            FeatureCategoryRegistry.Register<Wrappers.DomainAxisDateTimeFeature>(FeatureCategory.Axes);
 
             FeatureCategoryRegistry.Register<LineSeriesFeature>(FeatureCategory.Series);
             FeatureCategoryRegistry.Register<BarSeriesFeature>(FeatureCategory.Series);
@@ -107,6 +109,11 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             PortMetadataRegistry.RegisterDescription<UniversalAutoScaleFeature>(
                 nameof(UniversalAutoScaleFeature.ValuePorts),
                 "极值统计参与列(扇入端口,可同时接多根)。从 DataSource 各 vector 输出 / 多线指标的列流过来。");
+
+            // 4. 反射缓存预热 —— 把 ComponentRegistry 里所有已知类型的 port shape / classify / trait defaults
+            //    一次性扫好,picker 弹出 / 首屏新建节点都不再触发反射。业务侧后续 RegisterAssemblyOf 之后
+            //    再调一次 PrewarmCache 即可补热(GetOrAdd 命中老 entry 跳过,新类型补刀)。
+            NodeFactory.PrewarmCache(ComponentRegistry.ListAll().Select(kv => kv.Value));
         }
     }
 }

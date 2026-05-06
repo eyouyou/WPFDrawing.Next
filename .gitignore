@@ -262,3 +262,6 @@ Logs
 healthchecksdb
 
 .VSCodeCounter
+
+# BenchmarkDotNet artifacts
+BenchmarkDotNet.Artifacts/
