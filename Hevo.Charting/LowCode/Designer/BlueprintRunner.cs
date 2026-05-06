@@ -51,5 +51,29 @@ namespace Hevo.Charting.LowCode.Designer
             if (dataSource is null) throw new ArgumentNullException(nameof(dataSource));
             return Run(chart, blueprint, dataSource, dataSource.Stream, handlers);
         }
+
+        /// <summary>
+        /// 💥 仅构造,不绑 ChartCell ——给 dashboard 路径用(<see cref="Hevo.Charting.Linked.LinkedChartDashboard"/>
+        /// 自己管理 cell 创建 + SchemaContext 注入 + Template 赋值)。返回的 schema 由调用方决定何时挂到 cell。
+        /// </summary>
+        public static DynamicChartSchema<TItem> BuildSchema<TItem>(
+            ChartBlueprint blueprint,
+            object dataSource,
+            IWorkflow<DataSnapshot<TItem>> stream,
+            BlueprintHandlerRegistry? handlers = null)
+        {
+            return new DynamicChartSchema<TItem>(blueprint, dataSource, stream, handlers);
+        }
+
+        /// <summary>BuildSchema 的极简重载,跟 <see cref="Run{TSource, TItem}(ChartCell, ChartBlueprint, DataSource{TSource, TItem}, BlueprintHandlerRegistry?)"/> 同 pattern。</summary>
+        public static DynamicChartSchema<TItem> BuildSchema<TSource, TItem>(
+            ChartBlueprint blueprint,
+            DataSource<TSource, TItem> dataSource,
+            BlueprintHandlerRegistry? handlers = null)
+            where TSource : DataSource<TSource, TItem>
+        {
+            if (dataSource is null) throw new ArgumentNullException(nameof(dataSource));
+            return BuildSchema(blueprint, dataSource, dataSource.Stream, handlers);
+        }
     }
 }

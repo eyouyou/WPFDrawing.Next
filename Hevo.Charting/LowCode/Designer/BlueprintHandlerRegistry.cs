@@ -54,7 +54,7 @@ namespace Hevo.Charting.LowCode.Designer
     /// AI 生成 / diff 评审 / 持久化都不受影响。
     /// </para>
     /// </summary>
-    public sealed class BlueprintHandlerRegistry
+    public class BlueprintHandlerRegistry
     {
         private readonly Dictionary<string, Delegate> _handlers = new(StringComparer.Ordinal);
 
@@ -90,6 +90,9 @@ namespace Hevo.Charting.LowCode.Designer
 
         /// <summary>是否登记过该 handler 名字 (任何类型)。dry-run 校验用。</summary>
         public bool Contains(string name) => _handlers.ContainsKey(name);
+
+        /// <summary>§D2.3: 摘除已注册 handler。handler 不存在时静默忽略。</summary>
+        public void Unregister(string name) => _handlers.Remove(name);
 
         /// <summary>
         /// 反射扫描 <paramref name="module"/> 上所有贴了 <see cref="BlueprintHandlerAttribute"/> 的方法,

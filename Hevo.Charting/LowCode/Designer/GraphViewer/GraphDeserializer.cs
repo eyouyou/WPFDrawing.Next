@@ -7,7 +7,7 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
     /// 可在 GraphViewer 编辑器里继续拖动/改连线的 <see cref="GraphState"/>。
     /// <para>
     /// 用途:业务侧把生产蓝图 JSON 灌进编辑器二次调整(等价于把 ChartBlueprint 当成持久层,
-    /// 编辑器当成 IDE)。低代码.md §7.13 待补清单的"反序列化已有 ChartBlueprint JSON → 还原成 GraphState"。
+    /// 编辑器当成 IDE)。低代码.md §7.12 待补清单的"反序列化已有 ChartBlueprint JSON → 还原成 GraphState"。
     /// </para>
     /// <para>
     /// <b>规则</b>:

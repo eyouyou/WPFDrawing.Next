@@ -777,10 +777,38 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             if (fromNode == null) return false;
             var fromPort = fromNode.FindPort(fromPortId, isInput: false);
             if (fromPort == null) return false;
-            // MVP:类型名字符串相等即兼容;通配 "object" 永远兼容
-            return fromPort.DataTypeName == toPort.DataTypeName
-                || fromPort.DataTypeName == "object"
-                || toPort.DataTypeName == "object";
+            return AreTypeNamesCompatible(fromPort.DataTypeName, toPort.DataTypeName, toPort.IsArray);
         }
+
+        /// <summary>
+        /// 端口数据类型兼容判定。规则:
+        /// <list type="bullet">
+        ///   <item><c>"object"</c> 通配 —— 任一端是 object,直接兼容(蓝图层多态兜底);</item>
+        ///   <item>nullable 归一 —— 去掉末尾 <c>?</c>(nullable 是 .NET 编译期注解,运行期端口都是 boxed object,
+        ///         <c>RealRange</c> 跟 <c>RealRange?</c> 应视为同一根线);</item>
+        ///   <item>数组 fan-in 接收单源 —— 目标 <see cref="Port.IsArray"/> 时,允许源类型等于目标元素类型
+        ///         (即 <c>T</c> 可拉到 <c>T[]</c>,因为 PortBindings 协议本就是数组聚合多源)。</item>
+        /// </list>
+        /// 严格 .NET 类型语义(协变 / 数值宽化 / generic 实参变换)未覆盖 —— 字符串相等已足以接住实际场景,
+        /// 真踩到不兼容时由后端 GetOrCreatePort 的运行时严格化(§7.4.1)兜底拒掉。
+        /// </summary>
+        internal static bool AreTypeNamesCompatible(string fromName, string toName, bool toIsArray)
+        {
+            if (fromName == "object" || toName == "object") return true;
+
+            string from = StripNullableSuffix(fromName);
+            string to   = StripNullableSuffix(toName);
+            if (from == to) return true;
+
+            // 数组 fan-in:目标 T[] 接受单源 T。toName 已包含 "[]" 后缀(由 NodeFactory 拼出),
+            // 取掉后跟 from 比;同时 toIsArray 校验防止误把"巧合 string 末尾是 []"的标量当数组。
+            if (toIsArray && to.EndsWith("[]") && StripNullableSuffix(to.Substring(0, to.Length - 2)) == from)
+                return true;
+
+            return false;
+        }
+
+        private static string StripNullableSuffix(string name)
+            => name.EndsWith("?") ? name.Substring(0, name.Length - 1) : name;
     }
 }

@@ -55,7 +55,7 @@ namespace Hevo.Charting.LowCode.Designer
 
         /// <summary>
         /// true → <see cref="Workflow"/>.FetchExclusive (CAS 防重入,正在跑则丢弃新信号);
-        /// false 当前未实现,会落到 FetchExclusive 路径并打 warning。
+        /// false → 每 tick fire-and-forget 调用 handler,允许并发堆叠(handler 需自负重入风险)。
         /// </summary>
         public bool Exclusive { get; set; } = true;
     }
@@ -299,17 +299,32 @@ namespace Hevo.Charting.LowCode.Designer
                 Console.WriteLine($"[Hevo 蓝图警告] Trigger handler '{def.Handler}' 未注册或类型不匹配 Func<VersionToken,CancellationToken,Task<bool>>,跳过。");
                 return;
             }
-            if (!def.Exclusive)
+            // Exclusive=true (默认): FetchExclusive — CAS 防重入,正在跑则直接丢弃新信号。
+            // Exclusive=false: 不加门,每个 tick fire-and-forget 调一次 handler;handler 自己接受
+            //                  并发堆叠风险(典型场景:多个独立资源并发 fetch,互不阻塞)。
+            //                  Errors 走 lambda 内部 catch 打日志,不让单次失败把 Subscribe 错误流毒掉。
+            string handlerName = def.Handler;
+            IDisposable sub;
+            if (def.Exclusive)
             {
-                // 当前仅 FetchExclusive (CAS 防重入)路径已实现。非互斥路径需要业务自己接受堆叠风险,
-                // 暂不展开,直接走 Exclusive 兜底 + 打提示。
-                Console.WriteLine($"[Hevo 蓝图提示] Trigger '{def.Handler}' Exclusive=false 暂未实现,默认走 FetchExclusive。");
-            }
-
-            var sub = Workflow.Interval(TimeSpan.FromSeconds(def.IntervalSeconds))
+                sub = Workflow.Interval(TimeSpan.FromSeconds(def.IntervalSeconds))
                               .FetchExclusive(fetch)
                               .Subscribe(_ => { },
-                                         ex => Console.WriteLine($"[Hevo 蓝图 Trigger 异常 '{def.Handler}'] {ex}"));
+                                         ex => Console.WriteLine($"[Hevo 蓝图 Trigger 异常 '{handlerName}'] {ex}"));
+            }
+            else
+            {
+                sub = Workflow.Interval(TimeSpan.FromSeconds(def.IntervalSeconds))
+                              .Subscribe(async tick =>
+                              {
+                                  try { await fetch(tick, CancellationToken.None); }
+                                  catch (Exception ex)
+                                  {
+                                      Console.WriteLine($"[Hevo 蓝图 Trigger 异常 '{handlerName}' (Exclusive=false)] {ex}");
+                                  }
+                              },
+                              ex => Console.WriteLine($"[Hevo 蓝图 Trigger 异常 '{handlerName}'] {ex}"));
+            }
             // ReactiveSchema.Own 挂载到 schema 生命周期 —— Suspend / Dispose 时级联冻结/清理,
             // IntervalSubscription 自身实现 IPausable 也会被框架自动触达。
             Own(sub);

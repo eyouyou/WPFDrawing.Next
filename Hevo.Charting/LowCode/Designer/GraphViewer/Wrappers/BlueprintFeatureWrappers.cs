@@ -22,10 +22,72 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer.Wrappers
     // ==========================================
 
     /// <summary>
+    /// <see cref="CrosshairFeature{TX}"/> 的蓝图友好基类:把 <see cref="CrosshairFeature{TX}.YTrackers"/>
+    /// (<see cref="CrosshairYTrackInfo"/> record-struct 数组,夹带 <c>DataPort</c>)拍扁成三个并行数组,
+    /// 让 PortBindings 数组协议直接焊端口、Properties 注 metas/placements。
+    /// <para>
+    /// 蓝图侧:
+    /// </para>
+    /// <code>
+    /// "PortBindings": {
+    ///   "HitStatePort":   "interaction_hit",
+    ///   "XAxisDataPort":  "candle_time",
+    ///   "YTrackerPorts":  ["yrange_main", "yrange_volume"]      // 数组协议,扇入 N 个 RangePort
+    /// },
+    /// "Properties": {
+    ///   "YTrackerMetas":      [ {Name:"价格"}, {Name:"量"} ],
+    ///   "YTrackerPlacements": [ "Right", "Left" ]
+    /// }
+    /// </code>
+    /// <para>
+    /// <b>语义</b>:OnCompose 时,若用户没显式给 <see cref="CrosshairFeature{TX}.YTrackers"/>
+    /// (默认空数组)且 YTrackerPorts 非空,就按下标 zip 三个并行数组重组成 YTrackers 反射写回 base ——
+    /// 跟 <see cref="CandleBlueprintFeature"/> 把 5 个扁平端口装回 <c>CandlePorts</c> record 同 pattern。
+    /// 用户显式塞了 YTrackers(传统 DSL 用法)就不覆盖,跟现有路径并行兼容。
+    /// </para>
+    /// </summary>
+    public abstract class CrosshairBlueprintFeatureBase<TX> : CrosshairFeature<TX>
+    {
+        /// <summary>多 Y 轴扇入端口数组(等价于 <c>YTrackers.Select(t =&gt; t.Port)</c>)。蓝图用 PortBindings 数组协议焊 N 个 id。</summary>
+        public DataPort<RealRange>[] YTrackerPorts { get; init; } = Array.Empty<DataPort<RealRange>>();
+
+        /// <summary>跟 <see cref="YTrackerPorts"/> 等长的 Meta 配置;短了用 null 兜底,长了被截。</summary>
+        public FieldMeta?[] YTrackerMetas { get; init; } = Array.Empty<FieldMeta?>();
+
+        /// <summary>跟 <see cref="YTrackerPorts"/> 等长的 Placement 配置;短了默认 <see cref="AxisPlacement.Left"/>。</summary>
+        public AxisPlacement[] YTrackerPlacements { get; init; } = Array.Empty<AxisPlacement>();
+
+        // 反射缓存:YTrackers 是 CrosshairFeature<TX> 上的 init 属性,SetValue 穿透 init 修饰符。
+        // 注意 PropertyInfo 必须从已闭合的泛型基类取,否则 SetValue 在 net5+ 反射上无法落地泛型字段。
+        private static readonly PropertyInfo _yTrackersProperty =
+            typeof(CrosshairFeature<TX>).GetProperty(nameof(YTrackers))!;
+
+        protected override void OnCompose(ChartCell chart, RenderContext ctx, IRenderFlow<DataBlackboard> flow)
+        {
+            // 用户没塞 YTrackers 但塞了 YTrackerPorts → 按下标 zip 重组,反射写回 base.YTrackers。
+            // 跟 CandleBlueprintFeature 的扁平端口 → CandlePorts record 同思路。
+            if (YTrackerPorts.Length > 0 && (YTrackers == null || YTrackers.Length == 0))
+            {
+                var trackers = new CrosshairYTrackInfo[YTrackerPorts.Length];
+                for (int i = 0; i < YTrackerPorts.Length; i++)
+                {
+                    trackers[i] = new CrosshairYTrackInfo(
+                        Port: YTrackerPorts[i],
+                        Meta: i < YTrackerMetas.Length ? YTrackerMetas[i] : null,
+                        Placement: i < YTrackerPlacements.Length ? YTrackerPlacements[i] : AxisPlacement.Left);
+                }
+                _yTrackersProperty.SetValue(this, trackers);
+            }
+            base.OnCompose(chart, ctx, flow);
+        }
+    }
+
+    /// <summary>
     /// <see cref="CrosshairFeature{TX}"/> 的 closed-over-double 子类,蓝图可见。
     /// X 轴原始数据通常是时间索引(双精度浮点表达,允许小数索引),故 double 是最通用的 TX。
+    /// 继承 <see cref="CrosshairBlueprintFeatureBase{TX}"/> 拿到 YTrackerPorts/Metas/Placements 三件套。
     /// </summary>
-    public class CrosshairDoubleFeature : CrosshairFeature<double> { }
+    public class CrosshairDoubleFeature : CrosshairBlueprintFeatureBase<double> { }
 
     /// <summary>
     /// <see cref="TooltipWidgetFeature{TX}"/> 的 closed-over-double 子类,蓝图可见。
@@ -37,8 +99,9 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer.Wrappers
     /// K 线 / 分时 这种 X 轴是时间戳的业务图用这个版本 ——
     /// XAxisDataPort 类型是 <c>DataPort&lt;ReadOnlyMemory&lt;DateTime&gt;&gt;</c>,
     /// 跟数据源的 Times 列直接对接,不绕 double 索引。
+    /// 继承 <see cref="CrosshairBlueprintFeatureBase{TX}"/> 拿到 YTrackerPorts/Metas/Placements 三件套。
     /// </summary>
-    public class CrosshairDateTimeFeature : CrosshairFeature<DateTime> { }
+    public class CrosshairDateTimeFeature : CrosshairBlueprintFeatureBase<DateTime> { }
 
     /// <summary>
     /// <see cref="TooltipWidgetFeature{TX}"/> 的 closed-over-DateTime 子类,蓝图可见。
