@@ -149,7 +149,22 @@ if (Test-Path $pythonExe) {
     Remove-Item -Recurse -Force $pythonDir
 }
 
-# ── 1. 下载 zip(若已缓存则复用)──────────────────────────────────────
+# ── 1. 下载 zip(若已缓存且完整则复用)─────────────────────────────────
+# 缓存命中前先校验:网络中断 / 上次 build 被 Ctrl+C / 杀毒软件半路截断,都会留下
+# 一个看起来"在"但实际损坏的 zip(典型表现:Expand-Archive 抛"找不到中央目录结尾记录")。
+# 用 ZipFile.OpenRead 试读一次中央目录 —— 坏档立刻抛,删掉重下,日常 build 几十毫秒开销。
+function Test-ZipIntegrity([string]$path) {
+    try {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($path)
+        try { $null = $zip.Entries.Count } finally { $zip.Dispose() }
+        return $true
+    } catch { return $false }
+}
+if ((Test-Path $zipPath) -and -not (Test-ZipIntegrity $zipPath)) {
+    Write-Host "[setup-python] ! 缓存 zip 损坏(可能上次下载被截断),删除重下" -ForegroundColor Yellow
+    Remove-Item -Force $zipPath
+}
 if (-not (Test-Path $zipPath)) {
     Write-Host "[setup-python] 下载 $zipUrl ..." -ForegroundColor Cyan
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12

@@ -232,7 +232,7 @@ namespace Hevo.Charting.Features
                         VerticalAlignment = VerticalAlignment.Center,
                         Margin = new Thickness(0, 0, 6, 0)
                     };
-                    dot.BindHevo(Shape.FillProperty, f.GetConstantBrush());
+                    dot.BindHevo(Shape.FillProperty, f.GetDefaultBrush());
 
                     var title = new TextBlock
                     {

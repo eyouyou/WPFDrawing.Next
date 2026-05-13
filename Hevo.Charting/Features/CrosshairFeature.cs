@@ -326,7 +326,7 @@ namespace Hevo.Charting.Features
 
                     if (!double.IsNaN(yPixel))
                     {
-                        IHevoBrush? dotBrush = proxy.Read<IndexBrushResolverTrait>()?.Resolver.ResolveByIndex(0, state.LocalIndex) ?? proxy.Read<MetaTrait>()?.Fields[0].GetConstantBrush();
+                        IHevoBrush? dotBrush = proxy.Read<IndexBrushResolverTrait>()?.Resolver.ResolveByIndex(0, state.LocalIndex) ?? proxy.Read<MetaTrait>()?.Fields[0].GetDefaultBrush();
                         if (dotBrush != null) _dotBuffer.Add(new CrosshairDotInfo(new HevoPoint((float)state.CenterX, (float)yPixel), dotBrush));
                     }
                 }

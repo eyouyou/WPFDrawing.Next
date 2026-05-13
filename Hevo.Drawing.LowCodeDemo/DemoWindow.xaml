@@ -29,6 +29,12 @@
             <gv:DashboardWorkspace x:Name="dashboardWorkspace"/>
         </TabItem>
 
+        <!-- §对照 手写 K 线 schema:跟 Dashboard 编辑器 tab 的 JSON 路径做并排参照,
+             同一份 MockKLineDataSource 喂数据,但 schema 走 ChartReactiveSchema 派生而非反射蓝图。 -->
+        <TabItem Header="手写 K 线 Schema">
+            <local:CodedKLineView/>
+        </TabItem>
+
         <!-- §D2.5.E2E Python 嵌入指标 smoke test -->
         <TabItem Header="Python 指标 (D2.5)">
             <local:PyIndicatorView/>
@@ -42,6 +48,12 @@
         <!-- §D2.X 通知中心 — Mock send_email / send_dingtalk / send_webhook / send_sms / log_alert 聚合 -->
         <TabItem Header="通知中心">
             <local:NotificationCenterView/>
+        </TabItem>
+
+        <!-- §回测 — 离线策略评估:读 Dashboard 当前 K 线 timeline,跑 bb_breakout 长仓 only 模型,
+             顶部 6 张 stats 卡片 + 下面交易明细表。跟 PyIndicators/bb_breakout_strategy.py 等价。 -->
+        <TabItem Header="策略回测">
+            <local:BacktestView/>
         </TabItem>
     </TabControl>
 </Window>

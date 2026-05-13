@@ -407,7 +407,7 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                 if (idx < 0 || idx >= kinds.Count) return current;
                 var instance = kinds[idx].Factory();
                 // 用反射把 sub-readers 的值刷到 instance —— init-only 属性 reflection SetValue 仍可写穿透。
-                // get-only 属性 (如 StaticBrushResolver<double>.ConstantBrush) prop.CanWrite=false,
+                // get-only 属性 (如 StaticBrushResolver<double>.DefaultBrush) prop.CanWrite=false,
                 // 已经在 IsEditableScalar 阶段被过滤,不会进 subReaders 字典,无需在这里再防。
                 foreach (var kv in subReaders)
                 {

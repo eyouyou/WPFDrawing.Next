@@ -28,4 +28,14 @@
     <ProjectReference Include="..\Hevo.Trade.Mock\Hevo.Trade.Mock.csproj" />
   </ItemGroup>
 
+  <!-- §回测 BacktestEngine + Models 住在 Hevo.Drawing.LowCodeDemo(WinExe + WPF + Python.NET 重依赖),
+       不适合作 ProjectReference 拖进来。引擎本身又是纯 BCL 逻辑,值得单测。
+       折中:Compile-link 源文件,各编各的 —— 一份代码两个 assembly。 -->
+  <ItemGroup>
+    <Compile Include="..\Hevo.Drawing.LowCodeDemo\Backtest\BacktestEngine.cs"
+             Link="Backtest\BacktestEngine.cs" />
+    <Compile Include="..\Hevo.Drawing.LowCodeDemo\Backtest\BacktestModels.cs"
+             Link="Backtest\BacktestModels.cs" />
+  </ItemGroup>
+
 </Project>

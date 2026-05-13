@@ -59,7 +59,20 @@ namespace Hevo.Charting.CodeAnalysis
             sb.AppendLine($"namespace {namespaceName}");
             sb.AppendLine("{");
 
-            sb.AppendLine($"    public readonly struct {groupName}");
+            // §root-cause-fix 2026-05-13:这里以前是 `public readonly struct {groupName}`,
+            // 但 struct 的 `new T()`(零参)永远走隐式 zero-init,**完全绕过用户的 [CallerMemberName]
+            // 默认参 ctor**,导致所有 DataPort 字段是 null。下游 FastSourceMapIngestor.Process 拿
+            // null port 去 board.WriteIfChanged → TypedBucketMap.TryGetValue(null) → ArgumentNullException →
+            // Select 内部 catch → Plot.onError → 业务 Plot.onNext 永远不 fire → _latestBoard 永远 null →
+            // ProjectAll 永远 bail → 所有 feature 的 OnProject 都跑不起来 → 蜡烛图永远空白。
+            //
+            // 改 sealed class 后,`new T()` 规规矩矩调到 [CallerMemberName] 那条 ctor,port 字段
+            // 在 ctor body 里正常初始化。代价:每个 PortGroup 实例多一次堆分配(几十字节),schema
+            // 级字段持有一份,在所有用法里都摊销可忽略。换来零踩 C# struct ctor 暗坑。
+            //
+            // 不走 "struct + 显式 parameterless ctor" 那条路是因为 C# 10+ 才允许,demo project
+            // LangVersion=9.0,拖一票 csproj 跟着升不值。
+            sb.AppendLine($"    public sealed class {groupName}");
             sb.AppendLine("    {");
             sb.AppendLine($"        public static readonly {groupName} Default = new {groupName}(\"\");");
             sb.AppendLine();

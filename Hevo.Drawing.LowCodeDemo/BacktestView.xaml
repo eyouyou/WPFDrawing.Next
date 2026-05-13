@@ -1,0 +1,246 @@
+<UserControl x:Class="Hevo.Drawing.LowCodeDemo.BacktestView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Hevo.Drawing.LowCodeDemo"
+             Background="#FF1A1B1F"
+             FontFamily="Segoe UI" FontSize="13">
+    <UserControl.Resources>
+        <Style TargetType="TextBox" x:Key="DarkInput">
+            <Setter Property="Background"      Value="#FF14161B"/>
+            <Setter Property="Foreground"      Value="#FFE0E6EC"/>
+            <Setter Property="BorderBrush"     Value="#FF3A3C44"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding"         Value="6,3"/>
+            <Setter Property="FontFamily"      Value="Consolas"/>
+            <Setter Property="Width"           Value="90"/>
+            <Setter Property="Margin"          Value="0,0,12,0"/>
+        </Style>
+        <Style TargetType="TextBlock" x:Key="InputLabel">
+            <Setter Property="Foreground"        Value="#FF8A929C"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin"            Value="0,0,6,0"/>
+        </Style>
+        <Style TargetType="Button" x:Key="RunButton">
+            <Setter Property="Background"      Value="#FF66BB6A"/>
+            <Setter Property="Foreground"      Value="#FF101316"/>
+            <Setter Property="BorderBrush"     Value="#FF4FA052"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding"         Value="14,5"/>
+            <Setter Property="FontWeight"      Value="SemiBold"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+        </Style>
+
+        <!-- Stats card — 顶部那行 6 个指标统一外观 -->
+        <Style TargetType="Border" x:Key="StatCard">
+            <Setter Property="Background"      Value="#FF24262C"/>
+            <Setter Property="BorderBrush"     Value="#FF3A3C44"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius"    Value="3"/>
+            <Setter Property="Padding"         Value="12,8"/>
+            <Setter Property="Margin"          Value="0,0,8,0"/>
+            <Setter Property="MinWidth"        Value="140"/>
+        </Style>
+        <Style TargetType="TextBlock" x:Key="StatLabel">
+            <Setter Property="Foreground"     Value="#FF8A929C"/>
+            <Setter Property="FontSize"       Value="11"/>
+            <Setter Property="Margin"         Value="0,0,0,2"/>
+        </Style>
+        <Style TargetType="TextBlock" x:Key="StatValue">
+            <Setter Property="Foreground"     Value="#FFE0E6EC"/>
+            <Setter Property="FontSize"       Value="18"/>
+            <Setter Property="FontWeight"     Value="SemiBold"/>
+            <Setter Property="FontFamily"     Value="Consolas"/>
+        </Style>
+
+        <Style TargetType="DataGrid" x:Key="DarkGrid">
+            <Setter Property="Background"               Value="#FF14161B"/>
+            <Setter Property="Foreground"               Value="#FFD0D8E0"/>
+            <Setter Property="BorderBrush"              Value="#FF2A2C34"/>
+            <Setter Property="BorderThickness"          Value="1"/>
+            <Setter Property="GridLinesVisibility"      Value="Horizontal"/>
+            <Setter Property="HorizontalGridLinesBrush" Value="#FF2A2C34"/>
+            <Setter Property="RowBackground"            Value="#FF14161B"/>
+            <Setter Property="AlternatingRowBackground" Value="#FF181A20"/>
+            <Setter Property="HeadersVisibility"        Value="Column"/>
+            <Setter Property="CanUserAddRows"           Value="False"/>
+            <Setter Property="CanUserDeleteRows"        Value="False"/>
+            <Setter Property="CanUserResizeRows"        Value="False"/>
+            <Setter Property="IsReadOnly"               Value="True"/>
+            <Setter Property="SelectionMode"            Value="Single"/>
+            <Setter Property="RowHeight"                Value="26"/>
+            <Setter Property="FontFamily"               Value="Consolas"/>
+            <Setter Property="FontSize"                 Value="12"/>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>  <!-- 头部说明 -->
+            <RowDefinition Height="Auto"/>  <!-- 参数 + 按钮 -->
+            <RowDefinition Height="Auto"/>  <!-- 状态行 -->
+            <RowDefinition Height="Auto"/>  <!-- Stats 卡片行 -->
+            <RowDefinition Height="*"/>     <!-- 交易明细表 -->
+        </Grid.RowDefinitions>
+
+        <!-- 头部说明 -->
+        <TextBlock Grid.Row="0" Foreground="#FFC0C8D0" TextWrapping="Wrap" Margin="0,0,0,10">
+            <Run FontWeight="Bold" Foreground="#FFFFB74D">📊 策略回测 — bb_breakout (布林带突破)</Run>
+            <LineBreak/>
+            <Run Foreground="#FF8A929C">读取 Dashboard 当前 K 线 timeline 跑离线回测,策略语义跟 </Run>
+            <Run FontFamily="Consolas" Foreground="#FF66BB6A">PyIndicators/bb_breakout_strategy.py</Run>
+            <Run Foreground="#FF8A929C"> 等价(close 突破上轨买,跌破下轨平,长仓 only)。Fill 价用下一根 open 防未来函数。</Run>
+        </TextBlock>
+
+        <!-- 参数 + 按钮 -->
+        <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBlock Text="初始资金"   Style="{StaticResource InputLabel}"/>
+            <TextBox   x:Name="txtInitialCapital" Text="100000" Style="{StaticResource DarkInput}"/>
+            <TextBlock Text="每笔手数"   Style="{StaticResource InputLabel}"/>
+            <TextBox   x:Name="txtPositionSize"   Text="100"    Style="{StaticResource DarkInput}"/>
+            <TextBlock Text="BB 长度"    Style="{StaticResource InputLabel}"/>
+            <TextBox   x:Name="txtBBLength"       Text="20"     Style="{StaticResource DarkInput}" Width="60"/>
+            <TextBlock Text="BB σ倍"    Style="{StaticResource InputLabel}"/>
+            <TextBox   x:Name="txtBBK"            Text="2.0"    Style="{StaticResource DarkInput}" Width="60"/>
+            <Button    x:Name="btnRun" Content="▶ 运行回测" Style="{StaticResource RunButton}"/>
+        </WrapPanel>
+
+        <!-- 状态行 -->
+        <TextBlock Grid.Row="2" x:Name="txtStatus" Foreground="#FF8A929C"
+                   Margin="0,4,0,12" Text="点击「运行回测」前,先到 Dashboard 编辑器跑一遍累几根 bar..."/>
+
+        <!-- Stats 卡片行 -->
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,0,0,12">
+            <Border Style="{StaticResource StatCard}">
+                <StackPanel>
+                    <TextBlock Text="总收益"           Style="{StaticResource StatLabel}"/>
+                    <TextBlock x:Name="lblTotalPnL"    Style="{StaticResource StatValue}" Text="—"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource StatCard}">
+                <StackPanel>
+                    <TextBlock Text="总收益率"         Style="{StaticResource StatLabel}"/>
+                    <TextBlock x:Name="lblTotalReturn" Style="{StaticResource StatValue}" Text="—"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource StatCard}">
+                <StackPanel>
+                    <TextBlock Text="交易笔数 / 胜率"  Style="{StaticResource StatLabel}"/>
+                    <TextBlock x:Name="lblTrades"      Style="{StaticResource StatValue}" Text="—"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource StatCard}">
+                <StackPanel>
+                    <TextBlock Text="最大回撤"         Style="{StaticResource StatLabel}"/>
+                    <TextBlock x:Name="lblMaxDD"       Style="{StaticResource StatValue}" Text="—"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource StatCard}">
+                <StackPanel>
+                    <TextBlock Text="夏普(年化近似)" Style="{StaticResource StatLabel}"/>
+                    <TextBlock x:Name="lblSharpe"      Style="{StaticResource StatValue}" Text="—"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource StatCard}">
+                <StackPanel>
+                    <TextBlock Text="最终权益"         Style="{StaticResource StatLabel}"/>
+                    <TextBlock x:Name="lblFinalEquity" Style="{StaticResource StatValue}" Text="—"/>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+
+        <!-- 交易明细表 -->
+        <DataGrid Grid.Row="4" x:Name="grid" Style="{StaticResource DarkGrid}" AutoGenerateColumns="False">
+            <DataGrid.ColumnHeaderStyle>
+                <Style TargetType="DataGridColumnHeader">
+                    <Setter Property="Background"      Value="#FF24262C"/>
+                    <Setter Property="Foreground"      Value="#FFC0C8D0"/>
+                    <Setter Property="BorderBrush"     Value="#FF2A2C34"/>
+                    <Setter Property="BorderThickness" Value="0,0,1,1"/>
+                    <Setter Property="Padding"         Value="8,4"/>
+                    <Setter Property="FontWeight"      Value="SemiBold"/>
+                </Style>
+            </DataGrid.ColumnHeaderStyle>
+
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="#" Width="40"
+                                    Binding="{Binding Index}">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="#FF8A929C"/>
+                            <Setter Property="Padding"    Value="8,4"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="入场时间" Width="140"
+                                    Binding="{Binding EntryTime, StringFormat=HH:mm:ss}">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="#FFB0BEC5"/>
+                            <Setter Property="Padding"    Value="8,4"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="入场价" Width="80"
+                                    Binding="{Binding EntryPrice, StringFormat=F3}">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground"         Value="#FFE0E6EC"/>
+                            <Setter Property="HorizontalAlignment" Value="Right"/>
+                            <Setter Property="Padding"            Value="8,4"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="出场时间" Width="140"
+                                    Binding="{Binding ExitTime, StringFormat=HH:mm:ss}">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="#FFB0BEC5"/>
+                            <Setter Property="Padding"    Value="8,4"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="出场价" Width="80"
+                                    Binding="{Binding ExitPrice, StringFormat=F3}">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground"         Value="#FFE0E6EC"/>
+                            <Setter Property="HorizontalAlignment" Value="Right"/>
+                            <Setter Property="Padding"            Value="8,4"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="手数" Width="60"
+                                    Binding="{Binding Quantity, StringFormat=F0}">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground"         Value="#FF8A929C"/>
+                            <Setter Property="HorizontalAlignment" Value="Right"/>
+                            <Setter Property="Padding"            Value="8,4"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="盈亏" Width="100"
+                                    Binding="{Binding PnLDisplay}">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground"         Value="{Binding PnLColor}"/>
+                            <Setter Property="HorizontalAlignment" Value="Right"/>
+                            <Setter Property="FontWeight"         Value="SemiBold"/>
+                            <Setter Property="Padding"            Value="8,4"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="盈亏 %" Width="*"
+                                    Binding="{Binding PnLPercentDisplay}">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground"         Value="{Binding PnLColor}"/>
+                            <Setter Property="HorizontalAlignment" Value="Right"/>
+                            <Setter Property="Padding"            Value="8,4"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+    </Grid>
+</UserControl>

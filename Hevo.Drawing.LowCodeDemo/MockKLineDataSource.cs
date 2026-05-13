@@ -72,6 +72,17 @@ namespace Hevo.Drawing.LowCodeDemo
         public override int LogicalLength => _localCount;
 
         /// <summary>
+        /// §回测 把进程级共享 timeline 当前帧快照成数组,供 <c>BacktestView</c> 跑离线策略评估。
+        /// 跟 <see cref="OnFetchAsync"/> 走的是同一个 <c>_sharedBars</c> 列表,只是这里不挂订阅、
+        /// 不更新实例 buffer —— 纯只读。Caller 在 UI 线程调,锁 ≤ 1ms,不会卡帧。
+        /// </summary>
+        /// <returns>当前 timeline 的浅拷贝(N 根 bar);若 seed 尚未跑过返回空数组。</returns>
+        public static MockKLineBar[] SnapshotBars()
+        {
+            lock (_sharedLock) return _sharedBars.ToArray();
+        }
+
+        /// <summary>
         /// 把进程级共享 timeline 重置回零状态 —— 下一次 OnFetchAsync 会重新 seed + 重启 timer。
         /// 业务侧典型用法:每次"运行 Dashboard"前调一次,实现 TradingView 那种"开窗就从头跑一遍"体验。
         /// 已开着的 cell 不会立刻看到效果(它们 buffer 里还是旧数据);效果在新 DS 实例首次 fetch 时显现。

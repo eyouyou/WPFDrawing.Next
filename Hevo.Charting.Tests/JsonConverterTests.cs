@@ -155,7 +155,7 @@ namespace Hevo.Charting.Tests
         [Fact]
         public void Resolver_Static_RoundTrip()
         {
-            IBrushResolver<double> orig = new StaticBrushResolver<double>(new HevoSolidBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)));
+            IBrushResolver<double> orig = BrushResolver.Constant<double>(new HevoSolidBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)));
             var json = JsonSerializer.Serialize(orig, Opts);
             Assert.Contains("\"kind\": \"static\"", json);
             Assert.Contains("\"brush\":", json);
@@ -163,7 +163,7 @@ namespace Hevo.Charting.Tests
             var back = JsonSerializer.Deserialize<IBrushResolver<double>>(json, Opts);
             Assert.IsType<StaticBrushResolver<double>>(back);
             var sb = (StaticBrushResolver<double>)back!;
-            Assert.Equal(new HevoSolidBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)), sb.ConstantBrush);
+            Assert.Equal(new HevoSolidBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)), sb.DefaultBrush);
         }
 
         // 兼容老蓝图里直接 record-style 序列化的 { "ConstantBrush": {...} } 形态。

@@ -49,7 +49,7 @@ namespace Hevo.Charting.Features
 
         private ReadOnlyMemory<double> _currentDataSpan;
         private IBrushResolver<double>? _currentResolver;
-        private IHevoBrush _currentConstantBrush = null!;
+        private IHevoBrush _currentDefaultBrush = null!;
 
         protected override void OnProject(FeatureContext ctx)
         {
@@ -60,13 +60,13 @@ namespace Hevo.Charting.Features
             var (xRange, _) = ctx.UsePort(Viewport.ActiveRange);
 
             _currentDataSpan = dataSpan;
-            _currentConstantBrush = Meta.GetConstantBrush();
+            _currentDefaultBrush = Meta.GetDefaultBrush();
             _currentResolver = Meta.Resolver;
 
             var proxy = ctx.For(_layer);
 
             // 💥 修复 3：全量发货！缺一不可！
-            proxy.PublishData(new BarDataTrait(dataSpan, _currentConstantBrush, BarWidthRatio));
+            proxy.PublishData(new BarDataTrait(dataSpan, _currentDefaultBrush, BarWidthRatio));
             proxy.PublishData(new XAxisTrait(xRange));
             proxy.PublishData(new YAxisTrait(yRange));
             proxy.PublishData(new BarPaletteTrait(_currentResolver));
@@ -83,10 +83,10 @@ namespace Hevo.Charting.Features
 
         public IHevoBrush ResolveByIndex(int fieldIdx, int localIdx)
         {
-            if (localIdx < 0 || localIdx >= _currentDataSpan.Length) return _currentConstantBrush;
+            if (localIdx < 0 || localIdx >= _currentDataSpan.Length) return _currentDefaultBrush;
             return _currentResolver != null
                 ? _currentResolver.Resolve(_currentDataSpan.Span[localIdx])
-                : _currentConstantBrush;
+                : _currentDefaultBrush;
         }
     }
 }

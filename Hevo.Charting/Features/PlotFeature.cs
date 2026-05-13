@@ -367,7 +367,7 @@ namespace Hevo.Charting.Features
                             YRangePort = this.YRangePort,
                             LayerName = $"Plot.{IndicatorName}.{spec.Name}",
                             Meta = meta,
-                            Style = LineStyle.Create(meta.GetConstantBrush(), spec.Width, useSpline: false),
+                            Style = LineStyle.Create(meta.GetDefaultBrush(), spec.Width, useSpline: false),
                         };
                         break;
                     }

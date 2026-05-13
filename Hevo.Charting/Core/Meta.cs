@@ -81,7 +81,7 @@ namespace Hevo.Charting.Core
     /// 业务侧极少直接 new,通常走静态工厂(Literal / Resource / Mixed / Dynamic)。
     /// </summary>
     /// <param name="Name">显示名(支持字面量 + 多语言资源 Key)。</param>
-    /// <param name="Resolver">画刷解析器(纯色 = StaticBrushResolver;阈值变色 = ThresholdBrushResolver 等)。</param>
+    /// <param name="Resolver">画刷解析器(纯色 = <see cref="BrushResolver.Constant{T}"/>;阈值变色 = ThresholdBrushResolver 等)。</param>
     /// <param name="Format">数值格式字符串,默认 "G"。</param>
     /// <param name="Provider">自定义格式化器(IHevoFormatter&lt;T&gt;);null 时走 IFormattable.ToString。</param>
     public record class FieldMeta(
@@ -93,7 +93,7 @@ namespace Hevo.Charting.Core
     {
         // 💥 重载 1：完美兼容老代码 (传 IHevoBrush，底层自动套一层静态解析器)
         public static FieldMeta Literal(string text, IHevoBrush brush, string format = "G", IHevoFormatter? provider = null)
-            => new(new HevoLiteralString(text), new StaticBrushResolver<double>(brush), format, provider);
+            => new(new HevoLiteralString(text), BrushResolver.Constant<double>(brush), format, provider);
 
         // 重载 2：完美兼容老代码 (传 Color)
         public static FieldMeta Literal(string text, Color color, string format = "G", IHevoFormatter? provider = null)
@@ -105,11 +105,11 @@ namespace Hevo.Charting.Core
 
         // 💥 静态工厂 2：全动态资源 (推荐！语言 Key + 主题画刷 Key)
         public static FieldMeta Resource(string textKey, string brushKey, string format = "G")
-            => new(new HevoResourceString(textKey), new StaticBrushResolver<double>(new HevoResourceBrush(brushKey)), format);
+            => new(new HevoResourceString(textKey), BrushResolver.Constant<double>(new HevoResourceBrush(brushKey)), format);
 
         // 💥 静态工厂 3：混合模式 (动态多语言 + 静态指定颜色)
         public static FieldMeta Mixed(string textKey, IHevoBrush brush, string format = "G")
-            => new(new HevoResourceString(textKey), new StaticBrushResolver<double>(brush), format);
+            => new(new HevoResourceString(textKey), BrushResolver.Constant<double>(brush), format);
     }
 
     /// <summary>
@@ -152,60 +152,51 @@ namespace Hevo.Charting.Core
     public record DynamicColorTrait(Func<int, int, IHevoBrush> Evaluator) : IVisualTrait;
 
     /// <summary>
-    /// 基础契约：万物皆有底色
+    /// 💥 万物皆有底色：所有画刷(静态/动态)在渲染时,都表现为"按上下文取画刷"的解析器。
+    /// <para>
+    /// <see cref="Resolve"/> 是值依赖路径(per-bar / per-point 取色);<see cref="DefaultBrush"/>
+    /// 是无上下文路径(legend / header / 单色 fallback)。对动态 resolver,<see cref="DefaultBrush"/>
+    /// 是其 fallback 色,语义不是"唯一真色"——这一点跟历史命名 ConstantBrush 不同。
+    /// </para>
+    /// <para>
+    /// 纯色场景请用 <see cref="BrushResolver.Constant{T}"/> 工厂,避免直接 new <see cref="StaticBrushResolver{T}"/>。
+    /// </para>
     /// </summary>
-    public interface IBrushResolver
-    {
-        /// <summary>
-        /// 常量画刷
-        /// </summary>
-        IHevoBrush ConstantBrush { get; }
-    }
-
-    /// <summary>
-    /// 💥 终极契约：所有画刷（静态/动态）在渲染时，都必须表现为一个解析器
-    /// </summary>
-    /// <typeparam name="TValue"></typeparam>
-    public interface IBrushResolver<TContext> : IBrushResolver
+    public interface IBrushResolver<TContext>
     {
         IHevoBrush Resolve(in TContext context);
+
+        /// <summary>无上下文 fallback 画刷:legend / header / 单色路径取它;
+        /// 动态 resolver 内部决定它的回放策略(threshold 用 equal,palette 用首色等)。</summary>
+        IHevoBrush DefaultBrush { get; }
     }
 
     /// <summary>
-    /// 纯色画刷的马甲
+    /// <see cref="IBrushResolver{T}"/> 的工厂入口 —— 取代调用方直接 new <see cref="StaticBrushResolver{T}"/>。
     /// </summary>
-    /// <typeparam name="TValue"></typeparam>
+    public static class BrushResolver
+    {
+        /// <summary>纯色 resolver:Resolve / DefaultBrush 都返回同一支 brush。</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static IBrushResolver<T> Constant<T>(IHevoBrush brush) => new StaticBrushResolver<T>(brush);
+    }
+
+    /// <summary>
+    /// 纯色画刷的马甲(JSON 多态判别符依赖具体类型,因此保留 public)。
+    /// 业务侧请走 <see cref="BrushResolver.Constant{T}"/> 工厂,不要直接 new。
+    /// </summary>
     public class StaticBrushResolver<TValue> : IBrushResolver<TValue>
     {
-        public IHevoBrush ConstantBrush { get; }
-        public StaticBrushResolver(IHevoBrush brush) => ConstantBrush = brush;
+        public IHevoBrush DefaultBrush { get; }
+        public StaticBrushResolver(IHevoBrush brush) => DefaultBrush = brush;
 
-        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-        public IHevoBrush Resolve(in TValue value) => ConstantBrush;
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public IHevoBrush Resolve(in TValue value) => DefaultBrush;
     }
 
     public static class BrushExtensions
     {
-        /// <summary>
-        /// 获取基本
-        /// </summary>
-        /// <param name="brush"></param>
-        /// <returns></returns>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static IHevoBrush GetConstantBrush(this IHevoBrush brush)
-        {
-            // C# 9+ 模式匹配优化，性能略微优于 is 变量声明
-            if (brush is IBrushResolver resolver)
-            {
-                return resolver.ConstantBrush;
-            }
-            return brush;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static IHevoBrush GetConstantBrush(this FieldMeta meta)
-        {
-            return meta.Resolver.ConstantBrush;
-        }
+        public static IHevoBrush GetDefaultBrush(this FieldMeta meta) => meta.Resolver.DefaultBrush;
     }
 }

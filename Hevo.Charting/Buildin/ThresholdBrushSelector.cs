@@ -6,12 +6,12 @@ namespace Hevo.Charting.Buildin
     {
         private readonly double _threshold;
         private readonly IHevoBrush _above, _below, _equal;
-        public IHevoBrush ConstantBrush { get; }
+        public IHevoBrush DefaultBrush { get; }
 
         public ThresholdBrushResolver(double threshold, IHevoBrush above, IHevoBrush below, IHevoBrush equal, IHevoBrush? baseBrush = null)
         {
             _threshold = threshold; _above = above; _below = below; _equal = equal;
-            ConstantBrush = baseBrush ?? equal;
+            DefaultBrush = baseBrush ?? equal;
         }
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]

@@ -330,7 +330,7 @@ namespace Hevo.Charting
                 DataPort = dataPort,
                 YRangePort = rangePort,
                 Meta = meta,
-                Style = LineStyle.Create(meta.GetConstantBrush(), thickness)
+                Style = LineStyle.Create(meta.GetDefaultBrush(), thickness)
             });
             return builder;
         }

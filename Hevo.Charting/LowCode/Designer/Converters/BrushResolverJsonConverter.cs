@@ -39,7 +39,7 @@ namespace Hevo.Charting.LowCode.Designer.Converters
         {
             new("Static",    typeof(StaticBrushResolver<double>),
                 () => new StaticBrushResolver<double>(new HevoSolidBrush(System.Windows.Media.Colors.White))),
-            // threshold 五个 brush 参数,picker 渲染时部分可编辑(ConstantBrush 是 get-only,其余 above/below/equal 是私有)
+            // threshold 五个 brush 参数,picker 渲染时部分可编辑(DefaultBrush 是 get-only,其余 above/below/equal 是私有)
             // —— 实用价值有限,但保留 kind 让用户从 JSON 看明白可选项;真要改参用 JSON tab 比 picker 直观。
             new("Threshold", typeof(ThresholdBrushResolver),
                 () => new ThresholdBrushResolver(
@@ -92,7 +92,7 @@ namespace Hevo.Charting.LowCode.Designer.Converters
                     writer.WriteStartObject();
                     writer.WriteString("kind", "static");
                     writer.WritePropertyName("brush");
-                    JsonSerializer.Serialize(writer, stat.ConstantBrush, options);
+                    JsonSerializer.Serialize(writer, stat.DefaultBrush, options);
                     writer.WriteEndObject();
                     return;
                 case ThresholdBrushResolver thr:
@@ -133,15 +133,15 @@ namespace Hevo.Charting.LowCode.Designer.Converters
                    ?? throw new JsonException($"threshold resolver 的 \"{name}\" 反序列化为 null");
         }
 
-        // ThresholdBrushResolver 私有字段没有 public 访问 —— 只能写 ConstantBrush + threshold(无法回放 above/below/equal)。
-        // 这是 framework 限制,本 converter 序列化时降级成 static + ConstantBrush 提示用户去改源类型暴露内部。
+        // ThresholdBrushResolver 私有字段没有 public 访问 —— 只能写 DefaultBrush + threshold(无法回放 above/below/equal)。
+        // 这是 framework 限制,本 converter 序列化时降级成 static + DefaultBrush 提示用户去改源类型暴露内部。
         // 实际目前蓝图里只用 static,这个 case 极少触发。
         private static void WriteThreshold(Utf8JsonWriter writer, ThresholdBrushResolver thr, JsonSerializerOptions options)
         {
             writer.WriteStartObject();
             writer.WriteString("kind", "static");
             writer.WritePropertyName("brush");
-            JsonSerializer.Serialize(writer, thr.ConstantBrush, options);
+            JsonSerializer.Serialize(writer, thr.DefaultBrush, options);
             writer.WriteEndObject();
         }
     }

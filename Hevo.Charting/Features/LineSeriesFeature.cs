@@ -60,7 +60,7 @@ namespace Hevo.Charting.Features
             // 业务侧若直接 new + 注入 Meta 走老路;蓝图侧未配 Meta 时按标量字段合成。
             var meta = Meta ?? FieldMeta.Literal(MetaName ?? LayerName, MetaColor, MetaFormat);
 
-            var finalStyle = Style ?? LineStyle.Create(meta.GetConstantBrush(), thickness: 1.0, useSpline: false);
+            var finalStyle = Style ?? LineStyle.Create(meta.GetDefaultBrush(), thickness: 1.0, useSpline: false);
             proxy.LineStyle(finalStyle);
 
             // 💥 自动协议升维：将极简的 FieldMeta 包装为底层引擎所需的 MetaTrait

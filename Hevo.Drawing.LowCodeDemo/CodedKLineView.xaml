@@ -1,0 +1,24 @@
+<UserControl x:Class="Hevo.Drawing.LowCodeDemo.CodedKLineView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="#FF1A1B1F"
+             FontFamily="Segoe UI" FontSize="13">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Foreground="#FFC0C8D0" TextWrapping="Wrap" Margin="0,0,0,8">
+            <Run FontWeight="Bold" Foreground="#FFFFB74D">🎨 手写 K 线 Schema(对照 JSON 实现)</Run>
+            <LineBreak/>
+            <Run Foreground="#FF8A929C">主图 K 线 + SMA(20) 叠加,副图成交量,</Run>
+            <Run FontFamily="Consolas" Foreground="#FFCE93D8">LinkedChartDashboard</Run>
+            <Run Foreground="#FF8A929C"> 跨 cell 镜像视口 + 十字线。</Run>
+        </TextBlock>
+
+        <!-- 直接 Grid host,LinkedChartDashboard 在 ctor 装配 + 加进来,Loaded 触发 LoadAsync。 -->
+        <Grid Grid.Row="1" x:Name="RootGrid"
+              Background="#FF14161B"/>
+    </Grid>
+</UserControl>

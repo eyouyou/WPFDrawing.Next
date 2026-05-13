@@ -104,7 +104,7 @@ namespace Hevo.Charting.Features
                 IHevoString xName = XMeta?.Name ?? new HevoLiteralString("Time");
                 string xFormat = XMeta?.Format ?? "G";
                 IHevoFormatter? xProvider = XMeta?.Provider;
-                IHevoBrush xBrush = XMeta?.GetConstantBrush() ?? new HevoSolidBrush(Colors.White);
+                IHevoBrush xBrush = XMeta?.GetDefaultBrush() ?? new HevoSolidBrush(Colors.White);
 
                 // 完美格式化
                 string xStr = val is IFormattable f ? f.FormatValue(xFormat, xProvider) : val?.ToString() ?? "";
@@ -156,7 +156,7 @@ namespace Hevo.Charting.Features
                     {
                         IHevoBrush finalColor = indexResolver != null
                                 ? indexResolver.Resolver.ResolveByIndex(i, state.LocalIndex)
-                                : fieldMeta.GetConstantBrush();
+                                : fieldMeta.GetDefaultBrush();
 
                         // 💥 直接塞入已经格式化好的字符串！
                         _rowBuffer[rowCount++] = new TooltipRow(fieldMeta.Name, formattedString, finalColor);
