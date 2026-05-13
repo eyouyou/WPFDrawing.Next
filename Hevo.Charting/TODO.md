@@ -6,7 +6,7 @@
 
 ## ✅ 已完成:Skia 引用移除（commit 8350acf）
 
-**触发原因**:Skia 路径在全屏 + 特定 canvas size 下出现 ±1 列错位 bug([07.Grid 宽度不均排查记录.md](07.Grid%20宽度不均排查记录.md)),且 SkiaSharp.Views.WPF 多个图层栅格化路径都没法绕开。已经全员切到 WPF Software 并且通过 `_drawingCanvas.CacheMode = BitmapCache` 拿回了 perf,Skia 引用整体可拔。
+**触发原因**:Skia 路径在全屏 + 特定 canvas size 下出现 ±1 列错位 bug（SkiaSharp.Views.WPF 多个图层栅格化路径都没法绕开）。已经全员切到 WPF Software 并且通过 `_drawingCanvas.CacheMode = BitmapCache` 拿回了 perf,Skia 引用整体可拔。
 
 **改动清单(全部完成)**:
 - ✅ 删 `Renderers/SkiaRenderer.cs` / `Renderers/SkiaRasterRenderer.cs`
@@ -82,7 +82,7 @@ ChartCell 路由器自动把它送进 `_overlayCanvas`(无 cache,跟 Crosshair /
 ## ⏳ 待还的技术债
 
 ### ✅ 已完成:Grid pixel asymmetry workaround
-1.5px 妥协是 [07.Grid 宽度不均排查记录.md](07.Grid%20宽度不均排查记录.md) Skia bug 的临时方案。Skia 拔除 + §14 vertex snap + AA on 路径已能正常处理 1px H/V 线,业务侧 [DualTimeShareSchemaBase.cs:91](../Hevo.Drawing/TimeShare/DualTimeShareSchemaBase.cs:91) 已恢复 `LineStyle.FromResource(BrushKeys.L1, 1.0)`。`GridStyleTrait.Create / FromResource` 默认值本来就是 `thickness=1.0`,无需进一步改动。
+1.5px 妥协是 Skia ±1 列错位 bug 的临时方案。Skia 拔除 + §14 vertex snap + AA on 路径已能正常处理 1px H/V 线,业务侧 [DualTimeShareSchemaBase.cs:91](../Hevo.Drawing/TimeShare/DualTimeShareSchemaBase.cs:91) 已恢复 `LineStyle.FromResource(BrushKeys.L1, 1.0)`。`GridStyleTrait.Create / FromResource` 默认值本来就是 `thickness=1.0`,无需进一步改动。
 
 ### `_overlayVisualRegistry` 插入排序
 当前 `AddUnmanagedLayer` 对 `_overlayVisualRegistry` 走 Level 升序,但 overlay 内只有 Crosshair 和 TooltipWidget 都是 Interaction(同 Level),实际 Z-order 由插入顺序决定。如果将来动态 CandleLayer 也进 overlay(方案 A),要明确 Z 序规则。

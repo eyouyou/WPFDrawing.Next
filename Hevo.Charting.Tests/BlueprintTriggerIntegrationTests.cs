@@ -160,7 +160,7 @@ namespace Hevo.Charting.Tests
         /// </summary>
         private static ChartBlueprint MakeScheduleDomainAxisBlueprint() => new()
         {
-            DataSource = new DataSourceModel { TypeName = nameof(TestDataSource) },
+            DataSources = { new DataSourceModel { Id = "primary", TypeName = nameof(TestDataSource) } },
             Features =
             {
                 new FeatureModel
@@ -171,7 +171,7 @@ namespace Hevo.Charting.Tests
                         ["LogicalLengthProvider"] = "ts_logical_length",
                         ["IndexToTimeProvider"]   = "ts_index_to_time",
                     },
-                    PortBindings = new Dictionary<string, object?>
+                    InputBindings = new Dictionary<string, object?>
                     {
                         ["RangePort"] = "VP_ActiveRange",
                     },
@@ -203,17 +203,18 @@ namespace Hevo.Charting.Tests
         /// </summary>
         private static ChartBlueprint MakeTimeShareShapedBlueprint() => new()
         {
-            DataSource = new DataSourceModel
+            DataSources =
             {
-                TypeName = nameof(TestDataSource),
-                ScalarMappings = new Dictionary<string, string>
+                new DataSourceModel
                 {
-                    ["LogicalLength"] = "VP_LogicalLength",
-                },
-                VectorMappings = new Dictionary<string, string>
-                {
-                    ["Value"] = "ts_price",
-                    ["Time"]  = "ts_time",
+                    Id = "primary",
+                    TypeName = nameof(TestDataSource),
+                    OutputBindings = new Dictionary<string, object?>
+                    {
+                        ["LogicalLength"] = "VP_LogicalLength",
+                        ["Value"] = "ts_price",
+                        ["Time"]  = "ts_time",
+                    },
                 },
             },
             // No Triggers: TimeShare uses ReactiveDataSource push subscription
@@ -222,17 +223,14 @@ namespace Hevo.Charting.Tests
                 new FeatureModel
                 {
                     TypeName = nameof(UniversalAutoScaleFeature),
-                    Properties = new Dictionary<string, object?> { ["PaddingRatio"] = 0.05 },
-                    PortBindings = new Dictionary<string, object?>
-                    {
-                        ["YRangePort"]  = "ts_yrange",
-                        ["ValuePorts"] = new List<string> { "ts_price" },
-                    },
+                    Properties     = new Dictionary<string, object?> { ["PaddingRatio"] = 0.05 },
+                    OutputBindings = new Dictionary<string, object?> { ["YRangePort"]  = "ts_yrange" },
+                    InputBindings  = new Dictionary<string, object?> { ["ValuePorts"] = new List<string> { "ts_price" } },
                 },
                 new FeatureModel
                 {
                     TypeName = nameof(LineSeriesFeature),
-                    PortBindings = new Dictionary<string, object?>
+                    InputBindings = new Dictionary<string, object?>
                     {
                         ["DataPort"]   = "ts_price",
                         ["YRangePort"] = "ts_yrange",
@@ -248,7 +246,7 @@ namespace Hevo.Charting.Tests
         /// </summary>
         private static ChartBlueprint MakeKLineShapedBlueprint() => new()
         {
-            DataSource = new DataSourceModel { TypeName = nameof(TestDataSource) },
+            DataSources = { new DataSourceModel { Id = "primary", TypeName = nameof(TestDataSource) } },
             Triggers =
             {
                 new TriggerModel { Kind = "Interval", IntervalSeconds = 1.0, Handler = "on_heartbeat" },
@@ -273,7 +271,7 @@ namespace Hevo.Charting.Tests
                     {
                         ["FutureXLabelFormatter"] = "format_future_time",
                     },
-                    PortBindings = new Dictionary<string, object?>
+                    InputBindings = new Dictionary<string, object?>
                     {
                         ["HitStatePort"] = "hit_state",
                     },

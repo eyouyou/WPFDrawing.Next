@@ -64,10 +64,19 @@ namespace Hevo.Charting.LowCode.Designer
             bool hasPrefix = !string.IsNullOrEmpty(namespacePrefix);
             foreach (var type in allTypes)
             {
-                if (type == null || !type.IsPublic || type.IsAbstract || type.IsGenericTypeDefinition) continue;
+                if (type == null || !type.IsPublic || type.IsAbstract) continue;
+                // 开放泛型类型(典型 Composite<>)只接受标了 [BlueprintTypeAlias] 的 ——
+                // 抽象基类(DataSource<,> / BufferedDataSource<,> 等)已被 IsAbstract 挡掉;
+                // 此守门是给 sealed 开放泛型 sentinel 留口,避免业务侧未标 alias 的开放泛型被静默登记
+                // (反查时 Type.Name = "Foo`1" 不是合法蓝图 TypeName,意外登记反而难调试)。
+                if (type.IsGenericTypeDefinition && BlueprintTypeAlias.GetAlias(type) == null) continue;
 
                 bool eligible;
-                if (typeof(ChartFeature).IsAssignableFrom(type))
+                // 注册范围放宽到 Feature 基类:不再只扫 ChartFeature 子类。
+                // GridLayoutFeature 等不消费 Viewport 的内置 feature 已从 ChartFeature 降级为 Feature,
+                // 蓝图反射 Resolve 仍要找得到。
+                // graph editor 的 Feature 子类不在 chart 蓝图里出现,即便被注册也无副作用。
+                if (typeof(Feature).IsAssignableFrom(type))
                 {
                     eligible = HasParameterlessCtor(type);
                 }
@@ -85,7 +94,11 @@ namespace Hevo.Charting.LowCode.Designer
                 }
 
                 if (!eligible) continue;
-                var alias = hasPrefix ? namespacePrefix + ":" + type.Name : type.Name;
+                // canonical 名优先取 [BlueprintTypeAlias],否则回落 Type.Name —— 跟 NodeFactory.CreateNode 同步,
+                // 让 alias 协议在序列化 / 反查两端贯通。业务给某类型标 attribute,序列化写 alias、反序列化按 alias
+                // Resolve 一气呵成。绝大多数类型不标 attribute,继续吃 Type.Name 约定。
+                var canonical = BlueprintTypeAlias.GetAlias(type) ?? type.Name;
+                var alias = hasPrefix ? namespacePrefix + ":" + canonical : canonical;
                 ComponentRegistry.Register(type, alias);
             }
         }

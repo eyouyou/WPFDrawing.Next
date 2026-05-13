@@ -67,6 +67,11 @@ namespace Hevo.Charting.Features
         // 写一帧 valid 一帧 default 的抖动。Add 检测同类型已存在时自动替换。
         public override bool IsSingleton => true;
 
+        // Ports 字段已迁出:持有职责拆给 ViewportPortsFeature(框架强制 ensure)。VPM 内部读写 Ports 改用
+        // base ChartFeature.Viewport 字段(InternalCompose 时从 PortsFeature.Ports 自动注入)。
+        // 联动 dashboard 改 SharedViewport 由 LinkedMaster/Pane 在 PortsFeature.Ports 上 mutate,
+        // VPM 不再参与那条路径(纯钳制业务,联动副图根本不挂 VPM 避免双写竞态)。
+
         /// <summary>数据/视口变化时的停靠侧。RightEdge = 默认贴右(行情图常态);LeftEdge = 贴左。也用于双击复原方向。</summary>
         public ViewportAlignment Alignment { get; init; } = ViewportAlignment.RightEdge;
 

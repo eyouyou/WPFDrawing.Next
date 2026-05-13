@@ -128,12 +128,14 @@ namespace Hevo.Charting.Benchmarks
         private sealed class StubFeatureContext : IFeatureContext
         {
             public IFeatureContext Seed<T>(T trait) where T : class, IVisualTrait => this;
-            public IFeatureContext Add(ChartFeature feature) => this;
-            public IFeatureContext Remove<TFeature>(Func<TFeature, bool>? predicate = null) where TFeature : ChartFeature => this;
-            public void Remove(ChartFeature feature) { }
+            public IFeatureContext Add(Feature feature) => this;
+            public IFeatureContext Remove<TFeature>(Func<TFeature, bool>? predicate = null) where TFeature : Feature => this;
+            public void Remove(Feature feature) { }
             public void Transact(Action<IFeatureContext> action) => action(this);
-            public bool HasFeature<TFeature>(Func<TFeature, bool>? predicate = null) where TFeature : ChartFeature => false;
-            public TFeature? Find<TFeature>(Func<TFeature, bool>? predicate = null) where TFeature : ChartFeature => null;
+            public bool HasFeature<TFeature>(Func<TFeature, bool>? predicate = null) where TFeature : Feature => false;
+            public TFeature? Find<TFeature>(Func<TFeature, bool>? predicate = null) where TFeature : Feature => null;
+            public TFeature Require<TFeature>(Func<TFeature, bool>? predicate = null) where TFeature : Feature
+                => throw new InvalidOperationException("StubFeatureContext.Require not implemented (benchmark stub).");
         }
     }
 

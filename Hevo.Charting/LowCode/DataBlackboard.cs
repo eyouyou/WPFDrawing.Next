@@ -131,7 +131,10 @@ namespace Hevo.Charting.LowCode
         public void ForceWrite<T>(DataPort<T> port, T value)
         {
 #if DEBUG
-            DevTools.TracerRegistry.Get(this)?.RecordWrite(port);
+            // 用 RecordWriteWithValue 而非 RecordWrite —— 顺手把 value 缓存进 tracer.LastValues。
+            // Inspector dump 走 tracer 这条路,不再依赖 board 是否还活着,绕开蓝图 one-shot 数据源
+            // pipe.Dispose 后 _latestBoard 悬挂的 lifecycle 坑。
+            DevTools.TracerRegistry.Get(this)?.RecordWriteWithValue(port, value);
 
             // 💥 引擎级防弹衣：必须持有写锁才能修改数据！
             if (!_rwLock.IsWriteLockHeld)
@@ -165,6 +168,58 @@ namespace Hevo.Charting.LowCode
             }
             OnPortUpdated?.Invoke(port);
         }
+
+#if DEBUG
+        /// <summary>
+        /// DEBUG dump 入口:把当前所有 port 的 (Id, DisplayName, T, value) 抓成快照,供 Topology Inspector
+        /// 之类的工具一键导出。读锁内迭代,迭代期间不会跟事务写并发。
+        /// 仅枚举 key 实现 IDataPort 的桶 —— 黑板里其它非 DataPort 的 key(如果有)不应当出现在这层视图。
+        /// </summary>
+        public List<(string Id, string DisplayName, string TypeName, object? Value)> DumpAllPortValues()
+        {
+            var result = new List<(string, string, string, object?)>();
+            // Inspector 寿命可能比 board 长(切 template、关图时 schema.Decompose 会先 Dispose 旧 board);
+            // dispose 后 _rwLock 已经被 Dispose,再 AcquireReadLock 会抛 ObjectDisposedException。
+            // 这里直接短路返回空列表,UI 端拿到的 ports 段就是空数组,语义清晰。
+            if (IsDisposed) return result;
+            using (AcquireReadLock())
+            {
+                foreach (var (key, value) in _memory.EnumerateAll())
+                {
+                    if (key is IDataPort port)
+                    {
+                        var t = key.GetType();
+                        var typeName = t.IsGenericType ? t.GetGenericArguments()[0].Name : t.Name;
+                        result.Add((port.Id, port.DisplayName, typeName, value));
+                    }
+                }
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// DEBUG 诊断:统计 _memory 里的 (总 entry, IDataPort entry, 非 IDataPort entry)。
+        /// dump 出来 ports 是空数组、又看到拓扑链路有 hits 时,就靠这套数字判断:
+        ///   - TotalEntries=0 → 这块 board 真的没人写过 → 数据写在别的 board(常见于 dashboard 多 board 拓扑)
+        ///   - TotalEntries>0 且 PortEntries=0 → key 不是 IDataPort,DumpAllPortValues 的过滤把它筛掉了
+        ///   - TotalEntries>0 且 PortEntries>0 → DumpAllPortValues 应该有内容,如果空说明枚举链路出 bug
+        /// </summary>
+        public (int TotalEntries, int PortEntries, int NonPortEntries) DumpMemoryStats()
+        {
+            if (IsDisposed) return (0, 0, 0);
+            int total = 0, port = 0, nonPort = 0;
+            using (AcquireReadLock())
+            {
+                foreach (var (key, _) in _memory.EnumerateAll())
+                {
+                    total++;
+                    if (key is IDataPort) port++;
+                    else nonPort++;
+                }
+            }
+            return (total, port, nonPort);
+        }
+#endif
 
         /// <summary>
         /// 开启一个黑板写入事务，期间所有的 Write 不会触发 Watch 回调
@@ -237,13 +292,13 @@ namespace Hevo.Charting.LowCode
     public class SubscriptionRegistry
     {
         private readonly object _gate = new object();
-        private readonly HashSet<ChartFeature> _dirtyFeatures = new();
+        private readonly HashSet<Feature> _dirtyFeatures = new();
 
         // 记录引脚与 Feature 的订阅关系 (通常在 UI 线程建树时操作)
-        private readonly Dictionary<object, HashSet<ChartFeature>> _portSubscribers = new();
+        private readonly Dictionary<object, HashSet<Feature>> _portSubscribers = new();
 
-        /// <summary>隐式订阅：将 Feature 登记为引脚的观察者</summary>
-        public void Subscribe<T>(DataPort<T> port, ChartFeature feature)
+        /// <summary>隐式订阅:将 Feature 登记为引脚的观察者</summary>
+        public void Subscribe<T>(DataPort<T> port, Feature feature)
         {
 #if DEBUG
             DevTools.TracerRegistry.Get(this)?.RecordSubscribe(port, feature);
@@ -254,7 +309,7 @@ namespace Hevo.Charting.LowCode
             {
                 if (!_portSubscribers.TryGetValue(port, out var features))
                 {
-                    features = new HashSet<ChartFeature>();
+                    features = new HashSet<Feature>();
                     _portSubscribers[port] = features;
                 }
                 features.Add(feature);
@@ -262,8 +317,8 @@ namespace Hevo.Charting.LowCode
         }
 
         /// <summary>
-        /// 联动查脏：将所有订阅了该引脚的 Feature 打入冷宫 (脏列表)
-        /// 💥 注意：此方法由黑板在后台线程触发！
+        /// 联动查脏:将所有订阅了该引脚的 Feature 打入冷宫 (脏列表)
+        /// 💥 注意:此方法由黑板在后台线程触发!
         /// </summary>
         public bool NotifyPortUpdated(object port)
         {
@@ -279,18 +334,18 @@ namespace Hevo.Charting.LowCode
         }
 
         /// <summary>
-        /// 💥 工业级引擎的核心交接法：填充模式弹出 (Fill-Pattern Pop)
-        /// 修复 H3：原实现每次返回新 List，热路径每帧产生堆分配。
-        /// 新 API 直接填充调用方预分配的 HashSet，零堆分配。
-        /// 返回 true 代表有脏 Feature 已填入 target；false 代表脏名单为空。
+        /// 💥 工业级引擎的核心交接法:填充模式弹出 (Fill-Pattern Pop)
+        /// 修复 H3:原实现每次返回新 List,热路径每帧产生堆分配。
+        /// 新 API 直接填充调用方预分配的 HashSet,零堆分配。
+        /// 返回 true 代表有脏 Feature 已填入 target;false 代表脏名单为空。
         /// </summary>
-        public bool PopDirtyFeatures(HashSet<ChartFeature> target)
+        public bool PopDirtyFeatures(HashSet<Feature> target)
         {
             lock (_gate)
             {
                 if (_dirtyFeatures.Count == 0) return false;
 
-                // 直接填充目标集合（调用方负责 Clear），避免任何中间 List/HashSet 分配
+                // 直接填充目标集合(调用方负责 Clear),避免任何中间 List/HashSet 分配
                 foreach (var f in _dirtyFeatures) target.Add(f);
                 _dirtyFeatures.Clear();
                 return true;
@@ -298,7 +353,7 @@ namespace Hevo.Charting.LowCode
         }
 
         /// <summary>彻底抹除某个 Feature 的所有订阅记录</summary>
-        public void UnsubscribeAll(ChartFeature feature)
+        public void UnsubscribeAll(Feature feature)
         {
             lock (_gate)
             {
@@ -321,6 +376,14 @@ namespace Hevo.Charting.LowCode
 
         // 💥 跨帧复用的持久化黑板，避免每帧 new DataBlackboard
         private readonly DataBlackboard _persistentBoard = new();
+
+        /// <summary>
+        /// 暴露内部持久化黑板,给 DEBUG 路径里的 TopologyTracer.Attach 用 ——
+        /// 必须在 first Process() 之前 attach,否则 first-publish 的 DataPipe 写入(Value/Time/Index 等)
+        /// 因为 board 还没 tracer 而进不了 LinkHits → inspector 看不到 DataPipe → 端口的连线。
+        /// 业务侧别用,只有诊断工具读。
+        /// </summary>
+        public DataBlackboard Board => _persistentBoard;
 
         public void AddIngestor(IDataIngestor<TItem> ingestor) => _ingestors.Add(ingestor);
 

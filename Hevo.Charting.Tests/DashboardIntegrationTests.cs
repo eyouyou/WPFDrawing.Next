@@ -137,12 +137,12 @@ namespace Hevo.Charting.Tests
             foreach (var cell in d.Cells)
             {
                 var bp = cell.Blueprint;
-                if (bp.DataSource == null) continue;
+                if (bp.DataSources.Count == 0) continue;
 
                 var state = GraphDeserializer.FromBlueprint(bp);
                 var bp2 = GraphSerializer.ToBlueprint(state);
 
-                Assert.Equal(bp.DataSource.TypeName, bp2.DataSource?.TypeName);
+                Assert.Equal(bp.DataSources[0].TypeName, bp2.DataSources.FirstOrDefault()?.TypeName);
             }
         }
 
@@ -160,8 +160,8 @@ namespace Hevo.Charting.Tests
                 var bp1 = d.Cells[i].Blueprint;
                 var bp2 = d2.Cells[i].Blueprint;
 
-                // DataSource type preserved
-                Assert.Equal(bp1.DataSource?.TypeName, bp2.DataSource?.TypeName);
+                // DataSource type preserved(节点化协议:首个 DS 即 primary)
+                Assert.Equal(bp1.DataSources.FirstOrDefault()?.TypeName, bp2.DataSources.FirstOrDefault()?.TypeName);
 
                 // Feature type names preserved
                 Assert.Equal(
@@ -219,13 +219,13 @@ namespace Hevo.Charting.Tests
                     HeightRatio = 3,
                     Blueprint   = new ChartBlueprint
                     {
-                        DataSource = new DataSourceModel { TypeName = nameof(TestDataSource) },
+                        DataSources = { new DataSourceModel { Id = "primary", TypeName = nameof(TestDataSource) } },
                         Features   =
                         {
                             new FeatureModel
                             {
-                                TypeName     = nameof(LineSeriesFeature),
-                                PortBindings = new Dictionary<string, object?> { ["DataPort"] = "main_price" },
+                                TypeName      = nameof(LineSeriesFeature),
+                                InputBindings = new Dictionary<string, object?> { ["DataPort"] = "main_price" },
                             },
                         },
                     },
@@ -239,13 +239,13 @@ namespace Hevo.Charting.Tests
                     HeightRatio = 1,
                     Blueprint   = new ChartBlueprint
                     {
-                        DataSource = new DataSourceModel { TypeName = nameof(TestDataSource) },
+                        DataSources = { new DataSourceModel { Id = "primary", TypeName = nameof(TestDataSource) } },
                         Features   =
                         {
                             new FeatureModel
                             {
-                                TypeName     = nameof(BarSeriesFeature),
-                                PortBindings = new Dictionary<string, object?> { ["DataPort"] = "vol_value" },
+                                TypeName      = nameof(BarSeriesFeature),
+                                InputBindings = new Dictionary<string, object?> { ["DataPort"] = "vol_value" },
                             },
                         },
                     },
@@ -259,13 +259,13 @@ namespace Hevo.Charting.Tests
                     HeightRatio = 1,
                     Blueprint   = new ChartBlueprint
                     {
-                        DataSource = new DataSourceModel { TypeName = nameof(TestDataSource) },
+                        DataSources = { new DataSourceModel { Id = "primary", TypeName = nameof(TestDataSource) } },
                         Features   =
                         {
                             new FeatureModel
                             {
-                                TypeName     = nameof(LineSeriesFeature),
-                                PortBindings = new Dictionary<string, object?> { ["DataPort"] = "ma_value" },
+                                TypeName      = nameof(LineSeriesFeature),
+                                InputBindings = new Dictionary<string, object?> { ["DataPort"] = "ma_value" },
                             },
                         },
                     },

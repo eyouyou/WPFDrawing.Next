@@ -66,6 +66,24 @@ namespace Hevo.Charting.Core
         }
 
         /// <summary>
+        /// DEBUG dump 路径专用:枚举所有桶里的 (key, value),装箱 OK,只供 Inspector 抓快照。
+        /// 调用方需自行加好读锁(走 DataBlackboard.AcquireReadLock),迭代 Dictionary 期间不要并发结构写。
+        /// </summary>
+        public IEnumerable<(object Key, object? Value)> EnumerateAll()
+        {
+            foreach (var kv in _buckets)
+            {
+                // Dictionary<TKey, TValue> 实现非泛型 IDictionary;DictionaryEntry 把 (key, value) 装箱成 object,
+                // 不需要泛型反射也能拿到。仅 DEBUG 路径,装箱开销可接受。
+                if (kv.Value is System.Collections.IDictionary dict)
+                {
+                    foreach (System.Collections.DictionaryEntry entry in dict)
+                        yield return (entry.Key, entry.Value);
+                }
+            }
+        }
+
+        /// <summary>
         /// 💥 一键清空所有数据，但保留桶的内存容量，避免触发后续 GC
         /// </summary>
         public void Clear()

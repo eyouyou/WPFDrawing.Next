@@ -78,6 +78,33 @@ dotnet run -c Release -- --filter "*" --warmupCount 3 --iterationCount 5
   把"加载成功但黑屏"的隐性故障早期暴露出来,RoI 极高。
 - §8 数组化后 DryRun 不变(在噪声内),证明新格式没拖慢 hot path。
 
+### §D2.X Python marshalling round-trip ([PythonMarshallingBenchmarks](PythonMarshallingBenchmarks.cs))
+
+**MR 加 + 未跑实测**(交付 benchmark 文件 + InProcess 配置;实跑数据交业务侧手动触发)。
+ROM&lt;double&gt; ↔ numpy.ndarray round-trip 跨边界开销,4 个 size:1 / 100 / 1000 / 10000 点。
+
+```bash
+dotnet run -c Release --project Hevo.Charting.Benchmarks -- --filter "*PythonMarshalling*"
+```
+
+⚠️ **InProcess 必须开**(已在文件里 `[Config(typeof(InProcessConfig))]` 配好):BDN 默认 spawn 子进程,
+子进程 BaseDirectory 不在 repo 内 → ResolveDll 找不到 Python312/python312.dll → GlobalSetup throw → benchmark NA。
+InProcess 让 benchmark 在主进程内跑(共享 PythonEngine 全进程 single-init 状态)。
+
+**预期量级**(开发机 i7 / Win11):
+
+| size | 预期 Mean | 主导成本 |
+|---|---|---|
+| 1 点 | ~50-100μs | GIL acquire + Marshal.Copy + Task 调度税(数据量不重要) |
+| 100 点 | 同上 | 数据 cost ~0.1μs 可忽略 |
+| 1000 点(time-share 典型) | ~60-120μs | 数据 ~1μs,marshalling 路径仍主导 |
+| 10000 点 | ~80-150μs | 数据 ~10μs 开始可见 |
+
+**结论指引**:
+- 每次 invoke ~50-150μs 主要是 GIL + 调度税,数据 size 影响小 → 指标算子层(1-10Hz)完全够
+- 60Hz 热路径(crosshair 每帧 16ms)绝对不要走 Python(单次 invoke ~6-9% 帧预算)→ §D2.X 已划线
+- zero-copy(待 D2.5.3 优化)真正受益的 case 是 10K+ 点指标,那时 Marshal.Copy 才显著
+
 ### §8 PortBindings 解析 ([PortBindingValueBenchmarks](PortBindingValueBenchmarks.cs))
 
 5 个 globalId 的扇入端口三种输入形态对比:

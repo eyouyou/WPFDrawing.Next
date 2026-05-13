@@ -17,6 +17,33 @@
     </ProjectReference>
     <Analyzer Include="..\Hevo.Charting.CodeAnalysis\bin\$(Configuration)\netstandard2.0\Hevo.Charting.CodeAnalysis.dll" />
     <ProjectReference Include="..\Hevo.Charting\Hevo.Charting.csproj" />
+    <!-- §D2.5.E2E: 引 Python 集成 + Mock 交易 backend,demo 面板用 -->
+    <ProjectReference Include="..\Hevo.Charting.PythonNet\Hevo.Charting.PythonNet.csproj" />
+    <ProjectReference Include="..\Hevo.Trade.Abstractions\Hevo.Trade.Abstractions.csproj" />
+    <ProjectReference Include="..\Hevo.Trade.Mock\Hevo.Trade.Mock.csproj" />
   </ItemGroup>
+
+  <!-- §D2.5.E2E Python 编辑器:AvalonEdit 提供 WPF 嵌入式代码编辑器(行号 / 折叠 / Python 语法着色 /
+       Tab 缩进自动 / 搜索),业务侧加 IBackgroundRenderer 画 SyntaxError 红波浪。
+       ICSharpCode.AvalonEdit 跟 .NET 8 / WPF 兼容,~3MB,MIT 协议。 -->
+  <ItemGroup>
+    <PackageReference Include="AvalonEdit" Version="6.3.0.90" />
+  </ItemGroup>
+
+  <!-- Dashboard 编辑器默认 JSON 内嵌成 EmbeddedResource,DemoWindow 启动时读取 → LoadDashboard。
+       避免拷文件到 bin 目录(WPF Resource 也行但需 Pack URI;EmbeddedResource 更简单)。 -->
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\default_kline_dashboard.json" />
+  </ItemGroup>
+
+  <!-- demo 用 Python indicator —— 真 .py 文件(IDE 语法高亮 + 直接编辑 + 不被 C# verbatim string 截断)。
+       DemoPythonHost.DeployDemoIndicators 启动时把这些 EmbeddedResource 落盘到 %TEMP%\hevo_pyindicator_demo\,
+       给 PythonHandlerRegistry.AutoDiscoverDirectory 扫。 -->
+  <ItemGroup>
+    <EmbeddedResource Include="PyIndicators\*.py" />
+  </ItemGroup>
+
+  <!-- §D2.5.7 嵌入 Python 运行时:见仓库根 Directory.Build.targets,
+       检测 ProjectReference 含 Hevo.Charting.PythonNet 自动启用 Python312 同步。 -->
 
 </Project>

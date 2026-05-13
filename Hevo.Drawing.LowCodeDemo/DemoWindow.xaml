@@ -28,5 +28,20 @@
         <TabItem Header="Dashboard 编辑器">
             <gv:DashboardWorkspace x:Name="dashboardWorkspace"/>
         </TabItem>
+
+        <!-- §D2.5.E2E Python 嵌入指标 smoke test -->
+        <TabItem Header="Python 指标 (D2.5)">
+            <local:PyIndicatorView/>
+        </TabItem>
+
+        <!-- §D2.5.E2E Python 编辑器 — 在 demo 内编辑 .py 文件 + 保存即重载 -->
+        <TabItem Header="Python 编辑器">
+            <local:PyEditorView/>
+        </TabItem>
+
+        <!-- §D2.X 通知中心 — Mock send_email / send_dingtalk / send_webhook / send_sms / log_alert 聚合 -->
+        <TabItem Header="通知中心">
+            <local:NotificationCenterView/>
+        </TabItem>
     </TabControl>
 </Window>

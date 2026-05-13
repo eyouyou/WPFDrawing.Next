@@ -81,7 +81,7 @@ namespace Hevo.Charting.WorkFlow
             DataPort<ReadOnlyMemory<double>> targetPort,
             Func<TItem, TSource, double> valueSelector,  // 💥 提取规则：双参委托，自动透传！
             ISequenceTransform transform)
-            where TSource : DataSource<TSource, TItem>
+            where TSource : BufferedDataSource<TSource, TItem>
         {
             // 定义 AoS 提取委托：按元素遍历榨取
             AoSSpanExtractor<TSource, TItem> extractor = (sourceSpan, sourceRef) =>

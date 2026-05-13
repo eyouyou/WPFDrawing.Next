@@ -1,4 +1,5 @@
 using Hevo.Charting.Features;
+using Hevo.Charting.LowCode;
 
 namespace Hevo.Charting.LowCode.Designer.GraphViewer
 {
@@ -42,16 +43,20 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             if (blueprint == null) throw new ArgumentNullException(nameof(blueprint));
 
             var nodes = new List<Node>();
-            // (nodeId, outputPortId) 表:同一全局 portId → 哪个节点的哪个 output 端口写出。
-            // 反向构建 Edge 时需要这张表把 globalId 翻译回 (FromNodeId, FromPortId)。
+            // globalId → (nodeId, outputPortId) 反查表:边重建时把 PortBindings 里的 globalId 翻成源端坐标。
             var globalIdToOutput = new Dictionary<string, (string nodeId, string portId)>();
 
-            // 1. DataSource 节点 + 它的标量/向量映射(顺便填 globalIdToOutput)
-            Node? dsNode = null;
-            if (blueprint.DataSource != null && !string.IsNullOrEmpty(blueprint.DataSource.TypeName))
+            // 1. DataSource 节点(节点化协议:多 DS 平等,跟 Feature 走同款 Properties + PortBindings)
+            var dsModelByNodeId = new Dictionary<string, DataSourceModel>(StringComparer.Ordinal);
+            foreach (var dsm in blueprint.DataSources)
             {
-                dsNode = TryCreateDataSourceNode(blueprint.DataSource, globalIdToOutput);
-                if (dsNode != null) nodes.Add(dsNode);
+                if (string.IsNullOrEmpty(dsm.TypeName)) continue;
+                var n = TryCreateDataSourceNode(dsm, blueprint, globalIdToOutput);
+                if (n != null)
+                {
+                    nodes.Add(n);
+                    dsModelByNodeId[n.Id] = dsm;
+                }
             }
 
             // 2. Trait 节点(InitialTraits)
@@ -61,25 +66,24 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                 if (n != null) nodes.Add(n);
             }
 
-            // 3. Feature 节点 —— 同时把 OutputPort 的 globalId(来自 fm.PortBindings)反查表也填上,
-            //    供后面拼 Edge 用。
-            var featureNodes = new List<Node>();
+            // 3. Feature 节点 —— 同时构建 featureModelByNodeId 字典(避免旧 Zip 顺序 bug:
+            //    TryCreateFeatureNode 返 null 时 featureNodes list 与 blueprint.Features list 错位)。
+            var featureModelByNodeId = new Dictionary<string, FeatureModel>(StringComparer.Ordinal);
             foreach (var fm in blueprint.Features)
             {
                 var n = TryCreateFeatureNode(fm, globalIdToOutput);
                 if (n != null)
                 {
                     nodes.Add(n);
-                    featureNodes.Add(n);
+                    featureModelByNodeId[n.Id] = fm;
                 }
             }
 
             // 4. Viewport 节点 —— 蓝图里只要任何一处引用了 VP_* well-known id,就孵化一个 Viewport 节点。
-            //    它的 OutputPort 的 globalId 写进反查表,这样从 Viewport 出去的连线也能正确拼出来。
-            Node? viewportNode = null;
+            //    它的 OutputPort globalId 写进反查表,这样从 Viewport 出去的连线也能正确拼出来。
             if (BlueprintReferencesViewport(blueprint))
             {
-                viewportNode = NodeFactory.CreateViewportNode(new HevoPoint(0, 0));
+                var viewportNode = NodeFactory.CreateViewportNode(new HevoPoint(0, 0));
                 nodes.Add(viewportNode);
                 foreach (var op in viewportNode.OutputPorts)
                 {
@@ -88,22 +92,18 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                 }
             }
 
-            // 5. 拼 Edges
-            //    a. DataSource.ScalarMappings/VectorMappings 中指向 VP_* 的 → 拉一根 ds.{port} → viewport.{port_input}
-            //       (普通映射没对应 sink,不画边)
-            //    b. Feature.PortBindings 里凡是 InputPort 的 globalId 在反查表里找得到来源 → 拉边
+            // 5. Codec dispatch:边重建全部委托给各 codec
+            //    - DataEdgeCodec:DS→Viewport 边 + Feature InputPort 边
+            //    - CascadeEdgeCodec:bp.Cascades → Kind=Cascade 边
+            //    - UpstreamRefCodec:dsm.UpstreamRefs → DS.Stream→Composite.Upstreams 边
             var edges = new List<Edge>();
-            if (dsNode != null && blueprint.DataSource != null && viewportNode != null)
-            {
-                BuildDataSourceToViewportEdges(blueprint.DataSource, dsNode, viewportNode, edges);
-            }
-            foreach (var (n, fm) in featureNodes.Zip(blueprint.Features, (n, fm) => (n, fm)))
-            {
-                BuildFeatureInputEdges(n, fm, globalIdToOutput, edges);
-            }
+            var ctx = new EdgeDecodeContext(
+                blueprint, nodes, nodes.ToDictionary(n => n.Id),
+                globalIdToOutput, featureModelByNodeId, dsModelByNodeId, edges);
+            foreach (var codec in EdgeKindCodecs.All)
+                codec.Decode(ctx);
 
             // 6. 自动布局:DataSource 在最左,然后按 FeatureCategory 分列(Environment / Axes / Series / Interaction)。
-            //    同列按拓扑深度上下展开,Viewport 节点放 Environment 列尾(给 ds.LogicalLength 一个落脚点)。
             AutoLayout.Apply(nodes, edges);
 
             return new GraphState(
@@ -119,30 +119,45 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
         //  节点构造
         // ==========================================
 
-        private static Node? TryCreateDataSourceNode(DataSourceModel dsm, Dictionary<string, (string, string)> globalIdToOutput)
+        private static Node? TryCreateDataSourceNode(DataSourceModel dsm, ChartBlueprint blueprint, Dictionary<string, (string, string)> globalIdToOutput)
         {
-            Type dsType;
-            try { dsType = ComponentRegistry.Resolve(dsm.TypeName); }
-            catch { Console.WriteLine($"[Graph 反序列化警告] DataSource '{dsm.TypeName}' 未登记,忽略整个数据源节点。"); return null; }
-
-            // NodeFactory 会反射出 ScalarMappings/VectorMappings 默认值,这里覆盖回蓝图里的具体 globalId。
-            var node = NodeFactory.CreateNode(dsType, new HevoPoint(0, 0));
-            if (dsm.ScalarMappings.Count > 0)
-                node.Properties["ScalarMappings"] = new Dictionary<string, string>(dsm.ScalarMappings);
-            if (dsm.VectorMappings.Count > 0)
-                node.Properties["VectorMappings"] = new Dictionary<string, string>(dsm.VectorMappings);
-            // DataSource 自己的 init 属性(MinuteCeiling 等)
-            foreach (var kv in dsm.Properties)
+            Type? dsType;
+            if (IsCompositeSentinel(dsm.TypeName))
             {
-                node.Properties[kv.Key] = kv.Value;
+                // Composite sentinel:从 UpstreamIds[0] 或 Upstreams[0] 反推 TItem 闭合 Composite<TItem>。
+                // 跟 BlueprintRunner.ResolveCompositeGenericTypeWithBlueprint 同款逻辑(编辑器加载也要一致)。
+                dsType = ResolveCompositeTypeForGraph(dsm, blueprint);
+                if (dsType == null)
+                {
+                    Console.WriteLine($"[Graph 反序列化警告] Composite '{dsm.Id}' 反推 TItem 失败,忽略整个节点。");
+                    return null;
+                }
+            }
+            else
+            {
+                try { dsType = ComponentRegistry.Resolve(dsm.TypeName); }
+                catch { Console.WriteLine($"[Graph 反序列化警告] DataSource '{dsm.TypeName}' 未登记,忽略整个数据源节点。"); return null; }
             }
 
-            // OutputPort → globalId 反查表:DataSource 用 ScalarMappings/VectorMappings 里 fieldName→globalId 映射。
+            var node = NodeFactory.CreateNode(dsType, new HevoPoint(0, 0));
+            // 节点 Id 优先取蓝图里的 Id,缺失时走 NodeFactory 自动生成的 Id(单 DS 蓝图老资产兜底)。
+            if (!string.IsNullOrEmpty(dsm.Id)) node = node with { Id = dsm.Id };
+            // DataSource 自己的 init 属性(MinuteCeiling / DefaultContext 等)
+            foreach (var kv in dsm.Properties) node.Properties[kv.Key] = kv.Value;
+            if (!string.IsNullOrEmpty(dsm.DefaultContext))
+                node.Properties["DefaultContext"] = dsm.DefaultContext!;
+
+            // OutputPort → globalId 反查表:DS 所有 output port globalId 都在 OutputBindings 里。
+            // 同时把 BindingId 写到 Port —— roundtrip 保留原始 binding 字符串(经 legacy alias 翻译)。
             foreach (var p in node.OutputPorts)
             {
-                if (dsm.ScalarMappings.TryGetValue(p.Id, out var gid) || dsm.VectorMappings.TryGetValue(p.Id, out gid))
-                    globalIdToOutput[gid] = (node.Id, p.Id);
+                if (dsm.OutputBindings.TryGetValue(p.Id, out var raw))
+                {
+                    var gid = PortBindingValue.ExtractSingle(raw);
+                    if (!string.IsNullOrEmpty(gid)) globalIdToOutput[gid] = (node.Id, p.Id);
+                }
             }
+            node = ApplyBindingIds(node, dsm.InputBindings, dsm.OutputBindings);
             return node;
         }
 
@@ -175,79 +190,119 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                 node.Properties[kv.Key] = kv.Value;
             }
 
-            // OutputPort → globalId 反查表:Feature 的输出端口在 fm.PortBindings 里也有条目
-            //(GraphSerializer 把每个 OutputPort 都写了 binding,所以这里能直接读)。
+            // Events 路由表:GraphState 的 Node 没有 Events 槽,搭车 Properties[__Events__] 透传往返。
+            // GraphSerializer.ToBlueprint 反向把它取回 fm.Events,业务侧编辑器保存 draft 后双击路由仍生效。
+            if (fm.Events != null && fm.Events.Count > 0)
+            {
+                node.Properties[FeatureModel.EventsPropertyKey] = new Dictionary<string, string>(fm.Events);
+            }
+
+            // §D2.X 多输入 + PlotFeature.SeriesOutputs:扫 PortBindings 里 "Inputs.{name}" / "SeriesOutputs.{name}"
+            // 这类 nested key,反查 Feature 上 Dictionary<string, DataPort<T>> 字段方向(PortDirection.Input / Output),
+            // 展开到 InputPorts 或 OutputPorts 对应一侧。否则下面 BuildFeatureInputEdges / Output 反查找不到
+            // 对应 port,边丢失,画布上看起来"指标节点没接输入/输出"。
+            node = AutoExpandDictPorts(node, fm, featureType);
+
+            // OutputPort → globalId 反查表:Feature 的 OutputPort globalId 都在 OutputBindings 里。
             foreach (var op in node.OutputPorts)
             {
-                if (fm.PortBindings.TryGetValue(op.Id, out var raw))
+                if (fm.OutputBindings.TryGetValue(op.Id, out var raw))
                 {
                     var gid = PortBindingValue.ExtractSingle(raw);
                     if (!string.IsNullOrEmpty(gid)) globalIdToOutput[gid] = (node.Id, op.Id);
                 }
             }
+            // 把 binding 字符串(经 legacy alias 翻译)写到对应 Port.BindingId,
+            // GraphState 一等数据,跨 serialize/deserialize roundtrip 原样保留。
+            node = ApplyBindingIds(node, fm.InputBindings, fm.OutputBindings);
             return node;
         }
 
-        // ==========================================
-        //  边重建
-        // ==========================================
-
-        private static void BuildDataSourceToViewportEdges(
-            DataSourceModel dsm, Node dsNode, Node viewportNode, List<Edge> edges)
+        /// <summary>
+        /// 把 binding 字符串(经 legacy alias 翻译)写到对应 Port.BindingId。
+        /// InputPort 从 <paramref name="inputBindings"/> 读;OutputPort 从 <paramref name="outputBindings"/> 读。
+        /// 数组扇入端口(IsArray)不走 BindingId —— BindingId 是单字符串容纳不了多源,数组端口靠 edges 反查兜底。
+        /// </summary>
+        private static Node ApplyBindingIds(Node node,
+            IReadOnlyDictionary<string, object?> inputBindings,
+            IReadOnlyDictionary<string, object?> outputBindings)
         {
-            // 仅 ScalarMappings → Viewport (LogicalLength / UserRange);VectorMappings 不接 Viewport。
-            foreach (var kv in dsm.ScalarMappings)
+            if ((inputBindings == null || inputBindings.Count == 0) && (outputBindings == null || outputBindings.Count == 0)) return node;
+
+            Port[]? newInputs = null;
+            for (int i = 0; i < node.InputPorts.Count; i++)
             {
-                var fieldName = kv.Key;
-                var gid = kv.Value;
-                if (gid != NodeFactory.ViewportLogicalLengthId && gid != NodeFactory.ViewportUserRangeId)
-                    continue;
-                var fromPort = dsNode.OutputPorts.FirstOrDefault(p => p.Id == fieldName);
-                if (fromPort == null) continue;
-                // 找 viewport 上的对应输入端口
-                var vpInputId = gid switch
-                {
-                    NodeFactory.ViewportLogicalLengthId => "LogicalLength",
-                    NodeFactory.ViewportUserRangeId => "UserRange",
-                    _ => null,
-                };
-                if (vpInputId == null) continue;
-                var toPort = viewportNode.InputPorts.FirstOrDefault(p => p.Id == vpInputId);
-                if (toPort == null) continue;
-                edges.Add(new Edge(
-                    Id: Guid.NewGuid().ToString("N").Substring(0, 8),
-                    FromNodeId: dsNode.Id, FromPortId: fromPort.Id,
-                    ToNodeId: viewportNode.Id, ToPortId: toPort.Id));
+                var p = node.InputPorts[i];
+                if (!inputBindings!.TryGetValue(p.Id, out var raw)) continue;
+                if (p.IsArray) continue;
+                var gid = PortBindingValue.ExtractSingle(raw);
+                if (string.IsNullOrEmpty(gid)) continue;
+                var migrated = BindingIdMigrator.Migrate(gid);
+                if (p.BindingId == migrated) continue;
+                newInputs ??= node.InputPorts.ToArray();
+                newInputs[i] = p with { BindingId = migrated };
             }
+
+            Port[]? newOutputs = null;
+            for (int i = 0; i < node.OutputPorts.Count; i++)
+            {
+                var p = node.OutputPorts[i];
+                if (!outputBindings!.TryGetValue(p.Id, out var raw)) continue;
+                var gid = PortBindingValue.ExtractSingle(raw);
+                if (string.IsNullOrEmpty(gid)) continue;
+                var migrated = BindingIdMigrator.Migrate(gid);
+                if (p.BindingId == migrated) continue;
+                newOutputs ??= node.OutputPorts.ToArray();
+                newOutputs[i] = p with { BindingId = migrated };
+            }
+
+            if (newInputs == null && newOutputs == null) return node;
+            return node with
+            {
+                InputPorts  = newInputs  ?? node.InputPorts,
+                OutputPorts = newOutputs ?? node.OutputPorts,
+            };
         }
 
-        private static void BuildFeatureInputEdges(
-            Node node, FeatureModel fm,
-            Dictionary<string, (string nodeId, string portId)> globalIdToOutput,
-            List<Edge> edges)
+        /// <summary>
+        /// §D2.X 反序列化时按 InputBindings / OutputBindings 里的 nested key("Inputs.high" / "SeriesOutputs.upper" / ...)
+        /// 展开节点的 child Port。按 Feature 上字段的 <see cref="PortDirection"/> 标注决定落到
+        /// InputPorts 还是 OutputPorts(默认 Input)。
+        /// </summary>
+        private static Node AutoExpandDictPorts(Node node, FeatureModel fm, Type featureType)
         {
-            var inputsById = node.InputPorts.ToDictionary(p => p.Id);
-            foreach (var kv in fm.PortBindings)
+            // 收集 nested keys 按 parent 字段分组 —— Input / Output 两字典都要扫
+            Dictionary<string, List<string>>? groups = null;
+            foreach (var kv in fm.InputBindings.Concat(fm.OutputBindings))
             {
-                if (!inputsById.TryGetValue(kv.Key, out var inputPort)) continue; // OUTPUT binding,跳过
-                // PortBindingValue 统一识别 string / list / JSON array / CSV(<v1 兼容)。
-                var ids = inputPort.IsArray
-                    ? PortBindingValue.ExtractList(kv.Value)
-                    : (IReadOnlyList<string>)new[] { PortBindingValue.ExtractSingle(kv.Value) };
-                foreach (var id in ids)
-                {
-                    if (string.IsNullOrEmpty(id)) continue;
-                    if (!globalIdToOutput.TryGetValue(id, out var src))
-                    {
-                        Console.WriteLine($"[Graph 反序列化警告] Feature {fm.TypeName}.{kv.Key} 引用 globalId '{id}' 未在任何 OutputPort 派出,边丢弃。");
-                        continue;
-                    }
-                    edges.Add(new Edge(
-                        Id: Guid.NewGuid().ToString("N").Substring(0, 8),
-                        FromNodeId: src.nodeId, FromPortId: src.portId,
-                        ToNodeId: node.Id, ToPortId: inputPort.Id));
-                }
+                int dot = kv.Key.IndexOf('.');
+                if (dot <= 0) continue;
+                var parent = kv.Key.Substring(0, dot);
+                var child = kv.Key.Substring(dot + 1);
+                groups ??= new Dictionary<string, List<string>>(StringComparer.Ordinal);
+                if (!groups.TryGetValue(parent, out var list)) { list = new List<string>(); groups[parent] = list; }
+                if (!list.Contains(child)) list.Add(child);
             }
+            if (groups == null) return node;
+
+            foreach (var (parent, children) in groups)
+            {
+                var pi = featureType.GetProperty(parent,
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.IgnoreCase);
+                if (pi == null) continue;
+                var pt = pi.PropertyType;
+                if (!pt.IsGenericType || pt.GetGenericTypeDefinition() != typeof(Dictionary<,>)) continue;
+                var args = pt.GetGenericArguments();
+                if (args[0] != typeof(string)) continue;
+                if (!args[1].IsGenericType || args[1].GetGenericTypeDefinition() != typeof(DataPort<>)) continue;
+                var portDataType = args[1].GetGenericArguments()[0];
+
+                var direction = PortMetadataRegistry.ResolveDirection(featureType, pi);
+                node = direction == PortDirection.Output
+                    ? NodeFactory.ExpandOutputSlots(node, parent, children, portDataType)
+                    : NodeFactory.ExpandInputSlots(node, parent, children, portDataType);
+            }
+            return node;
         }
 
         // ==========================================
@@ -256,16 +311,19 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
 
         private static bool BlueprintReferencesViewport(ChartBlueprint blueprint)
         {
-            if (blueprint.DataSource != null)
+            foreach (var dsm in blueprint.DataSources)
             {
-                foreach (var kv in blueprint.DataSource.ScalarMappings)
-                    if (IsViewportId(kv.Value)) return true;
+                foreach (var kv in dsm.OutputBindings)
+                {
+                    foreach (var id in PortBindingValue.ExtractList(kv.Value))
+                        if (IsViewportId(id)) return true;
+                }
             }
             foreach (var fm in blueprint.Features)
             {
-                foreach (var kv in fm.PortBindings)
+                // 单端口 / 扇入数组 / 老 CSV 一并枚举,任何一根碰到 well-known id 就 return。
+                foreach (var kv in fm.InputBindings.Concat(fm.OutputBindings))
                 {
-                    // 单端口 / 扇入数组 / 老 CSV 一并枚举,任何一根碰到 well-known id 就 return。
                     foreach (var id in PortBindingValue.ExtractList(kv.Value))
                         if (IsViewportId(id)) return true;
                 }
@@ -277,6 +335,59 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             id == NodeFactory.ViewportLogicalLengthId
          || id == NodeFactory.ViewportUserRangeId
          || id == NodeFactory.ViewportActiveRangeId;
+
+        // Composite sentinel 匹配:走 [BlueprintTypeAlias] 反查,canonical "Composite" 字面值集中在
+        // Composite<TItem> 类定义,framework 代码不再散布。容错 ".NET 反射格式 Composite`1" 由 helper 内部处理。
+        private static bool IsCompositeSentinel(string typeName) =>
+            BlueprintTypeAlias.MatchesAlias(typeName, typeof(Hevo.Charting.WorkFlow.Composite<>));
+
+        // Composite sentinel: 从 UpstreamRefs[0] 引用的上游 DS TypeName 反推 TItem,闭合 Composite<TItem>。
+        // node-wrap 模式后只剩这一条路径,inline spec 已废弃。
+        private static Type? ResolveCompositeTypeForGraph(DataSourceModel dsm, ChartBlueprint blueprint)
+        {
+            string? firstTypeName = null;
+            if (dsm.UpstreamRefs != null)
+            {
+                foreach (var id in dsm.UpstreamRefs)
+                {
+                    if (string.IsNullOrEmpty(id)) continue;
+                    var refDsm = blueprint.DataSources.FirstOrDefault(d => string.Equals(d.Id, id, StringComparison.Ordinal));
+                    if (refDsm != null) { firstTypeName = refDsm.TypeName; break; }
+                }
+            }
+            if (string.IsNullOrEmpty(firstTypeName)) return null;
+
+            Type upstreamType;
+            try { upstreamType = ComponentRegistry.Resolve(firstTypeName!); }
+            catch { return null; }
+
+            var itemType = NodeFactory.FindDataSourceItemType(upstreamType);
+            return itemType == null ? null
+                : typeof(Hevo.Charting.WorkFlow.Composite<>).MakeGenericType(itemType);
+        }
+
+        // 跟 BlueprintRunner.ExtractFirstString 同款多形态枚举(string[] / List<string> / JsonElement Array)。
+        // 目前 dsm.UpstreamRefs 是强类型 List<string>,这个 helper 暂时无主调用但留着以备业务侧蓝图扩展。
+        private static IEnumerable<string?> EnumerateStrings(object raw)
+        {
+            if (raw is System.Collections.IEnumerable en && raw is not string)
+            {
+                foreach (var item in en)
+                {
+                    if (item is string s) yield return s;
+                    else if (item is System.Text.Json.JsonElement el && el.ValueKind == System.Text.Json.JsonValueKind.String)
+                        yield return el.GetString();
+                }
+                yield break;
+            }
+            if (raw is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var item in je.EnumerateArray())
+                {
+                    if (item.ValueKind == System.Text.Json.JsonValueKind.String) yield return item.GetString();
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -353,14 +464,18 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             // 5. 派 (X, Y):每泳道独占 Y 行;X 用贪心 max(node.depth, lastColInLane + 1)。
             //    单节点泳道(DataSource / Axes / Series 通常 1 个节点)的 col 直接 = depth,
             //    跨泳道的边自然成 forward(右下)。
+            // 跟 LowCodeDemo / KLineDetailBlueprint 手写蓝图的 5 lane 排序对齐:
+            // 数据源在最上 → 环境/Trait 配置 → 坐标轴 → Series(含 Compute / Plot)→ 交互 在最下。
+            // Compute 节点(ComputeFeature / IncrementalComputeFeature 等)归入 Series 泳道,
+            // 跟 LineSeries 同行水平排开(Compute → LineSeries 数据流),不另起一行。
             var laneOrder = new[]
             {
                 FeatureCategory.DataSource,
+                FeatureCategory.Trait,
                 FeatureCategory.Environment,
                 FeatureCategory.Axes,
                 FeatureCategory.Series,
                 FeatureCategory.Interaction,
-                FeatureCategory.Trait,
                 FeatureCategory.Unknown,
             };
 

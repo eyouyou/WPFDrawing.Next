@@ -13,6 +13,17 @@ namespace Hevo.Charting.Tests
         {
             // 触发框架 + GraphViewer 内置 feature 登记;反射缓存预热也在这里跑过一遍。
             GraphViewerBootstrap.Initialize();
+            EnsureTestDataSourceRegistered();
+        }
+
+        // 测试自定义 DataSource 的全局登记入口 —— 跨测试类共享同一份注册。
+        // 多次 Register 是 idempotent(ComponentRegistry 内部以 alias 字典覆盖),无副作用。
+        private static bool _testDsRegistered;
+        public static void EnsureTestDataSourceRegistered()
+        {
+            if (_testDsRegistered) return;
+            _testDsRegistered = true;
+            Hevo.Charting.LowCode.Designer.ComponentRegistry.Register<TestDataSource>();
         }
     }
 

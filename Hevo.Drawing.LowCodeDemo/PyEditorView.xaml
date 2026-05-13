@@ -1,0 +1,118 @@
+<UserControl x:Class="Hevo.Drawing.LowCodeDemo.PyEditorView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:avalon="http://icsharpcode.net/sharpdevelop/avalonedit"
+             Background="#FF1A1B1F"
+             FontFamily="Segoe UI" FontSize="13">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="160"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Foreground="#FFC0C8D0" TextWrapping="Wrap" Margin="0,0,0,10">
+            <Run FontWeight="Bold" Foreground="#FF66BB6A">§D2.5.E2E Python 编辑器</Run>
+            <LineBreak/>
+            <Run Foreground="#FF8A929C">直接在 demo 内编辑 indicators 目录下的 .py 文件,保存即触发 PythonHandlerRegistry 热重载。
+                                          编辑完切到 "Python 指标" tab 点 ③ 实时推流即可看到新算法生效。</Run>
+        </TextBlock>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="240"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- 左侧文件列表 -->
+            <DockPanel Grid.Column="0" Background="#FF14161B">
+                <TextBlock DockPanel.Dock="Top" Text="indicators/"
+                           Foreground="#FF8A929C" Margin="8,8,8,4" FontFamily="Consolas"/>
+                <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="6,4,6,8">
+                    <Button x:Name="btnNew"    Content="+ 新建"  Padding="8,4" Margin="0,0,4,0"
+                            Background="#FF2A4A6E" Foreground="White" BorderBrush="#FF4FC3F7"/>
+                    <Button x:Name="btnDelete" Content="× 删除"  Padding="8,4" Margin="0,0,4,0"
+                            Background="#FF3A3C44" Foreground="#FFEF5350" BorderBrush="#FFEF5350"/>
+                    <Button x:Name="btnRefresh" Content="↻"     Padding="8,4"
+                            Background="#FF2A2C34" Foreground="#FFC0C8D0" BorderBrush="#FF3A3C44"/>
+                </StackPanel>
+                <ListBox x:Name="lstFiles" Background="#FF14161B" Foreground="#FFD0D8E0"
+                         BorderBrush="#FF2A2C34" BorderThickness="1" FontFamily="Consolas">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Padding" Value="2,2"/>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal">
+                                <CheckBox IsChecked="{Binding IsEnabled, Mode=TwoWay}"
+                                          VerticalAlignment="Center" Margin="2,0,8,0"
+                                          Foreground="#FFD0D8E0"/>
+                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center"
+                                           Foreground="{Binding Color}"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+
+            <!-- 中间 splitter -->
+            <GridSplitter Grid.Column="1" Width="3" HorizontalAlignment="Stretch"
+                          Background="#FF2A2C34" ResizeBehavior="PreviousAndNext"/>
+
+            <!-- 右侧编辑器 -->
+            <DockPanel Grid.Column="2">
+                <Grid DockPanel.Dock="Top" Margin="6,0,0,6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" x:Name="txtCurrentFile"
+                               Foreground="#FFC0C8D0" FontFamily="Consolas" FontSize="13"
+                               VerticalAlignment="Center" Text="(未选择文件)"/>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                        <Button x:Name="btnSave"         Content="💾 保存"          Padding="10,4" Margin="0,0,6,0"
+                                Background="#FF2A4A6E" Foreground="White" BorderBrush="#FF4FC3F7"/>
+                        <Button x:Name="btnSaveReload"   Content="💾 保存+热重载"   Padding="10,4" Margin="0,0,6,0"
+                                Background="#FF2A6E4A" Foreground="White" BorderBrush="#FF66BB6A"/>
+                        <Button x:Name="btnRevert"       Content="↶ 还原"          Padding="10,4"
+                                Background="#FF3A3C44" Foreground="#FFC0C8D0" BorderBrush="#FF3A3C44"/>
+                    </StackPanel>
+                </Grid>
+                <Border Margin="6,0,0,0" BorderBrush="#FF2A2C34" BorderThickness="1"
+                        Background="#FF0E0F12">
+                    <avalon:TextEditor x:Name="txtCode"
+                                       FontFamily="Consolas" FontSize="13"
+                                       Background="Transparent" Foreground="#FFD8E0E8"
+                                       ShowLineNumbers="True"
+                                       LineNumbersForeground="#FF505864"
+                                       WordWrap="False"
+                                       Padding="6,4">
+                        <avalon:TextEditor.Options>
+                            <avalon:TextEditorOptions ConvertTabsToSpaces="True"
+                                                      IndentationSize="4"
+                                                      EnableHyperlinks="False"
+                                                      EnableEmailHyperlinks="False"
+                                                      HighlightCurrentLine="True"/>
+                        </avalon:TextEditor.Options>
+                    </avalon:TextEditor>
+                </Border>
+            </DockPanel>
+        </Grid>
+
+        <TextBlock Grid.Row="2" x:Name="txtStatus" Foreground="#FF8A929C" Margin="0,8,0,4"
+                   Text="选择左侧文件开始编辑,Ctrl+S 保存,Ctrl+R 保存+重载"/>
+
+        <TextBox Grid.Row="3" x:Name="txtOutput" IsReadOnly="True"
+                 FontFamily="Consolas" FontSize="12"
+                 Background="#FF0E0F12" Foreground="#FFD0D8E0"
+                 BorderBrush="#FF2A2C34" BorderThickness="1"
+                 VerticalScrollBarVisibility="Auto"
+                 HorizontalScrollBarVisibility="Auto"
+                 AcceptsReturn="True" TextWrapping="NoWrap"
+                 Padding="8"/>
+    </Grid>
+</UserControl>

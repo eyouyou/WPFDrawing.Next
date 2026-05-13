@@ -137,6 +137,14 @@ namespace Hevo.Charting.Core
     public record DoubleSeriesDataTrait(params ReadOnlyMemory<double>[] FieldValues) : IVisualTrait;
 
     /// <summary>
+    /// 字符串版热数据切片,跟 <see cref="DoubleSeriesDataTrait"/> 平级 ——
+    /// 业务侧静态/慢变元数据(证券名称、行业、地区代码等)通过这条 trait 喂给 Tooltip / Header 等下游,
+    /// 走跟 double 指标完全一致的 "ActiveLayers 遍历 + MetaTrait 配对" 协议,不再走专用端口后门。
+    /// FieldValues 与 <see cref="MetaTrait.Fields"/> 一一对应:索引 i 的列对应第 i 个字段的字符串列。
+    /// </summary>
+    public record StringSeriesDataTrait(params ReadOnlyMemory<string>[] FieldValues) : IVisualTrait;
+
+    /// <summary>
     /// 动态颜色外挂包:只有红涨绿跌 / 多空底色这类业务才需要发布。
     /// Evaluator 签名 = (fieldIndex, localIndex) → IHevoBrush。
     /// 由 Series Feature 下发,Crosshair 圆点 / Header 颜色块从此处取色。

@@ -74,12 +74,17 @@ namespace Hevo.Charting.Benchmarks
         {
             var bp = new ChartBlueprint
             {
-                DataSource = new DataSourceModel
+                DataSources =
                 {
-                    TypeName = nameof(BenchmarkDataSource),
-                    VectorMappings = new Dictionary<string, string>
+                    new DataSourceModel
                     {
-                        ["Value"] = "ds_Value",
+                        Id = "primary",
+                        TypeName = nameof(BenchmarkDataSource),
+                        // schema §K 改名:DS 永远是 publish 方,字段绑定走 OutputBindings(原 PortBindings)。
+                        OutputBindings = new Dictionary<string, object?>
+                        {
+                            ["Value"] = "ds_Value",
+                        },
                     },
                 },
             };
@@ -89,7 +94,8 @@ namespace Hevo.Charting.Benchmarks
                 bp.Features.Add(new FeatureModel
                 {
                     TypeName = t.Name,
-                    PortBindings = new Dictionary<string, object?>(),
+                    // Feature 默认消费方;benchmark 只测 CreateNode/DryRun 端口元数据缓存路径,空字典即可。
+                    InputBindings = new Dictionary<string, object?>(),
                 });
             }
             return bp;
@@ -101,7 +107,7 @@ namespace Hevo.Charting.Benchmarks
         public double Value { get; set; }
     }
 
-    public class BenchmarkDataSource : DataSource<BenchmarkDataSource, BenchmarkDataItem>
+    public class BenchmarkDataSource : Hevo.Charting.BufferedDataSource<BenchmarkDataSource, BenchmarkDataItem>
     {
         public override int LogicalLength => 0;
     }

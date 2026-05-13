@@ -41,7 +41,32 @@ namespace Hevo.Charting.LowCode.Designer
 
         /// <summary>所有联动 cell 共享的右侧水平边距(像素)。</summary>
         public double HorizontalRightPixel { get; set; } = 0;
+
+        /// <summary>
+        /// dashboard 级共享端口声明 —— 每项实例化成 <see cref="Hevo.Charting.LowCode.DataPort{T}"/>,挂到
+        /// <see cref="Hevo.Charting.Linked.LinkedChartContext.SharedPorts"/> 注册表 + RegisterMirror。
+        /// <para>
+        /// 各 cell 的 <see cref="ChartBlueprint"/> 用 <c>"dashboard:{Name}"</c> 引用即获得跨 cell 同一 port 实例,
+        /// 写入自动镜像到所有 cell 的 board。典型用法:十字线 hit 状态联动(<c>"dashboard:linkedHit"</c>)、
+        /// 选中股票联动、跨 cell 时间范围 override 等。
+        /// </para>
+        /// <para>
+        /// <b>默认 <c>linkedHit</c></b>:即便此列表为空,<see cref="Hevo.Charting.Linked.LinkedChartContext"/> ctor 也
+        /// 兜底建一个 <c>linkedHit</c>(<c>DataPort&lt;PointerHitState?&gt;</c>)—— 向后兼容旧 dashboard JSON
+        /// 没显式声明 SharedPorts 但 master cell 默认拿来挂 hit 镜像桥的场景。
+        /// </para>
+        /// </summary>
+        public List<SharedPortModel> SharedPorts { get; set; } = new();
     }
+
+    /// <summary>
+    /// dashboard 级共享端口的声明(JSON 顶层 <c>SharedPorts: [...]</c> 里一项)。
+    /// </summary>
+    /// <param name="Name">逻辑名,跨 cell 唯一。binding 字符串 <c>"dashboard:{Name}"</c> 引用之。</param>
+    /// <param name="DataTypeName">承载数据类型的 .NET <c>Type.AssemblyQualifiedName</c>(或 <c>FullName</c>,反射时
+    /// <c>Type.GetType(typeName)</c> 能解就行)。典型:
+    /// <c>"System.Nullable`1[[Hevo.Charting.Features.PointerHitState, Hevo.Charting]]"</c>。</param>
+    public sealed record SharedPortModel(string Name, string DataTypeName);
 
     /// <summary>
     /// dashboard 内单个 cell 的描述。Blueprint 跟单 cell 同协议,Role 决定运行时怎么注入到

@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net8.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<LangVersion>preview</LangVersion>
+		<ImplicitUsings>enable</ImplicitUsings>
+
+		<Description>Hevo Trade 内存撮合 Mock 实装 —— 用于回测 / e2e 测试 / 离线开发,不连真实 broker。</Description>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Hevo.Trade.Abstractions\Hevo.Trade.Abstractions.csproj" />
+	</ItemGroup>
+
+</Project>

@@ -1,3 +1,4 @@
+using System.Reflection;
 using Hevo.Charting.Core;
 using Hevo.Charting.Features;
 using Hevo.Charting.LowCode;
@@ -31,9 +32,23 @@ namespace Hevo.Charting.Linked
         public ViewportPorts SharedViewport { get; } = new();
 
         /// <summary>
-        /// 共享 hit 端口——crosshair 同步的载体。
+        /// dashboard 级共享端口注册表 —— Key = 用户起的 shared name(如 "linkedHit"),
+        /// Value = 对应 <see cref="DataPort{T}"/> 实例(用作镜像桥的物理载体)。
+        /// <para>
+        /// ChartBlueprint.DefineFeatures 时按 <c>"dashboard:{name}"</c> 前缀注入 <c>_portRegistry</c>,
+        /// feature 蓝图 PortBinding 引用同名拿到同一实例。AttachBoard 自动给每个 board 挂 mirror 订阅。
+        /// </para>
+        /// <para>
+        /// ctor 兜底建一个 <c>linkedHit</c> (DataPort&lt;PointerHitState?&gt;) —— 向后兼容旧 LinkedHit 用法。
+        /// 业务侧典型扩展:DashboardLauncher 启动期从 Dashboard.SharedPorts 配置批量 <see cref="RegisterFromConfig"/>。
+        /// </para>
         /// </summary>
-        public DataPort<PointerHitState?> SharedHit { get; } = new("LinkedHit");
+        public Dictionary<string, IDataPort> SharedPorts { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// <b>向后兼容</b>:旧 API alias,等价 <c>SharedPorts["linkedHit"]</c>。新代码用 SharedPorts dict。
+        /// </summary>
+        public DataPort<PointerHitState?> SharedHit => (DataPort<PointerHitState?>)SharedPorts["linkedHit"];
 
         /// <summary>
         /// 所有 pane 必须使用相同的水平 layout 边距,crosshair 才能在垂直方向对齐。
@@ -42,18 +57,22 @@ namespace Hevo.Charting.Linked
         public ChartLength HorizontalRight { get; init; } = ChartLength.Pixel(0);
 
         // ── 端口镜像桥 ─────────────────────────────────────────────────────
-        // 列表锁定哪些 port 跨 cell 镜像。默认 4 个;业务方可通过 RegisterMirror 扩展。
+        // 列表锁定哪些 port 跨 cell 镜像。默认 4 个(viewport 3 + linkedHit);业务方可通过 RegisterMirror / RegisterFromConfig 扩展。
         private readonly List<IPortMirror> _mirrors;
         private readonly List<DataBlackboard> _boards = new();
 
         public LinkedChartContext()
         {
+            // 兜底:linkedHit shared port —— 跟旧 SharedHit 字段语义一致,JSON 没声明 SharedPorts 时仍 work。
+            var defaultHit = new DataPort<PointerHitState?>("linkedHit");
+            SharedPorts["linkedHit"] = defaultHit;
+
             _mirrors = new List<IPortMirror>
             {
                 PortMirror.For(SharedViewport.UserRange),
                 PortMirror.For(SharedViewport.ActiveRange),
                 PortMirror.For(SharedViewport.LogicalLength),
-                PortMirror.For(SharedHit),
+                PortMirror.For(defaultHit),
             };
         }
 
@@ -68,6 +87,38 @@ namespace Hevo.Charting.Linked
             _mirrors.Add(mirror);
             for (int i = 0; i < _boards.Count; i++)
                 mirror.SubscribeOn(_boards[i], _boards);
+        }
+
+        /// <summary>
+        /// 从 <see cref="Dashboard.SharedPorts"/> 配置批量建 DataPort + 注册 mirror。
+        /// 由 <see cref="LowCode.Designer.GraphViewer.DashboardLauncher.LaunchEx"/> 启动期调用。
+        /// 同名重复声明 → silently 跳过(ctor 默认建的 linkedHit 不会被覆盖,业务想换类型显式删 ctor 默认即可)。
+        /// </summary>
+        public void RegisterFromConfig(IReadOnlyList<LowCode.Designer.SharedPortModel> models)
+        {
+            if (models == null) return;
+            foreach (var m in models)
+            {
+                if (string.IsNullOrEmpty(m.Name)) continue;
+                if (SharedPorts.ContainsKey(m.Name)) continue; // 防 ctor 默认 linkedHit 被覆盖 / 重复声明
+
+                var dataType = Type.GetType(m.DataTypeName)
+                    ?? throw new InvalidOperationException(
+                        $"Dashboard.SharedPorts['{m.Name}'] DataTypeName='{m.DataTypeName}' 反射解析失败 —— " +
+                        "请用 AssemblyQualifiedName 或确保 Type.GetType 能解析的形态。");
+                var portType = typeof(DataPort<>).MakeGenericType(dataType);
+                var port = (IDataPort)Activator.CreateInstance(portType, m.Name)!;
+                SharedPorts[m.Name] = port;
+
+                // 反射调 PortMirror.For<T>(DataPort<T>) → 拿回 IPortMirror。
+                var portMirrorForMethod = typeof(PortMirror)
+                    .GetMethod(nameof(PortMirror.For), BindingFlags.Public | BindingFlags.Static)!
+                    .MakeGenericMethod(dataType);
+                var mirror = (IPortMirror)portMirrorForMethod.Invoke(null, new object[] { port })!;
+                _mirrors.Add(mirror);
+                for (int i = 0; i < _boards.Count; i++)
+                    mirror.SubscribeOn(_boards[i], _boards);
+            }
         }
 
         /// <summary>

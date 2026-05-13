@@ -31,6 +31,20 @@ namespace Hevo.Charting.Linked
         private readonly List<PaneSlot> _slots = new();
         private readonly record struct PaneSlot(ReactiveSchema Schema, ChartCell Cell);
 
+        /// <summary>
+        /// 当前所有 cell 的只读快照,顺序 = AddMaster / AddPane / AddRaw 加入顺序。
+        /// <para>给 DashboardLauncher 这种外部装配器拿出 cell 引用做后置 wiring 用(典型:per-cell <c>IsLoading</c> 翻牌)。</para>
+        /// </summary>
+        public IReadOnlyList<ChartCell> Cells
+        {
+            get
+            {
+                var list = new List<ChartCell>(_slots.Count);
+                for (int i = 0; i < _slots.Count; i++) list.Add(_slots[i].Cell);
+                return list;
+            }
+        }
+
         public LinkedChartDashboard(LinkedChartContext ctx)
         {
             Context = ctx;

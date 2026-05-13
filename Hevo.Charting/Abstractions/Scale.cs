@@ -7,11 +7,18 @@ namespace Hevo.Charting.Abstractions
     /// 用于表示坐标轴量程、视口范围或数据极值。
     /// 彻底解决 DoubleRange 命名的冲突问题。
     /// </summary>
+    /// <para>
+    /// <b>Min/Max 用 init-only property 不用 readonly field</b>:STJ 默认 IncludeFields=false,
+    /// readonly field 在 JSON round-trip 中会被忽略 → 蓝图 XDomain/YDomain 反序列化全得 default(0,0),
+    /// IsValid=false → scatter 画不出来。init-only property(C# 9,.NET 5+ 支持)语义上仍是
+    /// 不可变 struct(只能 ctor 或 with-expression 时赋值),但 STJ 默认序列化 properties + 通过
+    /// init setter 反序列化,**不需要任何 JsonConverter** 就能完美 round-trip。
+    /// </para>
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
     public readonly struct RealRange : IEquatable<RealRange>
     {
-        public readonly double Min;
-        public readonly double Max;
+        public double Min { get; init; }
+        public double Max { get; init; }
 
         public RealRange(double min, double max)
         {

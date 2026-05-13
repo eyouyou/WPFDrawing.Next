@@ -11,6 +11,9 @@ namespace Hevo.Drawing.LowCodeDemo
     public readonly struct SinWavePoint
     {
         [Port] public int Index { get; init; }
+        // X 轴用的"时间"轴 —— 跟 Index 一一对应,double 类型方便接 Crosshair/Tooltip 的
+        // DataPort<ReadOnlyMemory<double>> XAxisDataPort(int 类型不匹配会被蓝图侧 RegisterPortType 拒)。
+        [Port] public double Time { get; init; }
         [Port] public double Value { get; init; }
     }
 
@@ -30,6 +33,7 @@ namespace Hevo.Drawing.LowCodeDemo
                 items.Add(new SinWavePoint
                 {
                     Index = i,
+                    Time = i,
                     Value = Math.Sin(i * 2 * Math.PI / Points) * 100 + 200,
                 });
             UpdateBuffer(buf => { buf.Clear(); buf.AddRange(items); });

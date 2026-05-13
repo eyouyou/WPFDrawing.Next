@@ -1,0 +1,98 @@
+<Project>
+
+  <!-- §D2.5.7 嵌入 Python 运行时(共享 target,所有 WPF demo 项目 <Import> 复用)──────────
+       策略:Python312/ 不入版本控制(见 .gitignore),首次 build 自动调
+       scripts/setup-python.ps1 下载 embeddable zip + 装 pip/numpy(~30s 一次性)。
+       后续 build 用 robocopy 增量镜像到 bin\Python312\(~1s)。
+       团队成员 clone 后第一次 build 自动拉,无需手动操作。
+
+       在 demo csproj 里一行 import 即可:
+         <Import Project="$(MSBuildThisFileDirectory)..\build\EmbeddedPython.targets" />
+
+       变量约定:
+       - $(_PythonRepoRoot)  = 仓库根目录(带尾部斜杠)。如果项目不在仓库根的直接子目录,
+         在 Import 之前显式 set:<PropertyGroup><_PythonRepoRoot>$(...)</_PythonRepoRoot></PropertyGroup>
+         默认推断:csproj 上一级目录(适用 LowCodeDemo / MultiStockDemo / Hevo.Drawing/Sample 这种布局)。
+
+       ── "已部署" 判定:sentinel,不是 python.exe ──────────────────────────────
+       老版本用 `Exists('python.exe')` 判跳过 —— 上次 setup 跑到一半挂(_pth 写错 / pip
+       下不下来 / numpy 装不上)就会留下 python.exe + 坏环境,下次 build 直接跳过,坏 Python
+       被 robocopy 到 bin\ → demo 起来闪退("Fatal Python error: init_fs_encoding")。
+       现在跳过条件改为 `.hevo_setup_complete` sentinel —— 只有 setup-python.ps1 全程跑完
+       才写,半残状态识别得出来。 -->
+
+  <PropertyGroup>
+    <_PythonRepoRoot Condition="'$(_PythonRepoRoot)' == ''">$(MSBuildProjectDirectory)\..\</_PythonRepoRoot>
+    <_PythonHomeDir>$(_PythonRepoRoot)Python312</_PythonHomeDir>
+    <_PythonSentinel>$(_PythonHomeDir)\.hevo_setup_complete</_PythonSentinel>
+  </PropertyGroup>
+
+  <!-- 检测 helper:每次 target 体内运行时,filter ProjectReference 看有没有引 PythonNet。
+       ItemGroup 在 target 体内允许 %(Filename) metadata(顶层 ItemGroup 不允许 → MSB4190),
+       是把"按需启用"做成 0-行业务侧改动的关键缝合点。 -->
+
+  <!-- 1. 缺失则自动 setup(sentinel 不存在则跑)。 -->
+  <Target Name="BootstrapEmbeddedPython"
+          BeforeTargets="Build"
+          Condition="!Exists('$(_PythonSentinel)')">
+    <ItemGroup>
+      <_HevoPyRefMatched Include="@(ProjectReference)" Condition="'%(Filename)' == 'Hevo.Charting.PythonNet'" />
+    </ItemGroup>
+    <!-- 没引 PythonNet 的项目此 target 直接 no-op 退出。 -->
+    <Message Condition="'@(_HevoPyRefMatched)' != ''"
+             Importance="high" Text="⏬ 首次 build / 上次半残:scripts/setup-python.ps1 下载 + 部署 embeddable Python 3.12 + numpy(~30s)..." />
+    <Exec Condition="'@(_HevoPyRefMatched)' != ''"
+          Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(_PythonRepoRoot)scripts\setup-python.ps1&quot;"
+          ContinueOnError="false"
+          IgnoreExitCode="false" />
+    <!-- setup-python.ps1 跑完应该写 sentinel,没写说明脚本内部检测失败抛了 throw,
+         这里再 fail-fast 一次,把错误位置定位到 build 上(否则后面 robocopy 拷坏 Python 到 bin)。 -->
+    <Error Condition="'@(_HevoPyRefMatched)' != '' and !Exists('$(_PythonSentinel)')"
+           Text="setup-python.ps1 已退出但 sentinel '$(_PythonSentinel)' 未写 —— Python 部署半残,看上面脚本日志。" />
+  </Target>
+
+  <!-- 2. 增量镜像到 bin\Python312\(~2k 文件,robocopy 比 <None> ItemGroup 快 30 倍)。
+       Inputs/Outputs 增量短路:Output(目标 sentinel)比 Input(源 sentinel)新 → MSBuild 直接跳过
+       整个 target,连 robocopy 都不跑。重 build 同一项目无变化时,Python copy 0 开销。
+
+       用 sentinel 当 Inputs/Outputs 锚点而不是 python.exe ——
+       sentinel 永远是 setup 的最后一步,mtime 严格晚于 python.exe,增量判定更稳。
+
+       注意:Inputs/Outputs 求值用 $(OutDir),它在 PropertyGroup 时机已就位(不像
+       依赖 ItemGroup 的检测)。filter 仍在 target 体内做,跨 target 共享 _PythonDst。 -->
+  <PropertyGroup>
+    <_PythonDst>$(OutDir)Python312</_PythonDst>
+    <_PythonDstSentinel>$(_PythonDst)\.hevo_setup_complete</_PythonDstSentinel>
+  </PropertyGroup>
+
+  <Target Name="CopyEmbeddedPython"
+          AfterTargets="Build"
+          DependsOnTargets="BootstrapEmbeddedPython"
+          Condition="Exists('$(_PythonSentinel)')"
+          Inputs="$(_PythonSentinel)"
+          Outputs="$(_PythonDstSentinel)">
+    <ItemGroup>
+      <_HevoPyRefMatched Include="@(ProjectReference)" Condition="'%(Filename)' == 'Hevo.Charting.PythonNet'" />
+    </ItemGroup>
+    <!-- 默认 _RoboExit=0:Inputs/Outputs 增量短路时整个 target body 不跑,但 Error/Message
+         的 Condition 仍要解析,数值比较 '$(_RoboExit) >= 8' 在 _RoboExit 空时抛 MSB4086。
+         给个默认 0(成功)兜底,Exec 真跑时被 Output 覆盖。 -->
+    <PropertyGroup>
+      <_RoboExit>0</_RoboExit>
+    </PropertyGroup>
+    <!-- robocopy /MIR 镜像 + /XO 跳过同源 + /NFL /NDL /NJH /NJS 静默
+         exit code <8 不算失败(0=无变 / 1=拷了 / 3=拷+忽略 都是成功) -->
+    <Exec Condition="'@(_HevoPyRefMatched)' != ''"
+          Command="robocopy &quot;$(_PythonHomeDir)&quot; &quot;$(_PythonDst)&quot; /MIR /XO /NFL /NDL /NJH /NJS /R:1 /W:1"
+          IgnoreExitCode="true"
+          ContinueOnError="true"
+          ConsoleToMSBuild="false">
+      <Output TaskParameter="ExitCode" PropertyName="_RoboExit"/>
+    </Exec>
+    <Error Condition="'@(_HevoPyRefMatched)' != '' and '$(_RoboExit)' &gt;= '8'"
+           Text="robocopy 拷贝 Python312 失败(exit=$(_RoboExit))。看 build/EmbeddedPython.targets。" />
+    <Message Condition="'@(_HevoPyRefMatched)' != ''"
+             Importance="high" Text="✅ Python312 已同步到 $(_PythonDst) (robocopy exit=$(_RoboExit))" />
+  </Target>
+
+</Project>

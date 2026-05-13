@@ -110,7 +110,7 @@ public enum RenderMode { Software, Hardware, FooGfx }
 
 ## 历史教训(Skia 的痛)
 
-接 Skia 之前 review [07.Grid 宽度不均排查记录.md](07.Grid%20宽度不均排查记录.md):**SkiaSharp.Views.WPF 在 fullscreen 特定尺寸下 fill rect / stroke 路径都出现 ±1 列错位**,跨多种规避方案都复现,最终全员退回 WPF。
+接 Skia 之前已有完整排查记录：**SkiaSharp.Views.WPF 在 fullscreen 特定尺寸下 fill rect / stroke 路径都出现 ±1 列错位**,跨多种规避方案都复现,最终全员退回 WPF。
 
 接入新 backend 必须先做的验证(避免重蹈覆辙):
 

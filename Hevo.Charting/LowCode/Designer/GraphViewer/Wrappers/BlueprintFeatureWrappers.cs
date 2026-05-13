@@ -24,12 +24,12 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer.Wrappers
     /// <summary>
     /// <see cref="CrosshairFeature{TX}"/> 的蓝图友好基类:把 <see cref="CrosshairFeature{TX}.YTrackers"/>
     /// (<see cref="CrosshairYTrackInfo"/> record-struct 数组,夹带 <c>DataPort</c>)拍扁成三个并行数组,
-    /// 让 PortBindings 数组协议直接焊端口、Properties 注 metas/placements。
+    /// 让 InputBindings 数组协议直接焊端口、Properties 注 metas/placements。
     /// <para>
     /// 蓝图侧:
     /// </para>
     /// <code>
-    /// "PortBindings": {
+    /// "InputBindings": {
     ///   "HitStatePort":   "interaction_hit",
     ///   "XAxisDataPort":  "candle_time",
     ///   "YTrackerPorts":  ["yrange_main", "yrange_volume"]      // 数组协议,扇入 N 个 RangePort
@@ -113,11 +113,11 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer.Wrappers
     /// <see cref="CandleFeature"/> 的"扁平 5 端口"蓝图友好版。
     /// <para>
     /// CandleFeature.Ports 是 <see cref="CandlePorts"/> record (5 个 DataPort 的全家桶),
-    /// 而蓝图 PortBindings 协议只支持单 DataPort / DataPort[] 数组,无法直接焊一个 record-of-DataPort。
+    /// 而蓝图 InputBindings 协议只支持单 DataPort / DataPort[] 数组,无法直接焊一个 record-of-DataPort。
     /// 本 wrapper 把 5 个端口拍扁成独立 init 属性,蓝图侧:
     /// </para>
     /// <code>
-    /// "PortBindings": {
+    /// "InputBindings": {
     ///   "Time":  "candle_time",
     ///   "Open":  "candle_open",
     ///   "High":  "candle_high",

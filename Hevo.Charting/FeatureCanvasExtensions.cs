@@ -102,7 +102,8 @@ namespace Hevo.Charting
     public static class FeatureCanvasScopedExtensions
     {
         // --- 🌍 1. Environment ---
-        // Viewport 由 ReactiveSchema.Add 自动注入（L6 / §B.2.6），外部不再显式传 vp。
+        // Viewport 由 ChartFeature.InternalCompose 从 ViewportManagerFeature.Ports 自动注入,
+        // 外部不再显式传 vp。
         //
         // 参数：
         //   minVisibleCount: 最小可缩放到的根数（限制最大放大）
@@ -121,6 +122,11 @@ namespace Hevo.Charting
             OverscrollPolicy overscrollMin = OverscrollPolicy.Hard,
             OverscrollPolicy overscrollMax = OverscrollPolicy.Hard)
         {
+            // PortsFeature 由 ChartReactiveSchema(chart 中间层)在 EnsureBaseFeatures 阶段 framework
+            // 强制 ensure,本 helper 不再自助 add ——
+            // 否则 IsSingleton 替换会换掉 framework 实例,导致 OnAttached 时挂的 ports 跟其他 helper 引用
+            // (UniversalHeaderFeature 内部已经 capture 的)Viewport.LogicalLength 实例不一致 → 黑屏。
+            // 本 helper 只 IsSingleton 替换 VPM 配置钳制策略,业务侧调多次自动 reset 配置。
             builder.Canvas.Remove<ViewportManagerFeature>();
             builder.Canvas.Add(new ViewportManagerFeature
             {
@@ -155,11 +161,11 @@ namespace Hevo.Charting
             LineStyle? gridStyle = null)
         {
             if (!builder.Canvas.HasFeature<ViewportManagerFeature>()
-                && !builder.Canvas.HasFeature<Linked.ExternalViewportFeature>())
+                && !builder.Canvas.HasFeature<ViewportPortsFeature>(p => p.IsExternal))
                 throw new InvalidOperationException(
                     "请先在 Environment 阶段调用 env.SetupViewport(...) 配置视口策略。" +
                     "缺省 ViewportManager 已废弃 —— 隐式默认会让初始视口贴满数据，造成拖拽无反馈。" +
-                    "(联动副图通过 SchemaContext.LinkedPane 装饰,会自动挂 ExternalViewportFeature 标记)");
+                    "(联动副图通过 SchemaContext.LinkedPane 装饰,会把 ViewportPortsFeature.IsExternal 设为 true)");
 
             builder.Canvas.Add(new AxisFeature(
                 new DomainTickProvider<TX>(domainData, vp, meta.Format, meta.Provider, strategyFactory),
@@ -195,10 +201,10 @@ namespace Hevo.Charting
             LineStyle? gridStyle = null)
         {
             if (!builder.Canvas.HasFeature<ViewportManagerFeature>()
-                && !builder.Canvas.HasFeature<Linked.ExternalViewportFeature>())
+                && !builder.Canvas.HasFeature<ViewportPortsFeature>(p => p.IsExternal))
                 throw new InvalidOperationException(
                     "请先在 Environment 阶段调用 env.SetupViewport(...) 配置视口策略。" +
-                    "(联动副图通过 SchemaContext.LinkedPane 装饰自动挂 ExternalViewportFeature 标记)");
+                    "(联动副图通过 SchemaContext.LinkedPane 装饰,会把 ViewportPortsFeature.IsExternal 设为 true)");
 
             builder.Canvas.Add(new AxisFeature(
                 new ScheduleTickProvider(totalLengthProvider, indexToTime, meta.Format, meta.Provider, strategyFactory),
@@ -316,7 +322,7 @@ namespace Hevo.Charting
             });
             return builder;
         }
-        // Viewport 由 ReactiveSchema.Add 自动注入（L6 / §B.2.6），外部不再显式传 vp。
+        // Viewport 由 ChartFeature.InternalCompose 从 ViewportManagerFeature.Ports 自动注入（L6 / §B.2.6），外部不再显式传 vp。
         public static SeriesBuilder AddLine(this SeriesBuilder builder, DataPort<ReadOnlyMemory<double>> dataPort, DataPort<RealRange> rangePort, FieldMeta meta, double thickness = 1)
         {
             builder.Canvas.Add(new LineSeriesFeature
@@ -330,7 +336,7 @@ namespace Hevo.Charting
         }
 
         // --- 🖱️ 4. Interactions ---
-        // Viewport 由 ReactiveSchema.Add 自动注入（L6 / §B.2.6），外部不再显式传 vp。
+        // Viewport 由 ChartFeature.InternalCompose 从 ViewportManagerFeature.Ports 自动注入（L6 / §B.2.6），外部不再显式传 vp。
         public static InteractionBuilder EnableStandard<TX>(
                     this InteractionBuilder builder,
                     DataPort<ReadOnlyMemory<TX>> domainDataPort,
@@ -388,7 +394,7 @@ namespace Hevo.Charting
         /// <summary>
         /// 🖱️ 挂载基础指针交互 (负责拖拽、缩放、命中测试)
         /// </summary>
-        // Viewport 由 ReactiveSchema.Add 自动注入（L6 / §B.2.6），外部不再显式传 vp。
+        // Viewport 由 ChartFeature.InternalCompose 从 ViewportManagerFeature.Ports 自动注入（L6 / §B.2.6），外部不再显式传 vp。
         public static InteractionBuilder EnableStandardPointer(
             this InteractionBuilder builder,
             DataPort<PointerHitState?> hitPort,

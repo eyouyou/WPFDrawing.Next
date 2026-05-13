@@ -56,6 +56,10 @@ namespace Hevo.Charting.DevTools
             return nodes;
         }
 
+        // 暴露给 TopologyInspectorControl 用的 wrapper —— 同 ExtractPorts 但 public。
+        // 直接把私有方法改 public 怕回归测试有别处依赖私有签名,所以新加 public 方法委托过去。
+        public static List<IDataPort> ExtractPortsPublic(object target) => ExtractPorts(target);
+
         private static List<IDataPort> ExtractPorts(object target)
         {
             var res = new List<IDataPort>();
@@ -113,9 +117,155 @@ namespace Hevo.Charting.DevTools
 
         public const string PIPE_ID = "PIPE";
 
+        // ─── port id → owner feature id ───
+        // 静态扫描期(TopologyScanner.Scan)记录"这根 port 是哪个 feature 声明的",
+        // BuildPortDisplayMap 拿 writer 为空时回退到 owner,给孤儿 port(declared 但没被读写过的)
+        // 添加 "Owner › PortName" 前缀,user 不必猜端口属于谁。
+        public readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> PortOwner = new();
+
         // ConcurrentDictionary.AddOrUpdate 的工厂闭包做成 static field,跨调用复用。
         // 没标 static 的 lambda 即使没捕获也可能每次 new(看编译器 codegen),显式 static 锁死。
         private static readonly Func<(string, string), int, int> s_incrementFactory = static (_, count) => count + 1;
+
+        // ─── 关键事件时间线(永久层)───────────────────────────────────────────
+        // 用户右键打开 inspector 是滞后行为,他想看的是"从 schema compose 到现在到底发生了啥"。
+        // LinkHits / LastHitTicks 只能告诉他 "现在累计 1500 次命中、最近 15ms 前命中过",
+        // 说不出 "T+5s feature 成功 composed,T+8s Latest 第一次写,T+22s 之后 Latest 就没再写过" 这种时序。
+        // 所以单独再开一个 ring buffer 记关键事件,跟高频 Read/Write 命中分开装,后者将来另起 Activity 层。
+
+        public enum EventKind
+        {
+            ComposeStart,         // schema BuildAndActivatePipeline 开始
+            FeatureComposed,      // 单个 feature 成功 InternalCompose 后
+            FeatureShortCircuit,  // 单个 feature OnCompose 内提前 return(委托缺 / spec 缺等,框架记 detect 点)
+            ComposeEnd,           // 全部 feature compose 完成
+            FirstPortWrite,       // 端口第一次被写入(下游可见数据的瞬间;后续重复 write 进 Activity 层不刷这)
+            HandlerMissing,       // 蓝图引用了但 registry 未注册的 handler 名(throw 之前埋,inspector 仍可见)
+            DataSourcePublish,    // DataSource.Stream 推一次 snapshot(LoadAsync 完成 / 心跳 RefreshAsync 等的下游入口)
+        }
+
+        public readonly struct TimelineEvent
+        {
+            /// <summary>相对 Tracer 创建那一刻的 Stopwatch ticks 偏移,UI 渲染时 / Frequency = 秒。</summary>
+            public readonly long TicksFromStart;
+            public readonly EventKind Kind;
+            public readonly string TargetId;
+            public readonly string? Summary;
+            public TimelineEvent(long ticks, EventKind kind, string target, string? summary)
+            {
+                TicksFromStart = ticks; Kind = kind; TargetId = target; Summary = summary;
+            }
+        }
+
+        private readonly long _startTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        public long StartTicks => _startTicks;
+        public long ElapsedTicks => System.Diagnostics.Stopwatch.GetTimestamp() - _startTicks;
+
+        private const int KEY_EVENTS_CAP = 500;
+        public readonly System.Collections.Concurrent.ConcurrentQueue<TimelineEvent> KeyEvents = new();
+
+        // 跟踪每根 port 是否已经记过 FirstPortWrite —— 后续 RecordWrite 重复触发不再进 KeyEvents。
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _seenPortFirstWrite = new();
+
+        // ─── 高频活动层 ─── (per-port write/read 计数 + bucketed 时间序列)
+        // 每根 port 一个 cumulative 计数,RecordWrite/Read 路径上 ConcurrentDictionary.AddOrUpdate 一次,
+        // 实测 sub-100ns,DEBUG 路径承受得住 60Hz × 100 port。Inspector 每帧调 SampleActivity 把
+        // 累计差量塞进 ring buffer,渲染时按时间轴铺开。
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _portWriteCount = new();
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _portReadCount  = new();
+
+        public readonly System.Collections.Concurrent.ConcurrentDictionary<string, ActivityRing> PortActivity = new();
+
+        public sealed class ActivityRing
+        {
+            // 240 桶 × 500ms = 120 秒窗口。开 inspector 晚于此就丢老桶 ——
+            // 用户看不到 2 分钟之前的活动,但稳态调试够用。需要更长再调 CAP 或 BucketMs。
+            public const int CAP = 240;
+            public const int BucketMs = 500;
+
+            // 每桶记 (相对 schema start 的 ticks, 该桶 500ms 内 写入次数, 读取次数)。
+            // ring buffer:Head 指向下一个待写位置,Count 累计有效条数(到 CAP 后恒等于 CAP)。
+            public readonly long[] BucketTicks = new long[CAP];
+            public readonly int[] WriteDelta   = new int[CAP];
+            public readonly int[] ReadDelta    = new int[CAP];
+            public int Head;
+            public int Count;
+
+            public int LastTotalWrites;
+            public int LastTotalReads;
+
+            // 用 Stopwatch ticks 计数,跟 _startTicks 同源。
+            public long LastSampleTicks;
+        }
+
+        // SampleActivity 内部限流:多次调用同一帧只生成一条桶。
+        private long _lastActivitySampleTicks = 0;
+        private static readonly long s_bucketTicks =
+            ActivityRing.BucketMs * System.Diagnostics.Stopwatch.Frequency / 1000;
+
+        /// <summary>
+        /// Inspector 每帧调一次。内部按 BucketMs 限流 ——
+        /// 距离上次采样不到 500ms 直接 no-op,避免重复 enqueue 同一桶。
+        /// 60Hz × 这一段也就 ~微秒级 dictionary scan,纯 DEBUG 路径不在乎。
+        /// </summary>
+        public void SampleActivity()
+        {
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (now - _lastActivitySampleTicks < s_bucketTicks) return;
+            _lastActivitySampleTicks = now;
+            long elapsed = now - _startTicks;
+
+            // 把所有出现过的 port id 取并集,确保每根都生成桶 —— 即使本桶 read/write delta 都是 0。
+            // 桶位 BucketTicks 必须每帧都更新,渲染时才能区分"安静的桶"和"丢失的桶"。
+            var seen = new HashSet<string>();
+            foreach (var k in _portWriteCount.Keys) seen.Add(k);
+            foreach (var k in _portReadCount.Keys)  seen.Add(k);
+
+            foreach (var pid in seen)
+            {
+                var ring = PortActivity.GetOrAdd(pid, static _ => new ActivityRing());
+                int wcur = _portWriteCount.GetValueOrDefault(pid);
+                int rcur = _portReadCount.GetValueOrDefault(pid);
+
+                ring.WriteDelta[ring.Head]  = wcur - ring.LastTotalWrites;
+                ring.ReadDelta[ring.Head]   = rcur - ring.LastTotalReads;
+                ring.BucketTicks[ring.Head] = elapsed;
+
+                ring.LastTotalWrites = wcur;
+                ring.LastTotalReads  = rcur;
+                ring.LastSampleTicks = now;
+
+                ring.Head = (ring.Head + 1) % ActivityRing.CAP;
+                if (ring.Count < ActivityRing.CAP) ring.Count++;
+            }
+        }
+
+        /// <summary>
+        /// 记一条关键事件(永不 evict,直到 cap 才 dequeue 最旧)。线程安全,埋点零分配除入队本身。
+        /// </summary>
+        public void RecordKeyEvent(EventKind kind, string targetId, string? summary = null)
+        {
+            var ticks = System.Diagnostics.Stopwatch.GetTimestamp() - _startTicks;
+            KeyEvents.Enqueue(new TimelineEvent(ticks, kind, targetId, summary));
+            // ConcurrentQueue 没有 cap,手动 trim;允许临时超过 cap 几条(并发场景),不严格。
+            while (KeyEvents.Count > KEY_EVENTS_CAP) KeyEvents.TryDequeue(out _);
+        }
+
+        /// <summary>读出当前所有关键事件副本(按入队顺序,即时间序)。Inspector 渲染前调一次。</summary>
+        public TimelineEvent[] DumpKeyEvents() => KeyEvents.ToArray();
+
+        /// <summary>事件类别 → 简短标签(UI 时间线列表用)。</summary>
+        public static string EventKindShort(EventKind k) => k switch
+        {
+            EventKind.ComposeStart        => "Compose 开始",
+            EventKind.ComposeEnd          => "Compose 完成",
+            EventKind.FeatureComposed     => "Feature 接入",
+            EventKind.FeatureShortCircuit => "Feature 短路",
+            EventKind.FirstPortWrite      => "首次写入",
+            EventKind.HandlerMissing      => "Handler 缺失",
+            EventKind.DataSourcePublish   => "数据源 Publish",
+            _                             => k.ToString(),
+        };
 
         public TopologyTracer() { NodeMetadata[PIPE_ID] = ("DataPipe (数据源)", 0); }
 
@@ -148,10 +298,30 @@ namespace Hevo.Charting.DevTools
             RegisterNode(fullId, displayName, 1);
             LinkHits.AddOrUpdate((fullId, fId), 1, s_incrementFactory);
 
+            // 高频 port 累计计数 —— SampleActivity 取差量打桶。
+            _portReadCount.AddOrUpdate(fullId, 1, static (_, c) => c + 1);
+
             // 端口被读 → 端口节点亮一下;feature 也算"参与命中"。
             long now = System.Diagnostics.Stopwatch.GetTimestamp();
             LastHitTicks[fullId] = now;
             LastHitTicks[fId] = now;
+        }
+
+        // port id → (displayName, T 类型名, 最近一次写入的 value)。RecordWriteWithValue 路径上更新。
+        // 缓存这份让 Inspector dump 时跟 board 生命周期解耦 —— 蓝图常见 one-shot 数据源 push 完
+        // 订阅链 disposed → boardStream 触发 _pipe.Dispose → board.Dispose,但 schema 不会自己把 _latestBoard
+        // 清成 null,Inspector 从 board 读到的是悬挂 disposed 引用。改从 tracer 这边读最后已知值,绕开 lifecycle 坑。
+        public readonly ConcurrentDictionary<string, (string DisplayName, string TypeName, object? Value)> LastValues = new();
+
+        /// <summary>
+        /// RecordWrite 的强类型重载:除了原拓扑/计数逻辑,还把 value 缓存进 LastValues。
+        /// DEBUG ForceWrite 路径调,box value(值类型)在 DEBUG 路径可接受。
+        /// </summary>
+        public void RecordWriteWithValue<T>(DataPort<T> port, T value)
+        {
+            if (port == null) return;
+            RecordWrite(port);
+            LastValues[port.Id] = (port.DisplayName, typeof(T).Name, value);
         }
 
         public void RecordWrite(object port)
@@ -164,6 +334,16 @@ namespace Hevo.Charting.DevTools
 
             long now = System.Diagnostics.Stopwatch.GetTimestamp();
             LastHitTicks[fullId] = now;
+
+            // 高频 port 累计计数 —— SampleActivity 取差量打桶。
+            _portWriteCount.AddOrUpdate(fullId, 1, static (_, c) => c + 1);
+
+            // 端口第一次写 → 关键事件层留一笔。后续重复 write 走原 LinkHits / LastHitTicks 路径,
+            // 不再进 KeyEvents 避免被 60Hz 写入刷爆。
+            if (_seenPortFirstWrite.TryAdd(fullId, 0))
+            {
+                RecordKeyEvent(EventKind.FirstPortWrite, fullId, displayName);
+            }
 
             if (caller != null)
             {

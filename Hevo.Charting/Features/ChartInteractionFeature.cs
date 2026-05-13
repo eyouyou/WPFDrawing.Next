@@ -162,8 +162,10 @@ namespace Hevo.Charting.Features
         /// <summary>光标越界策略。Free = 越界自由;SnapToValidData = 强制吸附到首/末根有效数据。</summary>
         public PointerOutOfBoundsStrategy PointerSnapMode { get; init; } = PointerOutOfBoundsStrategy.Free;
 
-        /// <summary>滚轮缩放算法实现。SmartAdaptive 默认会根据 hit 锚点 / 撞墙状态动态切策略。</summary>
-        public IZoomStrategy ZoomStrategy { get; init; } = new SmartAdaptiveZoomStrategy();
+        /// <summary>滚轮缩放算法实现。SmartAdaptive 默认会根据 hit 锚点 / 撞墙状态动态切策略。
+        /// <para>默认用 <see cref="SmartAdaptiveZoomStrategy.Instance"/> 单例,这样蓝图编辑器的
+        /// 接口下拉(NodeEditorWindow.MakeInterfaceInstancePicker)按 ReferenceEquals 找选中项能命中。</para></summary>
+        public IZoomStrategy ZoomStrategy { get; init; } = SmartAdaptiveZoomStrategy.Instance;
 
         /// <summary>滚轮缩放参数(灵敏度等)。</summary>
         public ZoomOptions ZoomConfig { get; init; } = new();

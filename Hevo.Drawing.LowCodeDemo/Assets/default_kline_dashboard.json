@@ -1,0 +1,379 @@
+{
+  "SharedPorts": [
+    {
+      "Name": "linkedHit",
+      "DataTypeName": "System.Nullable`1[[Hevo.Charting.Features.PointerHitState, Hevo.Charting]]"
+    }
+  ],
+  "Cells": [
+    {
+      "Id": "main",
+      "Role": 0,
+      "HeightRatio": 3,
+      "Blueprint": {
+        "DataSources": [
+          {
+            "Id": "primary",
+            "TypeName": "MockKLineDataSource",
+            "Properties": {},
+            "DefaultContext": "demo",
+            "OutputBindings": {
+              "LogicalLength": "cell:viewport.logicalLength",
+              "Time":   "m_Times",
+              "Open":   "m_Opens",
+              "High":   "m_Highs",
+              "Low":    "m_Lows",
+              "Close":  "m_Closes"
+            }
+          }
+        ],
+        "InitialTraits": [
+          { "TraitTypeName": "ScaleStrategyTrait", "Preset": "CandleMode", "Properties": {} }
+        ],
+        "Features": [
+          { "TypeName": "GridLayoutFeature",
+            "Properties": {
+              "Left":   { "Value": 60, "UnitType": 0, "MinValue": 0 },
+              "Top":    { "Value": 24, "UnitType": 0, "MinValue": 0 },
+              "Right":  { "Value": 0,  "UnitType": 0, "MinValue": 0 },
+              "Bottom": { "Value": 24, "UnitType": 0, "MinValue": 0 }
+            }
+          },
+          { "TypeName": "PlotAreaDecorFeature",
+            "Properties": {
+              "BackgroundBrush": { "kind": "solid", "color": "#14161B" },
+              "BorderStyle": { "LinePen": { "Brush": { "kind": "solid", "color": "#444444" }, "Thickness": 1, "IsAntialias": true }, "UseSpline": false, "SplineDetail": 8 }
+            }
+          },
+          { "TypeName": "ViewportManagerFeature",
+            "Properties": {
+              "MinVisibleCount": 10,
+              "DefaultVisibleCount": 120,
+              "Alignment":     "RightEdge",
+              "OverscrollMax": "Hard",
+              "OverscrollMin": "Hard"
+            }
+          },
+          { "TypeName": "UniversalAutoScaleFeature",
+            "Properties": { "PaddingRatio": 0.05 },
+            "InputBindings": {
+              "ValuePorts": [ "m_Highs", "m_Lows" ]
+            },
+            "OutputBindings": {
+              "YRangePort":     "m_YRange",
+              "BaseLinePort":   "m_BaseLine",
+              "RawExtremaPort": "m_RawExtrema"
+            }
+          },
+          { "TypeName": "CandleBlueprintFeature",
+            "Properties": {},
+            "InputBindings": {
+              "Time":       "m_Times",
+              "Open":       "m_Opens",
+              "High":       "m_Highs",
+              "Low":        "m_Lows",
+              "Close":      "m_Closes",
+              "YRangePort": "m_YRange"
+            }
+          },
+          { "TypeName": "AxisFeature",
+            "Properties": {
+              "Mapping": 1, "Format": "F2",
+              "AxisStyle": {
+                "Placement": 2,
+                "TextBrush": { "kind": "solid", "color": "#B0BEC5" },
+                "FontSize": 11,
+                "Typeface": { "FontFamily": "Microsoft YaHei", "FontWeight": 400, "IsItalic": false },
+                "BaseLineStyle": null, "TickLabelOffset": 5, "TickMarkLength": 4, "CustomPhysicalAnchor": null, "AbsoluteAnchor": 0
+              }
+            },
+            "InputBindings": { "RangePort": "m_YRange" }
+          },
+          { "TypeName": "ChartInteractionFeature",
+            "Properties": {
+              "ZoomStrategy": { "kind": "crosshairAnchor" },
+              "PointerSnapMode": 0,
+              "RequireClickToActivate": true,
+              "DismissOnEscape": true
+            },
+            "OutputBindings": {
+              "PointerHitPort": "dashboard:linkedHit"
+            }
+          },
+          { "TypeName": "CrosshairDateTimeFeature",
+            "Properties": { "ShowIntersectionDots": false },
+            "InputBindings": {
+              "HitStatePort":  "dashboard:linkedHit",
+              "XAxisDataPort": "m_Times"
+            }
+          },
+          { "TypeName": "TooltipDateTimeWidgetFeature",
+            "Properties": {
+              "XMeta": {
+                "Name": {},
+                "Resolver": { "ConstantBrush": { "kind": "solid", "color": "#FFFFFF" } },
+                "Format": "yyyy-MM-dd HH:mm",
+                "Provider": null
+              }
+            },
+            "InputBindings": {
+              "HitStatePort":  "dashboard:linkedHit",
+              "XAxisDataPort": "m_Times"
+            }
+          },
+          { "TypeName": "UniversalHeaderFeature",
+            "Properties": {},
+            "InputBindings": { "HitStatePort": "dashboard:linkedHit" }
+          },
+          { "TypeName": "DomainAxisDateTimeFeature",
+            "Properties": {
+              "Mapping": 0, "IsShared": false, "DomainLabelFormat": "MM-dd HH:mm",
+              "AxisStyle": {
+                "Placement": 1,
+                "TextBrush": { "kind": "solid", "color": "#B0BEC5" },
+                "FontSize": 11,
+                "Typeface": { "FontFamily": "Microsoft YaHei", "FontWeight": 400, "IsItalic": false },
+                "BaseLineStyle": null, "TickLabelOffset": 5, "TickMarkLength": 4, "CustomPhysicalAnchor": null, "AbsoluteAnchor": 0
+              }
+            },
+            "InputBindings": {
+              "RangePort":      "cell:viewport.active",
+              "DomainDataPort": "m_Times"
+            }
+          }
+        ],
+        "Triggers": []
+      }
+    },
+
+    {
+      "Id": "volume",
+      "Role": 1,
+      "HeightRatio": 1,
+      "Blueprint": {
+        "DataSources": [
+          {
+            "Id": "primary",
+            "TypeName": "MockKLineDataSource",
+            "Properties": {},
+            "DefaultContext": "demo",
+            "OutputBindings": {
+              "LogicalLength": "cell:viewport.logicalLength",
+              "Time":   "v_Times",
+              "Volume": "v_Volumes"
+            }
+          }
+        ],
+        "InitialTraits": [
+          { "TraitTypeName": "ScaleStrategyTrait", "Preset": "CandleMode", "Properties": {} }
+        ],
+        "Features": [
+          { "TypeName": "GridLayoutFeature",
+            "Properties": {
+              "Left":   { "Value": 60, "UnitType": 0, "MinValue": 0 },
+              "Top":    { "Value": 24, "UnitType": 0, "MinValue": 0 },
+              "Right":  { "Value": 0,  "UnitType": 0, "MinValue": 0 },
+              "Bottom": { "Value": 4,  "UnitType": 0, "MinValue": 0 }
+            }
+          },
+          { "TypeName": "PlotAreaDecorFeature",
+            "Properties": {
+              "BackgroundBrush": { "kind": "solid", "color": "#14161B" },
+              "BorderStyle": { "LinePen": { "Brush": { "kind": "solid", "color": "#444444" }, "Thickness": 1, "IsAntialias": true }, "UseSpline": false, "SplineDetail": 8 }
+            }
+          },
+          { "TypeName": "UniversalAutoScaleFeature",
+            "Properties": { "PaddingRatio": 0.05 },
+            "InputBindings": {
+              "ValuePorts": [ "v_Volumes" ]
+            },
+            "OutputBindings": {
+              "YRangePort":     "v_YRange",
+              "BaseLinePort":   "v_BaseLine",
+              "RawExtremaPort": "v_RawExtrema"
+            }
+          },
+          { "TypeName": "BarSeriesFeature",
+            "Properties": {
+              "BarWidthRatio": 0.6,
+              "Meta": {
+                "Name": { "kind": "literal", "text": "成交量" },
+                "Resolver": { "ConstantBrush": { "kind": "solid", "color": "#4FC3F7" } },
+                "Format": "F0",
+                "Provider": null
+              }
+            },
+            "InputBindings": {
+              "DataPort":   "v_Volumes",
+              "YRangePort": "v_YRange"
+            }
+          },
+          { "TypeName": "ChartInteractionFeature",
+            "Properties": {
+              "SupportedModes": 1,
+              "RequireClickToActivate": false
+            },
+            "OutputBindings": {
+              "PointerHitPort": "dashboard:linkedHit"
+            }
+          },
+          { "TypeName": "AxisFeature",
+            "Properties": {
+              "Mapping": 1, "Format": "F0",
+              "AxisStyle": {
+                "Placement": 2,
+                "TextBrush": { "kind": "solid", "color": "#B0BEC5" },
+                "FontSize": 11,
+                "Typeface": { "FontFamily": "Microsoft YaHei", "FontWeight": 400, "IsItalic": false },
+                "BaseLineStyle": null, "TickLabelOffset": 5, "TickMarkLength": 4, "CustomPhysicalAnchor": null, "AbsoluteAnchor": 0
+              }
+            },
+            "InputBindings": { "RangePort": "v_YRange" }
+          },
+          { "TypeName": "CrosshairDateTimeFeature",
+            "Properties": { "ShowIntersectionDots": false },
+            "InputBindings": {
+              "HitStatePort":  "dashboard:linkedHit",
+              "XAxisDataPort": "v_Times"
+            }
+          },
+          { "TypeName": "UniversalHeaderFeature",
+            "Properties": {},
+            "InputBindings": { "HitStatePort": "dashboard:linkedHit" }
+          }
+        ],
+        "Triggers": []
+      }
+    },
+
+    {
+      "Id": "strategy",
+      "Role": 1,
+      "HeightRatio": 2,
+      "Blueprint": {
+        "DataSources": [
+          {
+            "Id": "primary",
+            "TypeName": "MockKLineDataSource",
+            "Properties": {},
+            "DefaultContext": "demo",
+            "OutputBindings": {
+              "LogicalLength": "cell:viewport.logicalLength",
+              "Time":   "s_Times",
+              "Close":  "s_Closes"
+            }
+          }
+        ],
+        "InitialTraits": [
+          { "TraitTypeName": "ScaleStrategyTrait", "Preset": "CandleMode", "Properties": {} }
+        ],
+        "Features": [
+          { "TypeName": "GridLayoutFeature",
+            "Properties": {
+              "Left":   { "Value": 60, "UnitType": 0, "MinValue": 0 },
+              "Top":    { "Value": 4,  "UnitType": 0, "MinValue": 0 },
+              "Right":  { "Value": 0,  "UnitType": 0, "MinValue": 0 },
+              "Bottom": { "Value": 24, "UnitType": 0, "MinValue": 0 }
+            }
+          },
+          { "TypeName": "PlotAreaDecorFeature",
+            "Properties": {
+              "BackgroundBrush": { "kind": "solid", "color": "#14161B" },
+              "BorderStyle": { "LinePen": { "Brush": { "kind": "solid", "color": "#444444" }, "Thickness": 1, "IsAntialias": true }, "UseSpline": false, "SplineDetail": 8 }
+            }
+          },
+          { "TypeName": "UniversalAutoScaleFeature",
+            "Properties": { "PaddingRatio": 0.25 },
+            "InputBindings": {
+              "ValuePorts": [ "s_Closes", "s_BB_Upper", "s_BB_Middle", "s_BB_Lower" ]
+            },
+            "OutputBindings": {
+              "YRangePort":     "s_YRange",
+              "BaseLinePort":   "s_BaseLine",
+              "RawExtremaPort": "s_RawExtrema"
+            }
+          },
+          { "TypeName": "LineSeriesFeature",
+            "Properties": {
+              "LayerName": "Close",
+              "MetaName": "收盘", "MetaColor": "#4FC3F7", "MetaFormat": "F2",
+              "Style": { "LinePen": { "Brush": { "kind": "solid", "color": "#4FC3F7" }, "Thickness": 1.0, "IsAntialias": true }, "UseSpline": false, "SplineDetail": 8 }
+            },
+            "InputBindings": {
+              "DataPort":   "s_Closes",
+              "YRangePort": "s_YRange"
+            }
+          },
+          { "TypeName": "PlotFeature",
+            "Properties": {
+              "IndicatorName": "bb_breakout",
+              "Indicator":     "bb_breakout"
+            },
+            "InputBindings": {
+              "InputPort":  "s_Closes",
+              "YRangePort": "s_YRange"
+            },
+            "OutputBindings": {
+              "SeriesOutputs.upper":  "s_BB_Upper",
+              "SeriesOutputs.middle": "s_BB_Middle",
+              "SeriesOutputs.lower":  "s_BB_Lower",
+              "HitStatePort":         "s_PlotHit"
+            }
+          },
+          { "TypeName": "ChartInteractionFeature",
+            "Properties": {
+              "SupportedModes": 1,
+              "RequireClickToActivate": false
+            },
+            "OutputBindings": {
+              "PointerHitPort": "dashboard:linkedHit"
+            }
+          },
+          { "TypeName": "AxisFeature",
+            "Properties": {
+              "Mapping": 1, "Format": "F2",
+              "AxisStyle": {
+                "Placement": 2,
+                "TextBrush": { "kind": "solid", "color": "#B0BEC5" },
+                "FontSize": 11,
+                "Typeface": { "FontFamily": "Microsoft YaHei", "FontWeight": 400, "IsItalic": false },
+                "BaseLineStyle": null, "TickLabelOffset": 5, "TickMarkLength": 4, "CustomPhysicalAnchor": null, "AbsoluteAnchor": 0
+              }
+            },
+            "InputBindings": { "RangePort": "s_YRange" }
+          },
+          { "TypeName": "DomainAxisDateTimeFeature",
+            "Properties": {
+              "Mapping": 0, "IsShared": true, "DomainLabelFormat": "MM-dd HH:mm",
+              "AxisStyle": {
+                "Placement": 1,
+                "TextBrush": { "kind": "solid", "color": "#B0BEC5" },
+                "FontSize": 11,
+                "Typeface": { "FontFamily": "Microsoft YaHei", "FontWeight": 400, "IsItalic": false },
+                "BaseLineStyle": null, "TickLabelOffset": 5, "TickMarkLength": 4, "CustomPhysicalAnchor": null, "AbsoluteAnchor": 0
+              }
+            },
+            "InputBindings": {
+              "RangePort":      "cell:viewport.active",
+              "DomainDataPort": "s_Times"
+            }
+          },
+          { "TypeName": "CrosshairDateTimeFeature",
+            "Properties": { "ShowIntersectionDots": false },
+            "InputBindings": {
+              "HitStatePort":  "dashboard:linkedHit",
+              "XAxisDataPort": "s_Times"
+            }
+          },
+          { "TypeName": "UniversalHeaderFeature",
+            "Properties": {},
+            "InputBindings": { "HitStatePort": "dashboard:linkedHit" }
+          }
+        ],
+        "Triggers": []
+      }
+    }
+  ],
+  "HorizontalLeftPixel": 60,
+  "HorizontalRightPixel": 0
+}

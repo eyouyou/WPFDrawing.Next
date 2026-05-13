@@ -6,7 +6,7 @@ MCP (Model Context Protocol) server exposing Hevo.Charting low-code blueprint ca
 
 ## Why
 
-[低代码.md](../Hevo.Charting/LowCode/Designer/低代码.md) + [§K trigger 协议](../Hevo.Charting/LowCode/Designer/低代码优化方案.md) made the blueprint protocol stable enough that an LLM can author/modify them as data. This MCP server gives the LLM agent live access to the live-process ComponentRegistry and DryRun static analyzer, so it can:
+[低代码.md](../Hevo.Charting/LowCode/Designer/低代码.md) made the blueprint protocol stable enough that an LLM can author/modify them as data. This MCP server gives the LLM agent live access to the live-process ComponentRegistry and DryRun static analyzer, so it can:
 
 1. Discover what features are available (no hallucinated type names)
 2. Inspect port shapes before composing connections (no type mismatches → no blank screen)
@@ -116,5 +116,5 @@ This MCP server currently targets `net8.0-windows10.0.19041.0` because it Projec
 ## Caveats
 
 - `validate_blueprint` runs DryRun with `handlers: null`. Blueprints with `Triggers` or `OnRequireDataAsync` etc. delegate-prop will get `BP_*_HANDLER_*` warnings — those resolve at runtime, not statically. Treat them as informational.
-- `BlueprintJsonOptions.Default` is used for deserialization. `Color` / `IHevoBrush` JSON forms documented in [低代码优化方案.md §7](../Hevo.Charting/LowCode/Designer/低代码优化方案.md) apply.
+- `BlueprintJsonOptions.Default` is used for deserialization. `Color` / `IHevoBrush` JSON forms documented in [低代码.md](../Hevo.Charting/LowCode/Designer/低代码.md) apply.
 - `describe_component` calls `NodeFactory.CreateNode` which runs reflection but does not render. WPF assemblies must be loadable but no UI thread is needed.

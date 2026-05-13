@@ -102,6 +102,10 @@ namespace Hevo.Charting.Core
         // [顶层] 交互与控件层 (懒加载)
         private InteractionCanvas? _interactionCanvas;
 
+        // viewport 不在 ChartCell 暴露 instance accessor:
+        // ChartCell 是渲染容器,不该 self-knowledge viewport(纯 1D 量程语义,跟 cell 无关)。
+        // 访问走 attached property:`ViewportPorts.GetAttached(chart)` 或 extension `chart.GetViewport()`。
+
         // ==========================================
         // 2. 注册表
         // ==========================================
@@ -221,6 +225,115 @@ namespace Hevo.Charting.Core
         }
 
         // ==========================================
+        // Loading overlay —— 蓝图加载期的 spinner 蒙层
+        // ==========================================
+        //
+        // 默认 false —— ChartCell 本身不假设业务场景,直接 `new ChartCell { Template = schema }` 不会显示 spinner。
+        // 蓝图路径由 BlueprintRunner.Run / DashboardLauncher.LaunchEx 显式 `chart.IsLoading = true`,
+        // 在第一次 leaf DS publish 时 framework 翻 false,蒙层自动消失。
+        // 业务可设 LoadingTemplate(DataTemplate)覆盖默认外观;Visibility=Visible 时 hit-test 透传不影响 crosshair 等交互。
+
+        public static readonly DependencyProperty IsLoadingProperty = DependencyProperty.Register(
+            nameof(IsLoading),
+            typeof(bool),
+            typeof(ChartCell),
+            new PropertyMetadata(false, OnIsLoadingChanged));   // 默认 false:非蓝图直接 Template 用户不背 spinner 默认值
+
+        /// <summary>
+        /// true 时显示 loading overlay(默认 ProgressBar IsIndeterminate;可由 <see cref="LoadingTemplate"/> 覆盖)。
+        /// <para>初值 false —— 直接 `new ChartCell { Template = schema }` 不显示 spinner。
+        /// 蓝图路径由 BlueprintRunner.Run / DashboardLauncher.LaunchEx 显式翻 true,首帧到达后自动翻 false。</para>
+        /// </summary>
+        public bool IsLoading
+        {
+            get => (bool)GetValue(IsLoadingProperty);
+            set => SetValue(IsLoadingProperty, value);
+        }
+
+        public static readonly DependencyProperty LoadingTemplateProperty = DependencyProperty.Register(
+            nameof(LoadingTemplate),
+            typeof(DataTemplate),
+            typeof(ChartCell),
+            new PropertyMetadata(null, OnLoadingTemplateChanged));
+
+        /// <summary>
+        /// 覆盖默认 loading overlay 外观。null 时走 framework 内置 spinner(<see cref="BuildDefaultLoadingContent"/>)。
+        /// 业务侧给品牌化 UI(spinner + 公司 logo + "加载中..." 文案)时设这个。
+        /// </summary>
+        public DataTemplate? LoadingTemplate
+        {
+            get => (DataTemplate?)GetValue(LoadingTemplateProperty);
+            set => SetValue(LoadingTemplateProperty, value);
+        }
+
+        private readonly ContentPresenter _loadingPresenter;
+
+        private static void OnIsLoadingChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (d is not ChartCell cell) return;
+            cell._loadingPresenter.Visibility = (bool)e.NewValue ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private static void OnLoadingTemplateChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (d is ChartCell cell) cell.ApplyLoadingContent();
+        }
+
+        private void ApplyLoadingContent()
+        {
+            if (LoadingTemplate != null)
+            {
+                _loadingPresenter.ContentTemplate = LoadingTemplate;
+                _loadingPresenter.Content = new object();   // DataTemplate 需要任意非空 DataContext
+            }
+            else
+            {
+                _loadingPresenter.ContentTemplate = null;
+                _loadingPresenter.Content = BuildDefaultLoadingContent();
+            }
+        }
+
+        // 默认 spinner:Grid 半透明蒙层 + 居中 ProgressBar IsIndeterminate。
+        // 不依赖任何外部资源 / 第三方控件,纯 WPF。业务想要更花哨直接设 LoadingTemplate 覆盖。
+        private static UIElement BuildDefaultLoadingContent()
+        {
+            var veil = new Grid
+            {
+                Background = new SolidColorBrush(Color.FromArgb(120, 0, 0, 0)),   // 半透明黑
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                IsHitTestVisible = false,
+            };
+            var stack = new StackPanel
+            {
+                Orientation = System.Windows.Controls.Orientation.Vertical,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            var bar = new ProgressBar
+            {
+                IsIndeterminate = true,
+                Width = 120,
+                Height = 4,
+                Background = Brushes.Transparent,
+                Foreground = new SolidColorBrush(Color.FromRgb(0x44, 0x99, 0xFF)),
+                BorderThickness = new Thickness(0),
+            };
+            var text = new TextBlock
+            {
+                Text = "Loading…",
+                Foreground = new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)),
+                FontSize = 11,
+                Margin = new Thickness(0, 8, 0, 0),
+                HorizontalAlignment = HorizontalAlignment.Center,
+            };
+            stack.Children.Add(bar);
+            stack.Children.Add(text);
+            veil.Children.Add(stack);
+            return veil;
+        }
+
+        // ==========================================
         // 3. 初始化
         // ==========================================
         static ChartCell()
@@ -262,6 +375,20 @@ namespace Hevo.Charting.Core
             _rootContainer.Children.Add(_drawingCanvas); // Bottom-Middle (静态)
             _rootContainer.Children.Add(_overlayCanvas); // Middle-High (交互独立 host,跟静态层 dirty 互不牵连)
             base.Content = _rootContainer;
+
+            // Loading overlay —— 默认 Collapsed 对齐 IsLoading=false。蓝图路径 BlueprintRunner.Run 显式翻 true 才显示,
+            // 首次 leaf DS publish 时翻 false。蒙层在最顶层(Grid Z order = 后添加 == 上面)but `IsHitTestVisible=false`
+            // 透 crosshair / 鼠标点击。LoadingTemplate 默认 null → 用 BuildDefaultLoadingContent 的内置 spinner
+            // (ProgressBar IsIndeterminate);业务可设 ChartCell.LoadingTemplate 覆盖。
+            _loadingPresenter = new ContentPresenter
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                IsHitTestVisible = false,
+                Visibility = Visibility.Collapsed,
+            };
+            ApplyLoadingContent();
+            _rootContainer.Children.Add(_loadingPresenter);
 
             // 💥 架构优化：已移除此处的 CompositionTarget.Rendering 订阅！
             // 绝对不允许在静置时挂载 VSync 泵，彻底消灭 GPU 空转 10% 的底层元凶！
@@ -615,10 +742,26 @@ namespace Hevo.Charting.Core
         /// </summary>
         public override void OnApplyTemplate()
         {
+#if DEBUG
+            // 诊断:同一 schema 实例多次触发 = 异常(栈应指向虚拟化容器 / 强制 ApplyTemplate / 重复 SetValue 等)。
+            // 不同 schema = 正常的 Template 替换路径(蓝图 reload)。需要追源时把 Environment.StackTrace 接回来。
+            System.Diagnostics.Debug.WriteLine(
+                $"[ChartCell.OnApplyTemplate] cell=#{RuntimeHelpers.GetHashCode(this)} schema=#{(Template != null ? RuntimeHelpers.GetHashCode(Template) : 0)}({Template?.GetType().Name ?? "null"})");
+#endif
+
             var rootDecorator = GetTemplateChild("PART_Root") as AdornerDecorator;
             if (rootDecorator != null && Template is ChartSchema schema)
             {
                 var lifeTimeSession = new ChartSession();
+
+                // ⚠ 顺序关键:必须 BindTo(设置 ActiveSession) 早于 ComposeAll。
+                // ComposeAll 内部 BoundWorkflow.Subscribe 会查 GetActiveSession 决定订阅托管对象;
+                // 如果先 ComposeAll 再 BindTo,ComposeAll 期间产生的订阅会被托管给"上一次"OnApplyTemplate
+                // 留下的旧 session — 接着 BindTo 触发 ActiveSessionProperty 的 PropertyChanged callback
+                // 把旧 session Dispose,刚托管给它的新订阅瞬间被一起 dispose,boardStream.DoOnDispose 触发
+                // pipe.Dispose → board.Dispose,新 schema 一启动 board 就死了。详见调试记录:
+                // Template 替换场景下 _latestBoard != null 但 IsDisposed=true 即此 bug 链。
+                ChartLifecycle.BindTo(this, lifeTimeSession);
                 using var ctx = new RenderContext(_sharedData, _localData, lifeTimeSession);
 
                 schema.ComposeAll(this, ctx);
@@ -626,7 +769,6 @@ namespace Hevo.Charting.Core
                 var decoratedUI = schema.Aspect.Decorate(seedProxy);
                 rootDecorator.Child = decoratedUI;
 
-                ChartLifecycle.BindTo(this, lifeTimeSession);
                 ctx.SubmitSync(ActiveLayers);
             }
         }
@@ -835,6 +977,16 @@ namespace Hevo.Charting.Core
             {
                 throw new InvalidOperationException($"ChartCell Template must be of type {nameof(ChartTemplate)}.");
             }
+
+#if DEBUG
+            // 诊断:记录每次 Template 赋值。如果同一 schema 实例反复出现(old==new),
+            // 说明业务侧某处重复设了同样的 Template,DependencyProperty 还是会 raise PropertyChanged。
+            int cellHash = d is ChartCell c ? RuntimeHelpers.GetHashCode(c) : 0;
+            int oldHash = e.OldValue != null ? RuntimeHelpers.GetHashCode(e.OldValue) : 0;
+            int newHash = e.NewValue != null ? RuntimeHelpers.GetHashCode(e.NewValue) : 0;
+            System.Diagnostics.Debug.WriteLine(
+                $"[ChartCell.OnTemplateChanged] cell=#{cellHash} old=#{oldHash} new=#{newHash}");
+#endif
 
             if (d is ChartCell cell && e.OldValue is ChartSchema oldSchema)
             {

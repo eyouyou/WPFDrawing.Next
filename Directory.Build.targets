@@ -1,0 +1,17 @@
+<Project>
+
+  <!-- §D2.5.7 嵌入 Python 运行时:全自动注入 ────────────────────────────────────
+       MSBuild 约定:仓库下所有项目 build 时自动 import 本文件(无需手写 Import)。
+       规则:项目 ProjectReference 集合含 Hevo.Charting.PythonNet → 自动启用
+       Python312 setup + 同步到 OutDir,demo csproj 0 行改动。
+
+       要在新 demo 启用:加 ProjectReference 到 Hevo.Charting.PythonNet 即可。
+
+       实现说明:filter 检测放 EmbeddedPython.targets 的 target 体内做 ——
+       顶层 ItemGroup 用 %(Filename) metadata 会触发 MSB4190;
+       PropertyGroup/Import Condition 用 @(item) 会触发 MSB4099。
+       target 体内 ItemGroup 用 metadata 是合法的,这是绕开两个坑的唯一干净路径。 -->
+
+  <Import Project="$(MSBuildThisFileDirectory)build\EmbeddedPython.targets" />
+
+</Project>

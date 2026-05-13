@@ -37,7 +37,11 @@ namespace Hevo.Charting.Features
             Bottom: ChartLength.Star(0.06, 20));
     }
 
-    public class GridLayoutFeature : ChartFeature
+    // 改 `: Feature`:本 feature 不消费 Viewport,
+    // 历史继承 ChartFeature 仅借生命周期钩子,导致 ChartFeature.OnAttached 强制要求 schema 装 viewport
+    // 持有者,把"框架自动装的 layout"跟"业务侧自助配置 viewport"耦合到一起 —— 蓝图缺 PortsFeature 时
+    // 框架自动 SetupLayout 加的 GridLayoutFeature.OnAttached 立刻 throw。改 Feature 基类后两者解耦。
+    public class GridLayoutFeature : Feature
     {
         public override FeaturePhase Phase => FeaturePhase.Layout;
 

@@ -1,0 +1,137 @@
+<UserControl x:Class="Hevo.Drawing.LowCodeDemo.NotificationCenterView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Hevo.Drawing.LowCodeDemo"
+             Background="#FF1A1B1F"
+             FontFamily="Segoe UI" FontSize="13">
+    <UserControl.Resources>
+        <local:NotificationKindToColorConverter x:Key="KindToColor"/>
+        <local:NotificationKindToLabelConverter x:Key="KindToLabel"/>
+
+        <Style TargetType="DataGrid" x:Key="DarkGrid">
+            <Setter Property="Background"        Value="#FF14161B"/>
+            <Setter Property="Foreground"        Value="#FFD0D8E0"/>
+            <Setter Property="BorderBrush"       Value="#FF2A2C34"/>
+            <Setter Property="BorderThickness"   Value="1"/>
+            <Setter Property="GridLinesVisibility" Value="Horizontal"/>
+            <Setter Property="HorizontalGridLinesBrush" Value="#FF2A2C34"/>
+            <Setter Property="RowBackground"     Value="#FF14161B"/>
+            <Setter Property="AlternatingRowBackground" Value="#FF181A20"/>
+            <Setter Property="HeadersVisibility" Value="Column"/>
+            <Setter Property="CanUserAddRows"    Value="False"/>
+            <Setter Property="CanUserDeleteRows" Value="False"/>
+            <Setter Property="CanUserResizeRows" Value="False"/>
+            <Setter Property="IsReadOnly"        Value="True"/>
+            <Setter Property="SelectionMode"     Value="Single"/>
+            <Setter Property="RowHeight"         Value="28"/>
+            <Setter Property="FontFamily"        Value="Consolas"/>
+            <Setter Property="FontSize"          Value="12"/>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Foreground="#FFC0C8D0" TextWrapping="Wrap" Margin="0,0,0,10">
+            <Run FontWeight="Bold" Foreground="#FF66BB6A">通知中心(Mock)</Run>
+            <LineBreak/>
+            <Run Foreground="#FF8A929C">Python 端 </Run>
+            <Run FontFamily="Consolas" Foreground="#FFFFB74D">send_email / send_dingtalk / send_webhook / send_sms / log_alert</Run>
+            <Run Foreground="#FF8A929C"> 投递的 mock 事件实时在此聚合。不发真实网络 —— 仅供 demo 验证 </Run>
+            <Run FontFamily="Consolas" Foreground="#FFFFB74D">PyBusinessBridge</Run>
+            <Run Foreground="#FF8A929C"> 桥的接法。</Run>
+        </TextBlock>
+
+        <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
+            <CheckBox x:Name="cbAutoScroll" Content="自动滚到最新" IsChecked="True"
+                      Foreground="#FFC0C8D0" Margin="0,4,16,0" VerticalAlignment="Center"/>
+            <CheckBox x:Name="cbShowEmail"    Content="✉ Email"    IsChecked="True" Foreground="#FF4FC3F7" Margin="0,4,12,0" VerticalAlignment="Center"/>
+            <CheckBox x:Name="cbShowDingTalk" Content="📱 DingTalk" IsChecked="True" Foreground="#FF66BB6A" Margin="0,4,12,0" VerticalAlignment="Center"/>
+            <CheckBox x:Name="cbShowWebhook"  Content="🪝 Webhook"  IsChecked="True" Foreground="#FFCE93D8" Margin="0,4,12,0" VerticalAlignment="Center"/>
+            <CheckBox x:Name="cbShowSms"      Content="💬 SMS"      IsChecked="True" Foreground="#FFFFB74D" Margin="0,4,12,0" VerticalAlignment="Center"/>
+            <CheckBox x:Name="cbShowAlert"    Content="⚠ Alert"    IsChecked="True" Foreground="#FF8A929C" Margin="0,4,12,0" VerticalAlignment="Center"/>
+            <CheckBox x:Name="cbShowOrder"    Content="💰 Order"    IsChecked="True" Foreground="#FFEF5350" Margin="0,4,12,0" VerticalAlignment="Center"/>
+            <Button   x:Name="btnClear" Content="清空" Padding="10,4" Margin="12,0,0,0"
+                      Background="#FF3A3C44" Foreground="#FFC0C8D0" BorderBrush="#FF2A2C34"/>
+        </WrapPanel>
+
+        <DataGrid Grid.Row="2" x:Name="grid" Style="{StaticResource DarkGrid}" AutoGenerateColumns="False">
+            <DataGrid.ColumnHeaderStyle>
+                <Style TargetType="DataGridColumnHeader">
+                    <Setter Property="Background"  Value="#FF24262C"/>
+                    <Setter Property="Foreground"  Value="#FFC0C8D0"/>
+                    <Setter Property="BorderBrush" Value="#FF2A2C34"/>
+                    <Setter Property="BorderThickness" Value="0,0,1,1"/>
+                    <Setter Property="Padding"     Value="8,4"/>
+                    <Setter Property="FontWeight"  Value="SemiBold"/>
+                </Style>
+            </DataGrid.ColumnHeaderStyle>
+
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="时间" Width="90"
+                                    Binding="{Binding Timestamp, StringFormat=HH:mm:ss.fff}"
+                                    FontFamily="Consolas">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="#FF8A929C"/>
+                            <Setter Property="Padding"    Value="8,4"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+
+                <DataGridTextColumn Header="渠道" Width="90"
+                                    Binding="{Binding Kind, Converter={StaticResource KindToLabel}}">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground"
+                                    Value="{Binding Kind, Converter={StaticResource KindToColor}}"/>
+                            <Setter Property="Padding"    Value="8,4"/>
+                            <Setter Property="FontWeight" Value="SemiBold"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+
+                <DataGridTextColumn Header="标题" Width="320"
+                                    Binding="{Binding Title}">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="#FFD0D8E0"/>
+                            <Setter Property="Padding"    Value="8,4"/>
+                            <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+
+                <DataGridTextColumn Header="收件人 / URL" Width="200"
+                                    Binding="{Binding Recipient}">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="#FF8A929C"/>
+                            <Setter Property="Padding"    Value="8,4"/>
+                            <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+
+                <DataGridTextColumn Header="内容" Width="*"
+                                    Binding="{Binding Body}">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="#FFB0BEC5"/>
+                            <Setter Property="Padding"    Value="8,4"/>
+                            <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                            <Setter Property="ToolTip"      Value="{Binding Body}"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <TextBlock Grid.Row="3" x:Name="txtStatus" Foreground="#FF8A929C" Margin="0,8,0,0" Text="等待通知..."/>
+    </Grid>
+</UserControl>

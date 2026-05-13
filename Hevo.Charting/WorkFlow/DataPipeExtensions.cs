@@ -17,7 +17,7 @@ namespace Hevo.Charting.WorkFlow
         public static IWorkflow<DataBlackboard> LinkSoAColumnStream<TSource, TBlock>(
                     this DataPipeBuilder<TSource, TBlock> builder,
                     Action<SoAColumnConfigurator<TBlock>> configure)
-                    where TSource : DataSource<TSource, TBlock>
+                    where TSource : BufferedDataSource<TSource, TBlock>
         {
             var cfg = new SoAColumnConfigurator<TBlock>(builder.InternalPipe);
             configure(cfg);

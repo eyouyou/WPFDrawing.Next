@@ -24,7 +24,7 @@ namespace Hevo.Charting.Features
     public static partial class AutoScaleFeatureExtensions
     {
         // 💥 高内聚语法糖：将极值大一统特征挂载到 Environment 域中
-        // Viewport 由 ReactiveSchema.Add 自动注入（L6 / §B.2.6），外部不再显式传 vp。
+        // Viewport 由 ChartFeature.InternalCompose 从 ViewportManagerFeature.Ports 自动注入（L6 / §B.2.6），外部不再显式传 vp。
         public static EnvironmentBuilder SetupAutoScale(
             this EnvironmentBuilder builder,
             DataPort<RealRange> yRangePort,

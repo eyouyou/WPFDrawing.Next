@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Hevo.Charting\Hevo.Charting.csproj" />
+    <ProjectReference Include="..\Hevo.Charting.PythonNet\Hevo.Charting.PythonNet.csproj" />
   </ItemGroup>
 
 </Project>

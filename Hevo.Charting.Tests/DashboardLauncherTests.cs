@@ -122,7 +122,7 @@ namespace Hevo.Charting.Tests
                     MakeCell("main", DashboardCellRole.Master),
                     MakeCell("bad", DashboardCellRole.Pane, new ChartBlueprint
                     {
-                        DataSource = new DataSourceModel { TypeName = nameof(TestDataSource) },
+                        DataSources = { new DataSourceModel { Id = "primary", TypeName = nameof(TestDataSource) } },
                         Features = { new FeatureModel { TypeName = "DefinitelyNotRegistered" } },
                     }),
                 },
@@ -148,13 +148,13 @@ namespace Hevo.Charting.Tests
                 HeightRatio = role == DashboardCellRole.Master ? 3 : 1,
                 Blueprint = bp ?? new ChartBlueprint
                 {
-                    DataSource = new DataSourceModel { TypeName = nameof(TestDataSource) },
+                    DataSources = { new DataSourceModel { Id = "primary", TypeName = nameof(TestDataSource) } },
                     Features =
                     {
                         new FeatureModel
                         {
                             TypeName = nameof(LineSeriesFeature),
-                            PortBindings = new Dictionary<string, object?>
+                            InputBindings = new Dictionary<string, object?>
                             {
                                 ["DataPort"]   = $"{id}_price",
                                 ["YRangePort"] = $"{id}_yrange",

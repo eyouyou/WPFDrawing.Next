@@ -8,7 +8,7 @@ namespace Hevo.Charting.Features
 {
     public static class BarSeriesFeatureExtensions
     {
-        // Viewport 由 ReactiveSchema.Add 自动注入（L6 / §B.2.6），外部不再显式传 vp。
+        // Viewport 由 ChartFeature.InternalCompose 从 ViewportManagerFeature.Ports 自动注入（L6 / §B.2.6），外部不再显式传 vp。
         public static SeriesBuilder AddBar(this SeriesBuilder builder, DataPort<ReadOnlyMemory<double>> dataPort, DataPort<RealRange> rangePort, FieldMeta meta, double widthRatio = 0.8)
         {
             builder.Canvas.Add(new BarSeriesFeature

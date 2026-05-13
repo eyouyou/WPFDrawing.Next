@@ -19,7 +19,7 @@ namespace Hevo.Charting.Features
         /// <summary>💥 Y 轴量程引脚:多线共用 Y 轴时,由统一的 <see cref="UniversalAutoScaleFeature"/> 算好后流入。</summary>
         public DataPort<RealRange> YRangePort { get; init; } = null!;
 
-        // Viewport 由 ChartFeature 基类统一持有，由 ReactiveSchema.Add 自动注入（L6 / §B.2.6）。
+        // Viewport 由 ChartFeature 基类持有,由 InternalCompose 从 ViewportManagerFeature.Ports 注入（L6 / §B.2.6）。
 
         // 💥 物理图层由特征完全私有化！Schema 无权也无需干涉！
         private readonly LineLayer _layer = new();
@@ -37,7 +37,7 @@ namespace Hevo.Charting.Features
 
         // ==========================================
         // 蓝图友好的标量配置:Meta == null 时生效。
-        // SmartActivator.SafeChangeType 走 TypeConverter 路径,Color 字段直接接受
+        // SmartActivator.CoerceValue 走 TypeConverter 路径,Color 字段直接接受
         // "#RRGGBB" / "Red" 字符串,JSON 描述蓝图无需理解 FieldMeta 内部结构。
         // ==========================================
 

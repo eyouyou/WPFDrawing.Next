@@ -1,5 +1,5 @@
 using Hevo.Charting.LowCode.Designer;
-using Hevo.Charting.LowCode.Designer.Python;
+using Hevo.Charting.PythonNet;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -327,6 +327,85 @@ namespace Hevo.Charting.Tests
                 Assert.NotNull(diagnostics[0].PythonTraceback);
             }
             finally { Directory.Delete(dir, recursive: true); }
+        }
+
+        // ── D2.X 多输入指标 ─────────────────────────────────────────────
+
+        [Fact]
+        public void Scanner_CapturesInputsKwarg()
+        {
+            var py = """
+                @register("atr_14",
+                          signature="(ReadOnlyMemory[double], ReadOnlyMemory[double], ReadOnlyMemory[double]) -> ReadOnlyMemory[double]",
+                          inputs=['high', 'low', 'close'])
+                def atr(high, low, close): return high
+                """;
+            var result = PythonRegisterScanner.ScanText(py);
+            Assert.Single(result);
+            Assert.Equal("atr_14", result[0].Name);
+            Assert.NotNull(result[0].Inputs);
+            Assert.Equal(new[] { "high", "low", "close" }, result[0].Inputs!);
+        }
+
+        [Fact]
+        public void Scanner_NoInputsKwarg_LeavesInputsNull()
+        {
+            var py = """
+                @register("ma", signature="(ReadOnlyMemory[double]) -> ReadOnlyMemory[double]")
+                def ma(close): return close
+                """;
+            var result = PythonRegisterScanner.ScanText(py);
+            Assert.Single(result);
+            Assert.Null(result[0].Inputs);   // 单输入 handler 默认 null
+        }
+
+        [Fact]
+        public void Scanner_KwargOrder_DoesNotMatter()
+        {
+            // inputs 在 signature 之前
+            var py = """
+                @register("vwap", inputs=['price','volume'], signature="(ReadOnlyMemory[double], ReadOnlyMemory[double]) -> ReadOnlyMemory[double]")
+                def vwap(p, v): return p
+                """;
+            var result = PythonRegisterScanner.ScanText(py);
+            Assert.Single(result);
+            Assert.Equal(new[] { "price", "volume" }, result[0].Inputs!);
+            Assert.Contains("ReadOnlyMemory", result[0].Signature ?? string.Empty); // signature 仍要捕到
+        }
+
+        [Fact]
+        public void RegisterModule_WithInputs_StoresMetadataInBaseRegistry()
+        {
+            var runtime = new MockPythonRuntime();
+            var registry = new PythonHandlerRegistry().UseRuntime(runtime).Initialize();
+
+            registry.RegisterModule(
+                "atr_14", "fake.py", "atr",
+                "(ReadOnlyMemory[double], ReadOnlyMemory[double], ReadOnlyMemory[double]) -> ReadOnlyMemory[double]",
+                inputs: new[] { "high", "low", "close" });
+
+            // BlueprintHandlerRegistry.GetInputNames 应该能查到 input names
+            var inputs = registry.GetInputNames("atr_14");
+            Assert.NotNull(inputs);
+            Assert.Equal(new[] { "high", "low", "close" }, inputs!);
+        }
+
+        [Fact]
+        public void RegisterDelegate_NullInputs_DoesNotStoreMetadata()
+        {
+            var registry = new BlueprintHandlerRegistry();
+            registry.RegisterDelegate("h", new Action<int>(_ => { }), inputs: null);
+            Assert.Null(registry.GetInputNames("h"));
+        }
+
+        [Fact]
+        public void Unregister_AlsoClearsInputsMetadata()
+        {
+            var registry = new BlueprintHandlerRegistry();
+            registry.RegisterDelegate("h", new Action<int>(_ => { }), inputs: new[] { "a" });
+            Assert.NotNull(registry.GetInputNames("h"));
+            registry.Unregister("h");
+            Assert.Null(registry.GetInputNames("h"));
         }
 
         // ── Mock IPythonRuntime ─────────────────────────────────────────

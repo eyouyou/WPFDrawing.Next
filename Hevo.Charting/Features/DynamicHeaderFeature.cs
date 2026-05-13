@@ -11,9 +11,15 @@ namespace Hevo.Charting.Features
 {
     public static class UniversalHeaderFeatureExtensions
     {
-        public static EnvironmentBuilder SetupUniversalHeader(this EnvironmentBuilder builder, DataPort<int> lengthPort, DataPort<PointerHitState?> hitPort)
+        /// <summary>
+        /// 装配万能联动头:
+        /// 业务侧零 viewport 字眼,helper 内部由 <see cref="UniversalHeaderFeature"/>.OnCompose 自己从
+        /// base ChartFeature.Viewport(<see cref="ViewportPorts.GetAttached"/>)取 LogicalLength,
+        /// 调用顺序跟 SetupViewport / 其他 helper 完全自由(不依赖装配时机)。
+        /// </summary>
+        public static EnvironmentBuilder SetupUniversalHeader(this EnvironmentBuilder builder, DataPort<PointerHitState?> hitPort)
         {
-            builder.Canvas.Add(new UniversalHeaderFeature { LogicalLengthPort = lengthPort, HitStatePort = hitPort });
+            builder.Canvas.Add(new UniversalHeaderFeature { HitStatePort = hitPort });
             return builder;
         }
     }
@@ -52,8 +58,20 @@ namespace Hevo.Charting.Features
         /// <summary>命中状态端口:有命中则显示对应索引的字段值;无命中则回落到末根(实时数据)。</summary>
         public DataPort<PointerHitState?> HitStatePort { get; init; } = null!;
 
-        /// <summary>逻辑数据长度端口:用于在数据切换时同步触发头部刷新(目前主要起 Watch 触发器作用)。</summary>
-        public DataPort<int> LogicalLengthPort { get; init; } = null!;
+        /// <summary>
+        /// 逻辑数据长度端口:用于在数据切换时同步触发头部刷新(主要起 Watch 触发器作用)。
+        /// 业务/蓝图初始化时显式喂;留空(默认 null)时 OnCompose 自动 fallback 到
+        /// <c>base.Viewport.LogicalLength</c>。
+        /// init-only 满足 HEVO007 引脚不可变约束;运行期 fallback 走下面的 _effectiveLengthPort 内部字段。
+        /// </summary>
+        public DataPort<int>? LogicalLengthPort { get; init; }
+
+        // OnCompose 期决定实际订阅的 length port —— 业务显式喂的优先,否则 fallback Viewport.LogicalLength。
+        // 不能直接写 LogicalLengthPort(init 限制),也不该用 set 让蓝图反射误覆写(HEVO007)。
+        // 协议占位符 `null!`:框架时序保证 OnCompose 必先于 OnProject 跑过,使用窗口内非 null。
+        // 跟 init port 的 `= null!` 同语义 —— 不是撒谎,是"装配阶段写过"的承诺。
+        // OnProject 顶层无条件 UsePort 即可,符合 Hook 铁律(00.架构协议 §158)。
+        private DataPort<int> _effectiveLengthPort = null!;
 
         // 头部容器(WrapPanel),由 Decorate 在挂载阶段一次性创建并贴在外层 DockPanel 顶部。
         private WrapPanel _headerContainer = null!;
@@ -83,14 +101,20 @@ namespace Hevo.Charting.Features
             return grid;
         }
 
-        protected override void OnCompose(ChartCell chart, RenderContext ctx, IRenderFlow<DataBlackboard> flow) { }
+        protected override void OnCompose(ChartCell chart, RenderContext ctx, IRenderFlow<DataBlackboard> flow)
+        {
+            // 业务/蓝图没显式传 LogicalLengthPort 时,从 base ChartFeature.Viewport 取。
+            // OnCompose 阶段所有 features 已 add 完,PortsFeature.OnAttached 必跑过,Viewport 字段已就位。
+            // 业务侧调 SetupUniversalHeader 跟 SetupViewport 顺序自由 —— helper 内部 lookup,不依赖装配时机。
+            _effectiveLengthPort = LogicalLengthPort ?? Viewport.LogicalLength;
+        }
 
         protected override void OnProject(FeatureContext ctx)
         {
-            if (_headerContainer == null) return;
-
+            // Hook 铁律:UsePort 顶层无条件;_headerContainer / _effectiveLengthPort 由
+            // Decorate / OnCompose 时序保证非 null,无需 guard。
             var (hitState, hitChanged) = ctx.UsePort(HitStatePort);
-            var (totalLen, lenChanged) = ctx.UsePort(LogicalLengthPort);
+            var (totalLen, lenChanged) = ctx.UsePort(_effectiveLengthPort);
 
             // 1. 获取绝对可靠的当前图层元数据指纹
             int currentFingerprint = ComputeFingerprint(ctx);

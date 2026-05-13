@@ -50,6 +50,11 @@ namespace Hevo.Charting.Features
         /// <summary>X 字段元数据(名/格式/画刷)。null 时退化到"Time" + ToString + 白色。</summary>
         public FieldMeta? XMeta { get; init; }
 
+        // 注:之前的 NamesDataPort + _effectiveNamesPort 哑端口 sentinel 已下架(2026-05)——
+        // 通用 Tooltip 不应该硬编码"证券名称"业务字段后门。现在"名称"跟其他指标一样走通用
+        // MetaTrait + StringSeriesDataTrait 协议,业务侧用 NameSeriesFeature(挂 MetadataLayer)
+        // 发布字符串列,Tooltip 在 ActiveLayers 循环里自动拼行。
+
         // Tooltip 渲染层(Interaction 级)。
         private readonly TooltipWidgetLayer _layer = new();
         // 默认半透明深色底,业务可在 OnCompose 替换。
@@ -59,27 +64,27 @@ namespace Hevo.Charting.Features
         // 行缓冲(64 行硬上限)。每帧从下标 0 累积,最后用 AsMemory(0, count) 切出活跃区。
         private readonly TooltipRow[] _rowBuffer = new TooltipRow[64];
 
-        // 💥 鼠标是否压在本 cell 上:hit 端口在联动 dashboard 下被镜像同步,无法回答
-        // "这次 hit 是不是我自己产生的"。直接订阅本 cell 的 MouseEnter/Leave 是最就近的判定源——
-        //   tooltip 仅在自家热区时弹出,镜像来的远端 hit 一律静默。单 cell 场景与改造前一致。
-        private bool _isMouseOverChart;
+        // 注:之前为防"联动 dashboard 下 SharedHit 镜像导致副图 tooltip 跟着弹"加过
+        // _isMouseOverChart + MouseEnter/Leave 订阅 hack(2026-05 下架)。该场景在 framework
+        // 现行规约下已不存在——LinkedPaneSchemaContext.Decorate 会 Remove<TooltipWidgetFeature>
+        // 强制副图无 tooltip(见 SchemaContext.cs:139)。若未来业务侧手搓多 cell 装配绕开此规约
+        // 且都挂 tooltip,需补 PointerHitState.SourceCellId 协议(改 ChartCell / DashboardLauncher
+        // 装配链),而非在 Feature 端绕回 mouse event 侧信道。
 
         protected override void OnCompose(ChartCell chart, RenderContext ctx, IRenderFlow<DataBlackboard> flow)
         {
             AttachLayer(_layer);
-
-            WithBoard(this.OnMouse(UIElement.MouseEnterEvent)).Subscribe(_ => { _isMouseOverChart = true; }).OwnedBy(this);
-            WithBoard(this.OnMouse(UIElement.MouseLeaveEvent)).Subscribe(_ => { _isMouseOverChart = false; }).OwnedBy(this);
         }
 
         protected override void OnProject(FeatureContext ctx)
         {
-            // 铁律：无条件解包
+            // 铁律：无条件解包(HEVO003:UsePort 顺序/次数必须跨帧一致,不能在 if 里调)
             var (hitState, _) = ctx.UsePort(HitStatePort);
             var (xData, _) = ctx.UsePort(XAxisDataPort);
 
-            // 越界隐藏;鼠标不在本 cell 也隐藏(联动 dashboard 下镜像 hit 来自他 cell,本 cell 不应弹 tooltip)
-            if (hitState == null || hitState.Value.IsOutOfBounds || !_isMouseOverChart)
+            // 越界隐藏。联动 dashboard 下副图不应弹 tooltip 这件事由 LinkedPaneSchemaContext.Decorate
+            // 在装配阶段 Remove<TooltipWidgetFeature> 保证,Feature 端不再二次判定。
+            if (hitState == null || hitState.Value.IsOutOfBounds)
             {
                 PublishEmpty(ctx);
                 return;
@@ -107,7 +112,10 @@ namespace Hevo.Charting.Features
                 _rowBuffer[rowCount++] = new TooltipRow(xName, xStr, xBrush);
             }
 
-            // 捞取其它指标数据
+            // 捞取其它指标数据 —— double 系列(LineSeries / Bar / Candle...)走 DoubleSeriesDataTrait,
+            // 字符串元信息(证券名称 / 行业 等)走 StringSeriesDataTrait,两路并存。
+            // ActiveLayers 顺序 = 行顺序 —— 业务侧蓝图想让"名称" 在第一行,就把 NameSeriesFeature
+            // 节点放在其他 series feature 之前(framework 不做特权排序)。
             foreach (var layer in Chart.ActiveLayers)
             {
                 var proxy = ctx.For(layer);
@@ -115,6 +123,7 @@ namespace Hevo.Charting.Features
                 if (sMeta == null) continue;
 
                 var doubleData = proxy.Read<DoubleSeriesDataTrait>();
+                var stringData = proxy.Read<StringSeriesDataTrait>();
                 var indexResolver = proxy.Read<IndexBrushResolverTrait>();
 
                 for (int i = 0; i < sMeta.Fields.Length; i++)
@@ -131,6 +140,16 @@ namespace Hevo.Charting.Features
                         double dVal = doubleData.FieldValues[i].Span[state.LocalIndex];
                         formattedString = dVal.FormatValue(fieldMeta.Format, fieldMeta.Provider);
                         hasValue = true;
+                    }
+                    else if (stringData != null && i < stringData.FieldValues.Length &&
+                             state.LocalIndex >= 0 && state.LocalIndex < stringData.FieldValues[i].Length)
+                    {
+                        string sVal = stringData.FieldValues[i].Span[state.LocalIndex];
+                        if (!string.IsNullOrEmpty(sVal))
+                        {
+                            formattedString = sVal; // string 字段原样输出,format 留作未来扩展
+                            hasValue = true;
+                        }
                     }
 
                     if (hasValue)

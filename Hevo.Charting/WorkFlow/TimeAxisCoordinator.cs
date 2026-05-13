@@ -43,9 +43,9 @@ namespace Hevo.Charting.WorkFlow
         /// 注册一路数据源并配置其 emitters（多端口支持）。
         /// </summary>
         public TimeAxisCoordinator AddSource<TSource, TItem>(
-            DataSource<TSource, TItem> src,
+            BufferedDataSource<TSource, TItem> src,
             Action<SourceMapConfigurator<TSource, TItem>> configure)
-            where TSource : DataSource<TSource, TItem>
+            where TSource : BufferedDataSource<TSource, TItem>
             where TItem : ITimePoint
         {
             var cfg = new SourceMapConfigurator<TSource, TItem>();
@@ -66,25 +66,25 @@ namespace Hevo.Charting.WorkFlow
         /// 语法糖重载：单端口场景一行登记（最常见的 90% 情况）。
         /// </summary>
         public TimeAxisCoordinator AddSource<TSource, TItem>(
-            DataSource<TSource, TItem> src,
+            BufferedDataSource<TSource, TItem> src,
             Func<TItem, TSource, double> selector,
             DataPort<ReadOnlyMemory<double>> outPort)
-            where TSource : DataSource<TSource, TItem>
+            where TSource : BufferedDataSource<TSource, TItem>
             where TItem : ITimePoint
             => AddSource(src, cfg => cfg.Map(outPort, selector));
 
         /// <summary>更简单的重载：selector 不需要 source 上下文时用这个。</summary>
         public TimeAxisCoordinator AddSource<TSource, TItem>(
-            DataSource<TSource, TItem> src,
+            BufferedDataSource<TSource, TItem> src,
             Func<TItem, double> selector,
             DataPort<ReadOnlyMemory<double>> outPort)
-            where TSource : DataSource<TSource, TItem>
+            where TSource : BufferedDataSource<TSource, TItem>
             where TItem : ITimePoint
             => AddSource(src, cfg => cfg.Map(outPort, selector));
 
         /// <summary>运行期移除一路数据源，自动解订阅并触发一次 Merge。</summary>
-        public void RemoveSource<TSource, TItem>(DataSource<TSource, TItem> src)
-            where TSource : DataSource<TSource, TItem>
+        public void RemoveSource<TSource, TItem>(BufferedDataSource<TSource, TItem> src)
+            where TSource : BufferedDataSource<TSource, TItem>
             where TItem : ITimePoint
         {
             SourceEntryBase? removed = null;
@@ -270,7 +270,7 @@ namespace Hevo.Charting.WorkFlow
         }
 
         private sealed class SourceEntry<TSource, TItem> : SourceEntryBase
-            where TSource : DataSource<TSource, TItem>
+            where TSource : BufferedDataSource<TSource, TItem>
             where TItem : ITimePoint
         {
             public readonly TSource Src;
@@ -353,7 +353,7 @@ namespace Hevo.Charting.WorkFlow
     /// 单源多端口配置器。和 <see cref="ScatterConfigurator{TSource, TItem}"/> 语义对仗：<c>Map(port, selector)</c>。
     /// </summary>
     public sealed class SourceMapConfigurator<TSource, TItem>
-        where TSource : DataSource<TSource, TItem>
+        where TSource : BufferedDataSource<TSource, TItem>
         where TItem : ITimePoint
     {
         internal readonly List<(Func<TItem, TSource, double> Selector, DataPort<ReadOnlyMemory<double>> Port)> Emitters = new();

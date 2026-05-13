@@ -1,4 +1,4 @@
-﻿using Hevo.Charting.Abstractions;
+using Hevo.Charting.Abstractions;
 using Hevo.Charting.LowCode;
 using Hevo.Charting.WorkFlow;
 
@@ -31,25 +31,25 @@ namespace Hevo.Charting.Core
     }
 
     // ==========================================
-    // 💥 引擎大管家：FeatureContext 
-    // 热路径（每帧重绘）绝对零分配，全部复用已有对象！
+    // 💥 引擎大管家:FeatureContext
+    // 热路径(每帧重绘)绝对零分配,全部复用已有对象!
     // ==========================================
     public partial class FeatureContext
     {
         internal RenderContext _renderCtx = null!;
         internal DataBlackboard _board = null!;
         internal SubscriptionRegistry _registry = null!;
-        internal ChartFeature _currentFeature = null!;
+        internal Feature _currentFeature = null!;
 
         // 这里的 _isFullPass 实际上是由外部 ReactiveSchema 传入的 isEnvironmentSync
-        // 代表环境纪元是否发生了改变（如 SizeChanged）
+        // 代表环境纪元是否发生了改变(如 SizeChanged)
         internal bool _isFullPass;
 
         internal int _hookCursor = 0;
         internal int _expectedHookCount = -1;
         internal readonly Dictionary<string, object> _dynamicStatePocket = new();
 
-        // 💥 终极修复：彻底废弃易溢出的 _portTicks，换成 0-GC 的无限版本令牌！
+        // 💥 终极修复:彻底废弃易溢出的 _portTicks,换成 0-GC 的无限版本令牌!
         internal readonly Dictionary<object, VersionToken> _portTokens = new();
 
         internal void BeginProject(RenderContext render, DataBlackboard board) { _renderCtx = render; _board = board; _hookCursor = 0; }
@@ -57,12 +57,12 @@ namespace Hevo.Charting.Core
         {
             if (_expectedHookCount == -1) _expectedHookCount = _hookCursor;
             else if (_hookCursor != _expectedHookCount)
-                throw new InvalidOperationException("[Hevo 致命错误] Hook 游标错位！");
+                throw new InvalidOperationException("[Hevo 致命错误] Hook 游标错位!");
         }
 
-        // 修复 H1 配套：Decompose 时清空跨帧状态。
-        // 同一 Feature 实例可能被 Transact 重新装配（hot-plug），残留的 _portTokens / _hookPocket 会
-        // 让重装后的首帧脏检查认为"已对齐"而跳过重绘，因此卸载时必须显式归零。
+        // 修复 H1 配套:Decompose 时清空跨帧状态。
+        // 同一 Feature 实例可能被 Transact 重新装配(hot-plug),残留的 _portTokens / _hookPocket 会
+        // 让重装后的首帧脏检查认为"已对齐"而跳过重绘,因此卸载时必须显式归零。
         internal void Reset()
         {
             _portTokens.Clear();
@@ -84,16 +84,36 @@ namespace Hevo.Charting.Core
         public VisualProxy<IChartLayer> For(IChartLayer layer) => _renderCtx.For(layer);
 
         /// <summary>
-        /// 💥 隐式查脏核心：值类型防抖，不生成任何对象，仅返回 struct Tuple
+        /// 泛型重载:保留具体 layer 类型,让强类型 <c>PublishData&lt;TLayer, TData&gt;</c> 在跨程序集
+        /// (如 Hevo.Charting.PythonNet 内 PyPlotFeature)调用时仍能命中正确的 IConsumes&lt;TData&gt; 约束。
+        /// 业务侧 typed call: <c>ctx.For&lt;LineLayer&gt;(_lineLayer).PublishData(new XAxisTrait(...))</c>。
         /// </summary>
-        // ⚠️ 已知脏追踪盲区：
-        //   本方法只追踪 DataPort 的 VersionToken，不覆盖：
-        //     - ctx.Shared().Read<TTrait>() 读取的 Trait（ViewportSizeTrait / PlotAreaTrait / ScaleStrategyTrait 等）
-        //     - flow.Watch / flow.WatchAsync 自带的端口订阅（另一套独立机制）
-        //   若未来出现类似 "某 Feature 读了 Trait 但没标脏导致残影" 的现象，
-        //   定点修（给该 Feature 补 UsePort，或补一个 UseTrait<T>() API）。
-        public (T Value, bool IsChanged) UsePort<T>(DataPort<T> port)
+        public VisualProxy<TLayer> For<TLayer>(TLayer layer) where TLayer : IChartLayer
+            => _renderCtx.For(layer);
+
+        /// <summary>
+        /// 💥 隐式查脏核心:值类型防抖,不生成任何对象,仅返回 struct Tuple
+        /// </summary>
+        // ⚠️ 已知脏追踪盲区:
+        //   本方法只追踪 DataPort 的 VersionToken,不覆盖:
+        //     - ctx.Shared().Read<TTrait>() 读取的 Trait(ViewportSizeTrait / PlotAreaTrait / ScaleStrategyTrait 等)
+        //     - flow.Watch / flow.WatchAsync 自带的端口订阅(另一套独立机制)
+        //   若未来出现类似 "某 Feature 读了 Trait 但没标脏导致残影" 的现象,
+        //   定点修(给该 Feature 补 UsePort,或补一个 UseTrait<T>() API)。
+        public (T Value, bool IsChanged) UsePort<T>(
+            DataPort<T> port,
+            [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(port))] string? portExpression = null)
         {
+            // 端口非空契约:UsePort 的语义("订阅 + 读 + 防抖")在 port=null 下没有合法路径。
+            // 提前 fail-fast 替代 board.Read 内深处的 NRE,堆栈直接定位到出错的 feature + 字段。
+            // CallerArgumentExpression 自动捕获 caller 写的字面量(`ctx.UsePort(DataPort)` → "DataPort"),
+            // 业务侧 0 改动;不预设 caller 是哪种 port 来源(init / 局部变量 / 动态生成)。
+            if (port is null)
+                throw new ArgumentNullException(
+                    portExpression,
+                    $"{_currentFeature?.GetType().Name ?? "<feature>"}.{portExpression} is null — " +
+                    "ctx.UsePort 不接受 null 端口,调用前确保端口已装配。");
+
             // 1. 0-GC 拉取物理数据
             T val = _board.Read(port);
 
@@ -101,7 +121,7 @@ namespace Hevo.Charting.Core
             VersionToken currentToken = _board.GetVersion(port);
             bool changed = false;
 
-            // 3. 💥 架构级防御：用 VersionToken 对齐版本 + 顺手做"首次访问"探测
+            // 3. 💥 架构级防御:用 VersionToken 对齐版本 + 顺手做"首次访问"探测
             //    隐式 Subscribe 只在 Feature 首次见到 port 时跑一次,跨帧稳态零 lock / 零 dict 改动。
             //    Decompose 走 _context.Reset() 会清空 _portTokens,Transact 重装后首帧自动重新订阅。
             if (!_portTokens.TryGetValue(port, out var lastToken))
@@ -117,8 +137,8 @@ namespace Hevo.Charting.Core
                 changed = true;
             }
 
-            // 4. 环境突变拦截：如果外部（如 SizeChanged）要求全量重绘
-            // 则强制将本帧获取的所有数据视为“变脏”，以触发下游彻底重新计算投影
+            // 4. 环境突变拦截:如果外部(如 SizeChanged)要求全量重绘
+            // 则强制将本帧获取的所有数据视为"变脏",以触发下游彻底重新计算投影
             if (_isFullPass) changed = true;
 
             return (val, changed);
@@ -126,18 +146,28 @@ namespace Hevo.Charting.Core
 
         /// <summary>
         /// 💥 动态批量引脚订阅 (专治 HEVO003 循环拦截)
-        /// 允许安全地订阅一组引脚，数据直接写入 buffer，全程 0-GC。
+        /// 允许安全地订阅一组引脚,数据直接写入 buffer,全程 0-GC。
         /// </summary>
-        public bool UsePorts<T>(DataPort<T>[] ports, T[] buffer)
+        public bool UsePorts<T>(
+            DataPort<T>[] ports,
+            T[] buffer,
+            [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(ports))] string? portsExpression = null)
         {
             if (ports.Length != buffer.Length)
-                throw new ArgumentException("Ports 数组和 Buffer 数组的长度必须一致！");
+                throw new ArgumentException("Ports 数组和 Buffer 数组的长度必须一致!");
 
             bool changed = false;
 
             for (int i = 0; i < ports.Length; i++)
             {
                 var port = ports[i];
+
+                // 数组扇入:逐元素 null check,定位到具体索引,中性 message 不预设来源。
+                if (port is null)
+                    throw new ArgumentNullException(
+                        $"{portsExpression}[{i}]",
+                        $"{_currentFeature?.GetType().Name ?? "<feature>"}.{portsExpression}[{i}] is null — " +
+                        "ctx.UsePorts 不接受数组中含 null 的端口,调用前确保所有端口已装配。");
 
                 // 0-GC 物理拉取
                 buffer[i] = _board.Read(port);
@@ -175,196 +205,51 @@ namespace Hevo.Charting.Core
 
 
     // ==========================================
-    // 💥 图表特征基类：生命周期管线与内存管家！
+    // 💥 Chart 业务特化 feature 基类。
+    // 通用 reactive 基础设施(layer / lifecycle / IDisposable / IPausable / Phase / IsSingleton /
+    // FeatureContext / OnCompose+flow / OnProject / Project 帧入口 / 嵌套子 feature 等)全部由
+    // <see cref="Feature"/> 基类承担(Phase 2/Route A);本类只补一项 chart 专属概念:Viewport
+    // (1D 量程,LogicalLength + UserRange + ActiveRange,概念上不适用于 graph editor 等 2D 场景)。
     // ==========================================
-    public abstract class ChartFeature : ChartAspect, IDisposableHost, Abstractions.IPausable
+    public abstract class ChartFeature : Feature
     {
-        public string InstanceId { get; } = Guid.NewGuid().ToString("N").Substring(0, 8);
+        // 顶层视口(L6 / §B.2.6):ComposeCore 阶段从 ChartCell attached property 一次性注入字段,
+        // 后续业务 Feature 直接读 this.Viewport.X 是字段访问,不走 WPF DP。
+        //
+        // 时序保证:
+        //   InitializeRegistry: EnsureBaseFeatures(挂 PortsFeature) → DefineFeatures(业务挂各 ChartFeature)
+        //                       → Decorate(LinkedMaster/Pane 阶段 mutate PortsFeature.Ports = SharedViewport,
+        //                          setter 内部 SetAttached 同步更新 ChartCell 上的 attached property)
+        //   BuildAndActivatePipeline: 按 Phase 序遍历 _orderedFeatures,调 InternalCompose → ComposeCore →
+        //                             ★ 此时 attached ports 已是最终值,字段一次注入即可
+        //   ⇒ Decorate 之后再没人 mutate Ports;字段方案不会拿到过时引用。
+        //
+        // 错误时机访问保护:在 ComposeCore 之前(罕见:子类在 ctor/OnAttached 内提前读)抛 InvalidOperation,
+        // 而非 NRE,定位清晰。
 
-        private readonly List<IChartLayer> _managedLayers = new();
-
-        // 💥 内存泄漏终结者：专门存放与图表生命周期绑定的 Rx 句柄
-        private readonly List<IDisposable> _disposables = new();
-
-        public virtual FeaturePhase Phase => FeaturePhase.Series;
-
-        /// <summary>
-        /// true = 同类型已存在时,<see cref="ReactiveSchema.Add"/> 自动把旧实例 Remove 后再加新的,
-        /// 保证 canvas 上至多一个该类型实例。典型:<see cref="Features.GridLayoutFeature"/> /
-        /// <see cref="Features.ViewportManagerFeature"/> 这种"全局布局/状态管家",一个图只该有一个。
-        /// 默认 false:多实例合理(LineSeries / Axis / Crosshair 这类可同图多份)。
-        /// 历史 workaround:以前在 <c>SetupLayout</c> / <c>SetupViewport</c> 等扩展方法里手动
-        /// <c>Remove&lt;T&gt;()</c> 防双重叠加(参 GridLayoutFeature.cs 注释"致命防线")。低代码反射
-        /// 路径不走这些扩展方法 → 双添加 → 历史"白屏"复发。把语义抬到 Add 这一层就堵死。
-        /// </summary>
-        public virtual bool IsSingleton => false;
-
-        // ==========================================
-        // 💥 Phase 11 / §H：IPausable 生命周期（与 ReactiveSchema 对称）
-        // 95% 的 Feature（LineSeriesFeature / BarSeriesFeature / AxisFeature 等纯投影器）
-        // 继承基类 no-op 行为即可。有内部定时器 / WPF 订阅要屏蔽的（ChartInteractionFeature 等）
-        // 重载 OnSuspend / OnResume。Schema 级冻结会级联调用每个 Feature 的 Suspend。
-        // ==========================================
-        public bool IsActive { get; private set; } = true;
-
-        public void Suspend()
-        {
-            if (!IsActive) return;
-            IsActive = false;
-            OnSuspend();
-            for (int i = 0; i < _disposables.Count; i++)
-                if (_disposables[i] is Abstractions.IPausable p) p.Suspend();
-        }
-
-        public void Resume()
-        {
-            if (IsActive) return;
-            IsActive = true;
-            for (int i = 0; i < _disposables.Count; i++)
-                if (_disposables[i] is Abstractions.IPausable p) p.Resume();
-            OnResume();
-        }
+        private ViewportPorts? _viewport;
 
         /// <summary>
-        /// 子类重载以冻结 Feature 级内部状态（WPF 事件订阅屏蔽、定时器取消等）。
-        /// 基类会自动处理 `_disposables` 中的 <see cref="Abstractions.IPausable"/>，无需重复。
+        /// 当前 schema 的 viewport ports。InternalCompose 之后稳定可用;之前 access 抛 InvalidOperation。
         /// </summary>
-        protected virtual void OnSuspend() { }
+        public ViewportPorts Viewport => _viewport
+            ?? throw new InvalidOperationException(
+                $"{GetType().Name}.Viewport 在 ComposeCore 之前被访问。" +
+                "ChartFeature 应仅在 OnCompose / OnProject / Watch 回调中读 viewport,不要在 ctor / OnAttached 中读。");
 
-        /// <summary>
-        /// 子类重载以解冻 Feature 级内部状态。
-        /// </summary>
-        protected virtual void OnResume() { }
-
-        // 💥 顶层视口（L6 / §B.2.6）：由宿主 ReactiveSchema.Add 自动注入。
-        // 业务 Feature 直接用 this.Viewport 即可，外部装配 API 无需再传 vp。
-        // 罕见的双 X 轴场景：在 Feature 初始化块里显式 `new Feature { Viewport = customVp }`，
-        // ReactiveSchema.Add 识别到非 null 值时不覆盖。
-        // 用 plain `set` 而非 `init`，保证 Add(...) 能在构造后补注入。
-        public ViewportPorts Viewport { get; set; } = null!;
-
-        internal ChartCell Chart { get; private set; } = null!;
-        internal ReactiveSchema Schema { get; private set; } = null!;
-        private readonly FeatureContext _context = new();
-
-        internal DataBlackboard? CurrentBoard => Schema.CurrentBoard;
-
-        public sealed override void Compose(ChartCell chart, RenderContext ctx) { /* 封禁原本的虚方法 */ }
-
-        internal IRenderFlow<DataBlackboard> InternalCompose(ChartCell chart, RenderContext ctx, ReactiveSchema schema, IRenderFlow<DataBlackboard> flow)
+        protected override void ComposeCore(ChartCell chart, RenderContext ctx)
         {
-            Chart = chart;
-            Schema = schema;
-            ComposeCore(chart, ctx);
-            using var composeScope = FeatureComposeScope.Enter(flow);
-            OnCompose(chart, ctx, flow);
-            return FeatureComposeScope.Current!.Build();
+            base.ComposeCore(chart, ctx);
+            // Decorate 已跑过,attached ports 此时是最终值(LinkedMaster/Pane 的 SharedViewport 或独立 schema 的私 ports)。
+            _viewport = ViewportPorts.RequireAttached(chart);
         }
 
-        public void Project(RenderContext ctx, DataBlackboard board, SubscriptionRegistry registry, bool isFullPass)
+        protected override void OnDecompose()
         {
-#if DEBUG
-            using var scope = DevTools.TopologyTracer.EnterScope(this);
-            // 拿到挂在 schema 上的 tracer(若拓扑面板没开,Get 返回 null,后续插桩走 null 短路)
-            var tracer = DevTools.TracerRegistry.Get(Schema);
-            long start = tracer != null ? System.Diagnostics.Stopwatch.GetTimestamp() : 0L;
-#endif
-
-            // 修复 H1：复用持久化的 _context 实例，不再每帧 new FeatureContext。
-            //
-            // 原代码的错误：每帧 new FeatureContext 会使 _portTokens 字典归零，
-            // 导致 UsePort 里 TryGetValue 永远返回 false，changed 永远为 true，
-            // 脏检查机制彻底失效，每帧触发全量重绘。
-            //
-            // 正确做法：只刷新帧级可变的调度字段，让 _portTokens 跨帧存活。
-            // BeginProject 已负责重置 _hookCursor（Hook 游标），无需担心重入问题。
-            _context._registry = registry;
-            _context._currentFeature = this;
-            _context._isFullPass = isFullPass;
-
-            _context.BeginProject(ctx, board);
-            OnProject(_context);
-            _context.EndProject();
-
-#if DEBUG
-            // 把这一帧 OnProject 耗时喂回 tracer,UI 显示 "x.x ms" perf 徽章用。
-            if (tracer != null)
-            {
-                long elapsed = System.Diagnostics.Stopwatch.GetTimestamp() - start;
-                tracer.RecordFeatureCost(this, elapsed);
-            }
-#endif
-        }
-
-        protected virtual void ComposeCore(ChartCell chart, RenderContext ctx) { }
-
-        protected IWorkflow<(TEvent Event, DataBlackboard Board)> WithBoard<TEvent>(IWorkflow<TEvent> source)
-        {
-            return new WorkflowEngine<(TEvent Event, DataBlackboard Board)>((onNext, onError) =>
-            {
-                return source.Subscribe(
-                    e =>
-                    {
-                        var board = CurrentBoard;
-                        if (board == null) return;
-                        onNext((e, board));
-                    },
-                    onError);
-            });
-        }
-
-        protected abstract void OnCompose(ChartCell chart, RenderContext ctx, IRenderFlow<DataBlackboard> flow);
-        protected abstract void OnProject(FeatureContext ctx);
-
-        protected VisualProxy<TLayer> AttachLayer<TLayer>(TLayer layer) where TLayer : IChartLayer
-        {
-            if (!layer.Name.EndsWith(InstanceId))
-            {
-                layer.Name = $"{layer.Name}_{InstanceId}";
-            }
-            if (!_managedLayers.Contains(layer)) _managedLayers.Add(layer);
-            return Chart.AddUnmanagedLayer(layer);
-        }
-
-        /// <summary>
-        /// 💥 暴露给 OwnedBy 的生命周期注册接口
-        /// </summary>
-        public void RegisterDisposable(IDisposable disposable)
-        {
-            if (disposable != null && !_disposables.Contains(disposable))
-            {
-                _disposables.Add(disposable);
-            }
-        }
-
-        /// <summary>
-        /// 反查托管资源——跟 ReactiveSchema.Owned 对称。
-        /// 用于按接口级联（feature 子类需要时可在 OnResume 里 <c>foreach (var x in Owned&lt;IXxx&gt;())</c>）。
-        /// </summary>
-        protected IEnumerable<T> Owned<T>() where T : class
-        {
-            for (int i = 0; i < _disposables.Count; i++)
-                if (_disposables[i] is T t) yield return t;
-        }
-
-        public sealed override void Decompose(ChartCell chart, RenderContext ctx)
-        {
-            // 1. 清理图层
-            foreach (var layer in _managedLayers)
-            {
-                chart.RemoveUnmanagedLayer(layer);
-            }
-            _managedLayers.Clear();
-
-            // 2. 💥 彻底斩断流式订阅，防止内存泄漏！
-            foreach (var d in _disposables)
-            {
-                d.Dispose();
-            }
-            _disposables.Clear();
-
-            // 3. 修复 H1 配套：清空跨帧状态。Transact 热插拔后再装配的同一实例必须以"全脏"姿态进入首帧。
-            _context.Reset();
+            base.OnDecompose();
+            // Transact 热插拔场景:同一 feature 实例 Decompose 后可能再次 Add → 再次 ComposeCore 重新注入。
+            // 这里 reset null 让"未注入就读"的协议错误能被 throwing getter 捕获。
+            _viewport = null;
         }
     }
 
@@ -375,9 +260,9 @@ namespace Hevo.Charting.Core
     {
         /// <summary>
         /// 💥 将当前 Rx 流的生命周期强制托管给指定的 Feature。
-        /// Feature 被卸载时自动 Dispose 该流，且 Suspend / Resume 期间正确级联——绝不泄漏内存。
+        /// Feature 被卸载时自动 Dispose 该流,且 Suspend / Resume 期间正确级联——绝不泄漏内存。
         /// </summary>
-        public static IRenderFlow<T> OwnedBy<T>(this IRenderFlow<T> source, ChartFeature feature)
+        public static IRenderFlow<T> OwnedBy<T>(this IRenderFlow<T> source, Feature feature)
         {
             var intercepted = new WorkflowEngine<T>((next, error) =>
             {
@@ -389,14 +274,14 @@ namespace Hevo.Charting.Core
 
                 return token;
             });
-            // 重新穿上马甲，保持图表上下文
+            // 重新穿上马甲,保持图表上下文
             return intercepted.BindTo(source.Chart);
         }
     }
 
     public static class HookExtensions
     {
-        // 💥 魔法 1：双元组解构 -> (Value, IsChanged)
+        // 💥 魔法 1:双元组解构 -> (Value, IsChanged)
         // 适用于绝大多数只读数据拉取和 Memo
         public static void Deconstruct<T>(this IMemo<T> memo, out T value, out bool isChanged)
         {
@@ -404,7 +289,7 @@ namespace Hevo.Charting.Core
             isChanged = memo.IsChanged;
         }
 
-        // 💥 魔法 2：三元组解构 -> (Value, SetValue, IsChanged)
+        // 💥 魔法 2:三元组解构 -> (Value, SetValue, IsChanged)
         // 适用于需要双向绑定的内部 UI 状态 (类似 React)
         public static void Deconstruct<T>(this IState<T> state, out T value, out Action<T> setValue, out bool isChanged)
         {

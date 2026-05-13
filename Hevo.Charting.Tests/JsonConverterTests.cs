@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Windows.Media;
 using Hevo.Charting;
+using Hevo.Charting.Buildin;
+using Hevo.Charting.Core;
 using Hevo.Charting.LowCode.Designer;
 using Hevo.Charting.LowCode.Designer.Converters;
 
@@ -92,6 +94,117 @@ namespace Hevo.Charting.Tests
         {
             var json = "{ \"kind\": \"galaxy_explosion\" }";
             Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<IHevoBrush>(json, Opts));
+        }
+
+        // ============================================================
+        // HevoStringJsonConverter
+        // ============================================================
+
+        [Fact]
+        public void String_Literal_RoundTrip()
+        {
+            IHevoString orig = new HevoLiteralString("涨跌幅");
+            var json = JsonSerializer.Serialize(orig, Opts);
+            Assert.Contains("\"kind\": \"literal\"", json);
+            Assert.Contains("\"text\":", json);
+
+            var back = JsonSerializer.Deserialize<IHevoString>(json, Opts);
+            Assert.IsType<HevoLiteralString>(back);
+            Assert.Equal(orig, back);
+        }
+
+        [Fact]
+        public void String_Resource_RoundTrip()
+        {
+            IHevoString orig = new HevoResourceString("TooltipKeys.ChangePct");
+            var json = JsonSerializer.Serialize(orig, Opts);
+            Assert.Contains("\"kind\": \"resource\"", json);
+            Assert.Contains("\"key\": \"TooltipKeys.ChangePct\"", json);
+
+            var back = JsonSerializer.Deserialize<IHevoString>(json, Opts);
+            Assert.IsType<HevoResourceString>(back);
+            Assert.Equal(orig, back);
+        }
+
+        [Fact]
+        public void String_UnknownKind_Throws()
+        {
+            var json = "{ \"kind\": \"alien_dialect\" }";
+            Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<IHevoString>(json, Opts));
+        }
+
+        // 兼容历史蓝图里 `"Name": {}` 这种占位写法 —— 不该抛,返回 null 让上层 fallback 接住。
+        [Fact]
+        public void String_EmptyObject_ReturnsNull()
+        {
+            var back = JsonSerializer.Deserialize<IHevoString>("{}", Opts);
+            Assert.Null(back);
+        }
+
+        [Fact]
+        public void String_Null_ReturnsNull()
+        {
+            var back = JsonSerializer.Deserialize<IHevoString>("null", Opts);
+            Assert.Null(back);
+        }
+
+        // ============================================================
+        // BrushResolverJsonConverter
+        // ============================================================
+
+        [Fact]
+        public void Resolver_Static_RoundTrip()
+        {
+            IBrushResolver<double> orig = new StaticBrushResolver<double>(new HevoSolidBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)));
+            var json = JsonSerializer.Serialize(orig, Opts);
+            Assert.Contains("\"kind\": \"static\"", json);
+            Assert.Contains("\"brush\":", json);
+
+            var back = JsonSerializer.Deserialize<IBrushResolver<double>>(json, Opts);
+            Assert.IsType<StaticBrushResolver<double>>(back);
+            var sb = (StaticBrushResolver<double>)back!;
+            Assert.Equal(new HevoSolidBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)), sb.ConstantBrush);
+        }
+
+        // 兼容老蓝图里直接 record-style 序列化的 { "ConstantBrush": {...} } 形态。
+        [Fact]
+        public void Resolver_LegacyConstantBrush_Reads()
+        {
+            var json = "{ \"ConstantBrush\": { \"kind\": \"solid\", \"color\": \"#CCCCCC\" } }";
+            var back = JsonSerializer.Deserialize<IBrushResolver<double>>(json, Opts);
+            Assert.IsType<StaticBrushResolver<double>>(back);
+        }
+
+        [Fact]
+        public void Resolver_Threshold_Reads()
+        {
+            var json = @"{
+                ""kind"": ""threshold"",
+                ""threshold"": 0,
+                ""above"": { ""kind"": ""solid"", ""color"": ""#33FF66"" },
+                ""below"": { ""kind"": ""solid"", ""color"": ""#FF4444"" },
+                ""equal"": { ""kind"": ""solid"", ""color"": ""#CCCCCC"" }
+            }";
+            var back = JsonSerializer.Deserialize<IBrushResolver<double>>(json, Opts);
+            Assert.IsType<ThresholdBrushResolver>(back);
+            // Resolve 行为验证:正值 → above,负值 → below
+            var above = back!.Resolve(1.0);
+            var below = back!.Resolve(-1.0);
+            Assert.NotEqual(above, below);
+        }
+
+        [Fact]
+        public void Resolver_UnknownKind_Throws()
+        {
+            var json = "{ \"kind\": \"rainbow_pulse\" }";
+            Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<IBrushResolver<double>>(json, Opts));
+        }
+
+        [Fact]
+        public void Resolver_EmptyObject_ReturnsNull()
+        {
+            var back = JsonSerializer.Deserialize<IBrushResolver<double>>("{}", Opts);
+            Assert.Null(back);
         }
 
         // ============================================================

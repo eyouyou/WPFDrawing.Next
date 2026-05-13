@@ -14,13 +14,20 @@ namespace Hevo.Charting.Features
         public override FeaturePhase Phase => FeaturePhase.Interaction;
 
         /// <summary>要监听的目标端口(任意 DataPort&lt;T&gt;)。任意写入且值真变都会打印到 Debug 输出。</summary>
-        public object TargetPort { get; init; } = null!;
+        public object? TargetPort { get; init; }
 
         /// <summary>调试日志前缀,用于在多个雷达同时挂载时区分输出。</summary>
         public string Label { get; init; } = "Debug";
 
         protected override void OnCompose(ChartCell chart, RenderContext ctx, IRenderFlow<DataBlackboard> flow)
         {
+            // 业务忘传 / 蓝图反射没识别(详见 ChartBlueprint object 类型 PortBindings 回退路径)→ silent skip。
+            if (TargetPort == null)
+            {
+                Debug.WriteLine($"[雷达 {Label}] TargetPort 未配置,雷达跳过装配。");
+                return;
+            }
+
             // 💥 完美利用我们刚写好的 0-GC 精确制导 Watch！
             // 只要 TargetPort 被写入，并且值真的变了，这里就会触发！
             flow.WatchAsync(new[] { TargetPort }, board =>

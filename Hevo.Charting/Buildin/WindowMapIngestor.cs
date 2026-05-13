@@ -88,7 +88,7 @@ namespace Hevo.Charting.Buildin
             int period, // 为了语义清晰，建议把必填参数 period 往前挪
             Func<TItem, TSource, double> selector,
             Func<double, double, double> reducer)
-            where TSource : DataSource<TSource, TItem>
+            where TSource : BufferedDataSource<TSource, TItem>
         {
             cfg.Plug(new WindowMapIngestor<TSource, TItem>(
                 targetPort,

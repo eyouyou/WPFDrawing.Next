@@ -72,6 +72,11 @@ namespace Hevo.Charting.Buildin
     /// </summary>
     public sealed class MouseAnchorZoomStrategy : IZoomStrategy
     {
+        /// <summary>无状态单例 —— NodeEditorWindow 的接口下拉自动发现这个字段;
+        /// <see cref="LowCode.Designer.Converters.ZoomStrategyJsonConverter"/> 反序列化"kind=mouseAnchor"时返回它,
+        /// 保证 JSON 往返 + 编辑器选中态用 ReferenceEquals 能对上。</summary>
+        public static readonly MouseAnchorZoomStrategy Instance = new();
+
         public RealRange Calculate(in ZoomContext ctx)
         {
             double span = ZoomMath.ClampSpan(ctx.RawTargetSpan, ctx.Limits);
@@ -85,6 +90,9 @@ namespace Hevo.Charting.Buildin
     /// </summary>
     public sealed class RightEdgeZoomStrategy : IZoomStrategy
     {
+        /// <summary>无状态单例。详见 <see cref="MouseAnchorZoomStrategy.Instance"/> 说明。</summary>
+        public static readonly RightEdgeZoomStrategy Instance = new();
+
         public RealRange Calculate(in ZoomContext ctx)
         {
             double span = ZoomMath.ClampSpan(ctx.RawTargetSpan, ctx.Limits);
@@ -97,6 +105,9 @@ namespace Hevo.Charting.Buildin
     /// </summary>
     public sealed class SmartAdaptiveZoomStrategy : IZoomStrategy
     {
+        /// <summary>无状态单例。详见 <see cref="MouseAnchorZoomStrategy.Instance"/> 说明。</summary>
+        public static readonly SmartAdaptiveZoomStrategy Instance = new();
+
         public RealRange Calculate(in ZoomContext ctx)
         {
             double span = ZoomMath.ClampSpan(ctx.RawTargetSpan, ctx.Limits);
@@ -111,6 +122,9 @@ namespace Hevo.Charting.Buildin
     /// </summary>
     public sealed class LeftEdgeZoomStrategy : IZoomStrategy
     {
+        /// <summary>无状态单例。详见 <see cref="MouseAnchorZoomStrategy.Instance"/> 说明。</summary>
+        public static readonly LeftEdgeZoomStrategy Instance = new();
+
         public RealRange Calculate(in ZoomContext ctx)
         {
             double span = ZoomMath.ClampSpan(ctx.RawTargetSpan, ctx.Limits);
@@ -125,6 +139,9 @@ namespace Hevo.Charting.Buildin
     /// </summary>
     public sealed class CrosshairAnchorZoomStrategy : IZoomStrategy
     {
+        /// <summary>无状态单例。详见 <see cref="MouseAnchorZoomStrategy.Instance"/> 说明。</summary>
+        public static readonly CrosshairAnchorZoomStrategy Instance = new();
+
         public RealRange Calculate(in ZoomContext ctx)
         {
             double span = ZoomMath.ClampSpan(ctx.RawTargetSpan, ctx.Limits);
@@ -142,6 +159,9 @@ namespace Hevo.Charting.Buildin
     /// </summary>
     public sealed class DirectionalZoomStrategy : IZoomStrategy
     {
+        /// <summary>无状态单例。详见 <see cref="MouseAnchorZoomStrategy.Instance"/> 说明。</summary>
+        public static readonly DirectionalZoomStrategy Instance = new();
+
         public RealRange Calculate(in ZoomContext ctx)
         {
             double span = ZoomMath.ClampSpan(ctx.RawTargetSpan, ctx.Limits);

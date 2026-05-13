@@ -1,9 +1,14 @@
 using Hevo.Charting.Core;
 using Hevo.Charting.LowCode;
+using Hevo.Charting.LowCode.Designer.Converters;
+using Hevo.Charting.WorkFlow;
 using System.ComponentModel;
+using System.Linq;
 using System.Reflection;
+using System.Text.Json.Serialization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 
 namespace Hevo.Charting.LowCode.Designer.GraphViewer
@@ -17,27 +22,44 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
     {
         public Node? Result { get; private set; }
 
-        private readonly Node _node;
+        private readonly BlueprintHandlerRegistry? _handlers;
+        private Node _node;   // §D2.X "重新配置多输入"按钮会就地 mutate(替换 InputPorts/Properties),Confirm 时一起返
         private readonly Type _runtimeType;
         private readonly Dictionary<string, Func<object?>> _readers = new();
+        private StackPanel? _fieldsPanel;   // BuildUi 创建一次,§D2.X 重配后 RefreshFieldsPanel 清空 + 重建
 
-        public NodeEditorWindow(Node node)
+        public NodeEditorWindow(Node node, BlueprintHandlerRegistry? handlers = null)
         {
             _node = node;
+            _handlers = handlers;
             // 蓝图侧不依赖类型实例,这里只用反射查 metadata。Resolve 失败时 Type=null 走只读模式。
             _runtimeType = TryResolveType(node.TypeName) ?? typeof(object);
 
             Title = $"编辑 — {node.Title}";
-            Width = 460; Height = 560;
+            Width = 460; Height = 600;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             Background = new SolidColorBrush(Color.FromRgb(0x20, 0x22, 0x29));
 
             BuildUi();
+
+            PreviewKeyDown += (_, e) =>
+            {
+                if (e.Key == Key.Escape) { DialogResult = false; Close(); e.Handled = true; }
+            };
         }
 
-        private static Type? TryResolveType(string typeName)
+        private Type? TryResolveType(string typeName)
         {
-            try { return ComponentRegistry.Resolve(typeName); }
+            try
+            {
+                var t = ComponentRegistry.Resolve(typeName);
+                // 开放泛型 sentinel(Composite<>):编辑器无法在不知道蓝图全文的情况下闭合 TItem ——
+                // node-wrap 模式下 TItem 由"哪些 DS 被 UpstreamRefs 引用进来"决定,这条信息在 GraphState
+                // 边集合里,不在 _node.Properties 里。编辑器拿不到闭合类型只能放过(IsGenericTypeDefinition 时返 null),
+                // 由 BuildFields 跳过 properties 反射展开;运行期由 GraphDeserializer.ResolveCompositeTypeForGraph
+                // 走完整蓝图视野的反推。
+                return t.IsGenericTypeDefinition ? null : t;
+            }
             catch { return null; }
         }
 
@@ -59,11 +81,11 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 Margin = new Thickness(8, 0, 8, 6),
             };
-            var fields = new StackPanel();
-            scroll.Content = fields;
+            _fieldsPanel = new StackPanel();
+            scroll.Content = _fieldsPanel;
             grid.Children.Add(scroll); Grid.SetRow(scroll, 1);
 
-            BuildFields(fields);
+            BuildFields(_fieldsPanel);
 
             var btnPanel = new StackPanel
             {
@@ -82,12 +104,36 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             Content = grid;
         }
 
+        /// <summary>§D2.X 重配 multi-input 后调:清掉 readers 缓存 + 清空 fields 面板 + 重新 BuildFields。</summary>
+        private void RefreshFieldsPanel()
+        {
+            if (_fieldsPanel == null) return;
+            _readers.Clear();
+            _fieldsPanel.Children.Clear();
+            BuildFields(_fieldsPanel);
+        }
+
         private void BuildFields(StackPanel host)
         {
+            // §D2.X 任何 Feature 有 Delegate 属性(ComputeFeature/HandlerFeature/PlotFeature)→
+            // 插一个"Handler 配置"区块,显示当前 handler 名 + inputs(若有)+ "选择..." 按钮。
+            // 单输入 / 多输入统一走 HandlerPickerWindow + NodeFactory.ApplyHandlerSelection。
+            var delegateProp = _runtimeType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .FirstOrDefault(p => typeof(Delegate).IsAssignableFrom(p.PropertyType));
+            if (delegateProp != null)
+            {
+                BuildHandlerSection(host, delegateProp);
+            }
+
             // 1. 反射拿候选属性。规则:public 实例 + 可写 (init 也算) + 类型是可编辑标量。
             //    DataPort<T> 不算 (走连线,不在编辑器里改);ChartFeature 内部状态 (Phase / InstanceId) 不算。
+            //    §D2.X Delegate 属性已在顶部 BuildHandlerSection 渲染了 picker,这里跳过避免双显示。
+            //    InputOrder 也由 picker 同步管理(单/多输入切换时自动设),不让用户手撸 string[] 出错。
             var props = _runtimeType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
                                     .Where(IsEditableScalar)
+                                    .Where(p => !typeof(Delegate).IsAssignableFrom(
+                                        Nullable.GetUnderlyingType(p.PropertyType) ?? p.PropertyType))
+                                    .Where(p => p.Name != "InputOrder")
                                     .OrderBy(p => p.DeclaringType == _runtimeType ? 0 : 1) // 自身定义的优先
                                     .ThenBy(p => p.Name)
                                     .ToList();
@@ -102,6 +148,9 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                     BuildMappingEditor(host, "VectorMappings", vm);
             }
 
+            // Composite<TItem> 派生节点:上游由画布连线表达(从 DS.Stream 拖到 composite.Upstreams 端口),
+            // GraphSerializer 把这些 edges 翻译成 DataSourceModel.UpstreamRefs。编辑器里没有"inline upstream spec"概念。
+
             if (props.Count == 0 && _readers.Count == 0)
             {
                 host.Children.Add(MakeText("(无可编辑属性) 该节点没有简单标量字段;复杂字段需在 JSON 里手写。",
@@ -113,6 +162,91 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             {
                 BuildOneField(host, p);
             }
+        }
+
+        /// <summary>
+        /// §D2.X Handler 配置区块(单 + 多输入统一)。包含:
+        /// - 当前 handler 名 + inputs 列表(若展开过 child input ports)
+        /// - "选择 handler..." 按钮 → 弹 HandlerPickerWindow,选了就 ApplyHandlerSelection + RefreshFieldsPanel
+        /// </summary>
+        private void BuildHandlerSection(StackPanel host, PropertyInfo delegateProp)
+        {
+            var box = new Border
+            {
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0x4F, 0xC3, 0xF7)),
+                BorderThickness = new Thickness(1),
+                Background = new SolidColorBrush(Color.FromRgb(0x18, 0x24, 0x30)),
+                Padding = new Thickness(10),
+                Margin = new Thickness(8, 8, 8, 4),
+                CornerRadius = new CornerRadius(3),
+            };
+            var sp = new StackPanel();
+            box.Child = sp;
+
+            sp.Children.Add(MakeText($"§D2.X Handler 配置 — {delegateProp.Name}", 12, FontWeights.SemiBold, 0x4FC3F7u));
+
+            string? currentHandler = null;
+            if (_node.Properties.TryGetValue(delegateProp.Name, out var v) && v is string s)
+                currentHandler = s;
+
+            sp.Children.Add(MakeText(
+                currentHandler != null
+                    ? $"当前 handler: {currentHandler}"
+                    : "(未设置 handler — 选 \"选择 handler...\" 挑一个)",
+                11, FontWeights.Normal, 0xE0E6ECu));
+
+            // 当前 inputs(从展开的 child port 名拿,无则按"单输入" / "未展开"提示)
+            var dictFields = NodeFactory.ListInputDictFields(_runtimeType);
+            if (dictFields.Count > 0)
+            {
+                var prefix = dictFields[0].FieldName + ".";
+                var currentInputs = _node.InputPorts
+                    .Where(p => p.Id.StartsWith(prefix, StringComparison.Ordinal))
+                    .Select(p => p.Id.Substring(prefix.Length))
+                    .ToList();
+                sp.Children.Add(MakeText(
+                    currentInputs.Count > 0
+                        ? $"当前 inputs: [{string.Join(", ", currentInputs)}]  ({currentInputs.Count} args)  — 多输入模式"
+                        : "(未展开 input 槽 — 单输入 handler 走 InputPort 字段连线)",
+                    11, FontWeights.Normal, 0xB0BEC5u));
+            }
+
+            var btn = new Button
+            {
+                Content = "选择 handler...",
+                Padding = new Thickness(12, 4, 12, 4),
+                Margin = new Thickness(0, 8, 0, 0),
+                HorizontalAlignment = HorizontalAlignment.Left,
+            };
+            btn.Click += (_, __) => OnReconfigureHandler(currentHandler);
+            sp.Children.Add(btn);
+
+            if (_handlers == null)
+            {
+                sp.Children.Add(MakeText(
+                    "(NodeEditor 没拿到 BlueprintHandlerRegistry —— 按钮不可用。宿主需用 new NodeEditorWindow(node, handlers) 二参 ctor。)",
+                    10.5, FontWeights.Normal, 0xEF5350u, italic: true));
+                btn.IsEnabled = false;
+            }
+
+            host.Children.Add(box);
+        }
+
+        private void OnReconfigureHandler(string? currentHandler)
+        {
+            if (_handlers == null) return;
+            var picker = new HandlerPickerWindow(
+                _node.TypeName,
+                _handlers.EnumerateAllHandlers(),
+                currentHandler)
+            {
+                Owner = this,
+            };
+            if (picker.ShowDialog() != true || picker.SelectedHandlerName == null) return;
+
+            _node = NodeFactory.ApplyHandlerSelection(
+                _node, _runtimeType, picker.SelectedHandlerName, picker.SelectedInputNames);
+            RefreshFieldsPanel();
         }
 
         // ===== 接口实例选择器 =====
@@ -179,6 +313,117 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                 return idx >= 0 && idx < instances.Count ? instances[idx].Instance : null;
             };
             return combo;
+        }
+
+        // §9.3 通用多态 picker:converter 自带 Kinds 列表 → 下拉 + 嵌套子属性编辑器递归编辑选中 kind 的字段。
+        // 跟 MakeInterfaceInstancePicker 的差别:不要求 impl 自挂 public static 单例;带参实现(FixedWindowZoomStrategy
+        // 等)也能进下拉,改完字段后 picker 反射 SetValue 把 sub-readers 的值刷到 factory new 出来的 instance 上。
+        private static readonly Dictionary<Type, IPolymorphicJsonConverter?> _polyConverterCache
+            = new();
+
+        private static IPolymorphicJsonConverter? FindPolymorphicConverter(Type targetType)
+        {
+            if (_polyConverterCache.TryGetValue(targetType, out var cached)) return cached;
+            // BlueprintJsonOptions.Default 是序列化的 single source of truth,所有 polymorphic converter
+            // 一定在它的 Converters 列表里(注册路径就一条)。OfType + FirstOrDefault 一次 O(n) 查找,n≈5,缓存后零开销。
+            IPolymorphicJsonConverter? hit = null;
+            foreach (var c in BlueprintJsonOptions.Default.Converters)
+            {
+                if (c is IPolymorphicJsonConverter poly && poly.TargetType == targetType)
+                {
+                    hit = poly;
+                    break;
+                }
+            }
+            _polyConverterCache[targetType] = hit;
+            return hit;
+        }
+
+        private FrameworkElement MakePolymorphicPicker(IPolymorphicJsonConverter conv, object? current, out Func<object?> reader)
+        {
+            var kinds = conv.Kinds;
+            if (kinds.Count == 0)
+            {
+                reader = () => current;
+                return MakeText($"[{conv.TargetType.Name}] converter Kinds 为空,无法配置。",
+                    11, FontWeights.Normal, 0xA0A8B0u, italic: true);
+            }
+
+            var stack = new StackPanel();
+            var combo = new ComboBox { ItemsSource = kinds.Select(k => k.Label).ToList() };
+            // 嵌套子属性编辑器容器 —— 用户在 combo 改 kind 时清空 + 用 factory 默认实例重建
+            var subPanel = new StackPanel { Margin = new Thickness(12, 4, 0, 0) };
+            stack.Children.Add(combo);
+            stack.Children.Add(subPanel);
+
+            // 当前值 → 按 IsInstanceOfType 匹配 kind(支持子类),失败回落到第一个
+            int selectedIdx = 0;
+            if (current != null)
+            {
+                for (int i = 0; i < kinds.Count; i++)
+                {
+                    if (kinds[i].ImplType.IsInstanceOfType(current)) { selectedIdx = i; break; }
+                }
+            }
+
+            var subReaders = new Dictionary<string, Func<object?>>(StringComparer.Ordinal);
+
+            void Rebuild(object instance)
+            {
+                subPanel.Children.Clear();
+                subReaders.Clear();
+                foreach (var prop in instance.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    if (!IsEditableScalar(prop)) continue;
+                    object? currentVal;
+                    try { currentVal = prop.GetValue(instance); } catch { continue; }
+
+                    var fieldBox = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
+                    fieldBox.Children.Add(MakeText(prop.Name, 11, FontWeights.SemiBold, 0xC0C8D0u));
+                    // 递归调 MakeEditorByType —— 子属性可以是任何已支持类型(原子标量 / 嵌套 ConfigGroup /
+                    // 甚至嵌套 polymorphic,如 HistoryAwareZoomStrategy.DuringPaging:IZoomStrategy)
+                    var subEditor = MakeEditorByType(prop.PropertyType, currentVal, out var subReader);
+                    fieldBox.Children.Add(subEditor);
+                    subPanel.Children.Add(fieldBox);
+                    subReaders[prop.Name] = subReader;
+                }
+            }
+
+            // 先设 SelectedIndex 再挂事件 —— 否则 ComboBox 的 SelectedIndex setter 会 fire SelectionChanged,
+            // 把"用 current 重建" overwrite 成"用 factory 默认重建",WindowBars=200 退回 100。
+            combo.SelectedIndex = selectedIdx;
+            Rebuild(current ?? kinds[selectedIdx].Factory());
+            combo.SelectionChanged += (_, _) =>
+            {
+                int idx = combo.SelectedIndex;
+                if (idx < 0 || idx >= kinds.Count) return;
+                // 用户改 kind → 重建,起始字段值 = factory 默认。原 current 已无意义(类型不匹配新 kind)。
+                Rebuild(kinds[idx].Factory());
+            };
+
+            reader = () =>
+            {
+                int idx = combo.SelectedIndex;
+                if (idx < 0 || idx >= kinds.Count) return current;
+                var instance = kinds[idx].Factory();
+                // 用反射把 sub-readers 的值刷到 instance —— init-only 属性 reflection SetValue 仍可写穿透。
+                // get-only 属性 (如 StaticBrushResolver<double>.ConstantBrush) prop.CanWrite=false,
+                // 已经在 IsEditableScalar 阶段被过滤,不会进 subReaders 字典,无需在这里再防。
+                foreach (var kv in subReaders)
+                {
+                    var prop = instance.GetType().GetProperty(kv.Key);
+                    if (prop == null || !prop.CanWrite) continue;
+                    try { prop.SetValue(instance, kv.Value()); }
+                    catch (Exception ex)
+                    {
+                        // 子 reader 返回不兼容类型时 SetValue 抛 ArgumentException 等 —— 容忍并保留 factory 默认值。
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[PolymorphicPicker] SetValue {prop.Name} on {instance.GetType().Name} 失败: {ex.Message}");
+                    }
+                }
+                return instance;
+            };
+            return stack;
         }
 
         // 单个属性编辑控件;reader 把当前 UI 值翻译回原始类型,Confirm 时写入 Properties。
@@ -256,6 +501,10 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             };
         }
 
+        // Inline Upstreams 编辑器已移除 —— Composite 上游统一由画布拖线(node-wrap):
+        // 从 DS.Stream 拖到 composite.Upstreams 端口,GraphSerializer 把这些 edges 翻译成 DataSourceModel.UpstreamRefs。
+
+
         // 类型 → 控件;reader 是"把 UI 拿出来翻译成 prop.PropertyType 兼容值"的闭包。
         private FrameworkElement MakeEditor(PropertyInfo prop, object? value, out Func<object?> reader)
             => MakeEditorByType(prop.PropertyType, value, out reader);
@@ -295,6 +544,14 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                 // 两路:HevoSolidBrush(选 Color) / HevoResourceBrush(填 Key)。
                 return MakeBrushEditor(value as IHevoBrush, out reader);
             }
+            // §9.3 通用多态 picker:查 BlueprintJsonOptions 注册的 IPolymorphicJsonConverter,
+            // 命中即用"kind 下拉 + 嵌套子属性编辑器"渲染。覆盖 IZoomStrategy / IHevoString / IBrushResolver<double> 等。
+            // 必须在 ConfigGroup / InterfaceInstancePicker 之前 —— 这两条是更通用的 fallback。
+            {
+                var polyConv = FindPolymorphicConverter(underlying);
+                if (polyConv != null)
+                    return MakePolymorphicPicker(polyConv, value, out reader);
+            }
             if (IsConfigGroup(underlying))
             {
                 // record / 含主构造的 struct:把 ctor params 当成"配置组"展开,层层钻进编辑。
@@ -306,11 +563,30 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                 // 典型:ScaleStrategyTrait 的 IScale DomainScale / ValueScale → CategoryScale.Edge / LinearScale.Instance / ...
                 return MakeInterfaceInstancePicker(underlying, value, out reader);
             }
+            if (typeof(Delegate).IsAssignableFrom(underlying))
+            {
+                // 协议扩展 §K:Delegate 字段在蓝图层用 string handler 名表达。
+                // value 大概率是 string(从 Properties 字典)或 null;万一是 Delegate 实例显示占位符。
+                string initial = value switch
+                {
+                    string s => s,
+                    Delegate => "<已绑定委托,改写下方文本框换成 handler 名>",
+                    _ => "",
+                };
+                var tb = MakeTextBox(initial);
+                reader = () =>
+                {
+                    var s = tb.Text?.Trim() ?? "";
+                    return string.IsNullOrEmpty(s) ? null : s;
+                };
+                return tb;
+            }
 
             // 默认走 TextBox + 类型转换 (走 TypeConverter 兜底,跟 SmartActivator 一致)。
             // NaN / Infinity 这种"程序员默认值"对编辑器用户毫无意义,而且回写后 JSON 序列化会炸,
-            // 一律按空串显示;用户留空 → CoerceTextValue 返回 null → SmartActivator.SafeChangeType
-            // 对非 nullable double 写 null 会失败,被静默吞,属性保持目标对象初始值。
+            // 一律按空串显示;用户留空 → CoerceTextValue 返回 null → Confirm 路径检测到 null 删 key
+            // (见 Confirm 内注释)→ InjectProperties 不 fire setter,init 默认值保留。
+            // 这条链条 fail-fast 友好 —— 不再依赖 SmartActivator silent-swallow 兜底。
             var text = MakeTextBox(IsSpecialFloat(value) ? "" : (value?.ToString() ?? ""));
             reader = () => CoerceTextValue(text.Text, underlying);
             return text;
@@ -366,6 +642,11 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                 reader = () => value;
                 return MakeText($"[无可用主构造] {type.Name}", 12, FontWeights.Normal, 0xA0A8B0u, italic: true);
             }
+
+            // 蓝图 JSON round-trip 后 Properties 里的复合对象会变成 JsonElement / Dictionary<string,object?>,
+            // 不是 type 的实例 —— 直接 prop.GetValue(value) 会抛 TargetException。一律降级到"无当前值",
+            // 子字段走类型默认显示,用户可重新填一遍再 ctor.Invoke 重组出真正的 type 实例。
+            if (value != null && !type.IsInstanceOfType(value)) value = null;
 
             var border = new Border
             {
@@ -600,8 +881,14 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             if (t.IsPrimitive) return true;       // int/long/float/double/byte/char etc.
             if (t == typeof(decimal)) return true;
             if (t == typeof(DateTime) || t == typeof(TimeSpan)) return true;
+            // 协议扩展 §K:Delegate 字段在蓝图层用 "string handler 名" 表达,
+            // 加载时 ResolveHandlerReferences 翻译为已注册委托。编辑器走 string TextBox。
+            if (typeof(Delegate).IsAssignableFrom(t)) return true;
             // record / DTO 主构造可重组的类型 → 走配置组编辑器(AxisStyleTrait / LineStyle / FieldMeta 等)
             if (IsConfigGroup(t)) return true;
+            // §9.3 接口/抽象类有 polymorphic converter 注册 → 走通用多态 picker (kind 下拉 + 嵌套子编辑器)。
+            // 优先级高于"扫静态单例"路径,带参实现也能进下拉。
+            if (FindPolymorphicConverter(t) != null) return true;
             // 接口类型且扫得到 public static 单例 → 走接口实例选择器
             // (典型 IScale: CategoryScale.Edge / LinearScale.Instance / ...)
             if (t.IsInterface && EnumerateInterfaceInstances(t).Count > 0) return true;
@@ -623,10 +910,20 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
         {
             // 写回 Properties:reader 给的值原样塞进字典 (Color / Enum / 数值 全部保留原始 .NET 类型,
             // 序列化阶段交给 SmartActivator + System.Text.Json 再做一次 normalize)。
+            //
+            // 💥 null reader 值删 key,而不是写 null。
+            //   场景:用户清空数值文本框 → CoerceTextValue 返回 null → 表示"恢复默认"。
+            //   旧做法:写 null 进 Properties,加载时 InjectProperties 调 CoerceValue(null, double) → null →
+            //          setter 把 null unbox 到 double 抛 NRE → 外层 swallow → 默认值保留(全链条 silent error 兜底)。
+            //   新做法:Properties 干脆不带这个 key,装配期 InjectProperties 根本不 fire setter,init 默认值天然保留。
+            //          跟 ComponentRegistry.InjectProperties 的 fail-fast 契约对齐 ——
+            //          再有 null → 非 Nullable 值类型 出现就是真错,立刻抛。
             var newProps = new Dictionary<string, object?>(_node.Properties);
             foreach (var kv in _readers)
             {
-                newProps[kv.Key] = kv.Value();
+                var v = kv.Value();
+                if (v == null) newProps.Remove(kv.Key);
+                else newProps[kv.Key] = v;
             }
             Result = _node with { Properties = newProps };
             DialogResult = true;

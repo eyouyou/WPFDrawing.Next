@@ -6,12 +6,22 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 
 namespace Hevo.Charting.LowCode.Designer.GraphViewer
 {
+    /// <summary>"运行 Dashboard" 按钮行为开关 —— 独立 demo vs 嵌入宿主两种语义二选一。</summary>
+    public enum RunButtonMode
+    {
+        /// <summary>默认:点按钮弹独立预览 Window(<see cref="DashboardLauncher.LaunchEx"/> + new Window)。</summary>
+        SpawnPreviewWindow,
+        /// <summary>嵌入宿主接 <c>RunRequested</c> 事件自行决定运行行为(典型:重装上下分屏的下半部 chart)。</summary>
+        InvokeRunHandler,
+    }
+
     /// <summary>
     /// §D1.3 DashboardWorkspace — 多 cell 蓝图编辑器。
-    /// 持 N 个 GraphViewer（各自一个 GraphSchema），垂直 Grid 按 HeightRatio 分配高度。
+    /// 持 N 个 GraphViewer（各自一份 graph editor schema bundle），垂直 Grid 按 HeightRatio 分配高度。
     /// 工具栏动作（添加节点、自动布局等）作用于当前激活 cell；
     /// Dashboard 级动作（导出 JSON、运行 Dashboard）跨所有 cell。
     /// zero-link 单 cell 时行为等价于 LowCodeDemoView。
@@ -25,7 +35,11 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             public required string Id { get; set; }
             public DashboardCellRole Role { get; set; } = DashboardCellRole.Pane;
             public double HeightRatio { get; set; } = 1;
-            public GraphSchema Schema { get; } = new GraphSchema();
+            // graph editor schema:
+            // GraphEditorSchema 跟 KLineSchema 等量齐观,内部持 BlueprintDataSource + 单一 GraphInteractionFeature。
+            public GraphEditorSchema Schema { get; } = new GraphEditorSchema();
+            public BlueprintDataSource State => Schema.DataSource;
+            public GraphInteractionFeature Interaction => Schema.Interaction;
             public ChartHost Host { get; } = new ChartHost();
 
             // pre-built visual elements (created once, re-parented on rebuild)
@@ -63,18 +77,59 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
         private readonly Button _btnExport    = Btn("导出 JSON");
         private readonly Button _btnImport    = Btn("导入 JSON");
         private readonly Button _btnRun       = Btn("运行 Dashboard");
-        private readonly TextBox _tbCtx       = CtxBox();
 
         private static readonly JsonSerializerOptions _json = BlueprintJsonOptions.Default;
 
-        /// <summary>业务侧可注入"字符串 → 运行时上下文"转换器（同 LowCodeDemoView.ContextParser）。</summary>
-        public Func<string, object?>? ContextParser { get; set; }
+        // 500ms debounce timer — 编辑期间最后一次画布变更后 500ms 才 fire BlueprintStabilized,
+        // 用法跟 LowCodeDemoView.BlueprintStabilized 同款,宿主拿到稳定快照后实时联动 / 落盘。
+        private const int StabilizeDelayMs = 500;
+        private readonly DispatcherTimer _stabilizeTimer;
+
+        /// <summary>
+        /// 画布稳定 500ms 后触发,载荷 = <see cref="ToDashboard"/> 当前快照。
+        /// 宿主(典型 BlueprintDashboardCanvas)订阅后 <see cref="DashboardLauncher.LaunchEx"/> 重装 + 落盘。
+        /// debounce 由内部 <see cref="DispatcherTimer"/> 实现:每次 cell StateChanged reset timer,
+        /// 用户连续编辑期间不会触发,停手 500ms 才 emit 一次。
+        /// </summary>
+        public event Action<Dashboard>? BlueprintStabilized;
+
+        /// <summary>
+        /// "运行 Dashboard" 工具栏按钮的行为模式。
+        /// <list type="bullet">
+        ///   <item><see cref="RunButtonMode.SpawnPreviewWindow"/>(默认)— 按 <see cref="RunDashboard"/> 弹独立预览窗口,
+        ///         跟旧版 LowCodeDemo "Dashboard 编辑器" tab 行为一致。</item>
+        ///   <item><see cref="RunButtonMode.InvokeRunHandler"/> — 按钮改 fire <see cref="RunRequested"/> 事件,
+        ///         宿主接事件后自行决定怎么"运行"(典型:嵌入场景里直接重装宿主已有的下半部 chart)。</item>
+        /// </list>
+        /// </summary>
+        public RunButtonMode RunMode { get; set; } = RunButtonMode.SpawnPreviewWindow;
+
+        /// <summary>
+        /// 当 <see cref="RunMode"/> = <see cref="RunButtonMode.InvokeRunHandler"/> 时,
+        /// "运行 Dashboard" 按钮 click 立即触发本事件,载荷 = 当前 Dashboard 快照。
+        /// 同帧 stop <see cref="_stabilizeTimer"/> 避免跟 <see cref="BlueprintStabilized"/> double-fire。
+        /// </summary>
+        public event Action<Dashboard>? RunRequested;
 
         // ── ctor ──────────────────────────────────────────────────────────────
 
         public DashboardWorkspace()
         {
             Background = Brush(0x1A, 0x1B, 0x1F);
+
+            _stabilizeTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(StabilizeDelayMs),
+            };
+            _stabilizeTimer.Tick += (_, __) =>
+            {
+                _stabilizeTimer.Stop();
+                try { BlueprintStabilized?.Invoke(ToDashboard()); }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[DashboardWorkspace] BlueprintStabilized 处理抛异常:{ex.Message}");
+                }
+            };
 
             // row 0: toolbar | row 1: tab strip | row 2: cells + JSON side-by-side
             _outerGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -138,7 +193,22 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             _btnDelCell.Click   += (_, __) => DeleteActive();
             _btnExport.Click    += (_, __) => ExportJson();
             _btnImport.Click    += (_, __) => ImportJson();
-            _btnRun.Click       += (_, __) => RunDashboard();
+            _btnRun.Click       += (_, __) =>
+            {
+                if (RunMode == RunButtonMode.InvokeRunHandler)
+                {
+                    // 嵌入模式:宿主自管运行。stop timer 防跟 BlueprintStabilized 同帧 double-fire ——
+                    // 用户按"运行"是显式同步触发,debounce 队列里的待 fire 应该作废。
+                    _stabilizeTimer.Stop();
+                    try { RunRequested?.Invoke(ToDashboard()); }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[DashboardWorkspace] RunRequested 处理抛异常:{ex.Message}");
+                    }
+                    return;
+                }
+                RunDashboard();
+            };
 
             // initial cells: Master (3) + one Pane (1)
             AddCell("main",  DashboardCellRole.Master, 3);
@@ -161,14 +231,11 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             Add(_btnAutoLay); Add(_btnClearCell); Sep();
             Add(_btnAddCell); Add(_btnDelCell); Sep();
             Add(_btnExport); Add(_btnImport); Sep();
-            Add(new TextBlock
-            {
-                Text = "上下文:",
-                VerticalAlignment = VerticalAlignment.Center,
-                Foreground = Brush(0xC0, 0xC8, 0xD0),
-                Margin = new Thickness(4, 0, 4, 0),
-            });
-            Add(_tbCtx); Add(_btnRun);
+            Add(_btnRun);
+            // 节点化协议(2026-05):工具栏顶部"上下文"文本框 + ContextParser 删 ——
+            // DS 运行时 context 由 DataSourceModel.DefaultContext 字段在 DS 节点上承载,
+            // 用户双击 DS 节点编辑器改即可。multi-DS dashboard 各 cell 各 leaf 各 context,
+            // 单一全局文本框语义在节点化协议下表达不出。
 
             Add(new TextBlock
             {
@@ -209,8 +276,7 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
         private void AddCell(string id, DashboardCellRole role, double heightRatio)
         {
             var slot = new CellSlot { Id = id, Role = role, HeightRatio = heightRatio };
-            slot.Schema.StateChanged      += (_, __) => RefreshJson();
-            slot.Schema.NodeEditRequested += node   => OnNodeEdit(slot, node);
+            WireSlot(slot);
 
             // build per-slot visuals once
             slot.RootBorder = BuildCellRoot(slot);
@@ -219,6 +285,25 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             _cells.Add(slot);
             RebuildGrid();
             Activate(_cells.Count - 1);
+            ScheduleStabilize();
+        }
+
+        // 把 cell-level 事件订阅集中到一处 —— ImportJson / AddCell / LoadDashboard 都走这条
+        private void WireSlot(CellSlot slot)
+        {
+            slot.State.StateChanged += (_, __) =>
+            {
+                RefreshJson();
+                ScheduleStabilize();
+            };
+            slot.Interaction.NodeEditRequested += node => OnNodeEdit(slot, node);
+        }
+
+        // reset-on-each-call debounce —— 用户连续编辑期间不 fire,停手 500ms 才走 Tick
+        private void ScheduleStabilize()
+        {
+            _stabilizeTimer.Stop();
+            _stabilizeTimer.Start();
         }
 
         private void DeleteActive()
@@ -419,7 +504,7 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
         {
             var dlg = new NodeEditorWindow(node) { Owner = Window.GetWindow(this) };
             if (dlg.ShowDialog() == true && dlg.Result != null)
-                slot.Schema.ApplyUserEdit(s => s.WithNode(dlg.Result));
+                slot.State.ApplyUserEdit(s => s.WithNode(dlg.Result));
         }
 
         private void PickAndAdd(NodeFactory.Kind kind, string title)
@@ -436,16 +521,16 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             var w = slot.Host.ActualWidth  > 0 ? slot.Host.ActualWidth  : 800;
             var h = slot.Host.ActualHeight > 0 ? slot.Host.ActualHeight : 300;
             var screenCenter = new HevoPoint((float)w / 2f, (float)h / 2f);
-            var canvasCenter = slot.Schema.State.Transform.ScreenToCanvas(screenCenter);
+            var canvasCenter = slot.State.State.Transform.ScreenToCanvas(screenCenter);
 
             var node = NodeFactory.CreateNode(picker.SelectedType, new HevoPoint(0, 0));
             var pos  = new HevoPoint(canvasCenter.X - node.Size.X / 2, canvasCenter.Y - node.Size.Y / 2);
-            slot.Schema.ApplyUserEdit(s => s.WithNode(node with { Position = pos }));
+            slot.State.ApplyUserEdit(s => s.WithNode(node with { Position = pos }));
         }
 
         private void AutoLayoutActive()
         {
-            ActiveSlot()?.Schema.ApplyUserEdit(s =>
+            ActiveSlot()?.State.ApplyUserEdit(s =>
             {
                 var nodes = s.Nodes.ToList();
                 var edges = s.Edges.ToList();
@@ -456,7 +541,7 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
 
         private void ClearActive()
         {
-            ActiveSlot()?.Schema.ApplyUserEdit(s => GraphState.Empty with { Transform = s.Transform });
+            ActiveSlot()?.State.ApplyUserEdit(s => GraphState.Empty with { Transform = s.Transform });
         }
 
         // ── Dashboard JSON ────────────────────────────────────────────────────
@@ -470,7 +555,7 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                     Id          = slot.Id,
                     Role        = slot.Role,
                     HeightRatio = slot.HeightRatio,
-                    Blueprint   = GraphSerializer.ToBlueprint(slot.Schema.State),
+                    Blueprint   = GraphSerializer.ToBlueprint(slot.State.State),
                 });
             return d;
         }
@@ -490,31 +575,52 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             {
                 var d = JsonSerializer.Deserialize<Dashboard>(text, _json)
                     ?? throw new Exception("反序列化结果为 null。");
-                if (d.Cells.Count == 0) throw new Exception("Dashboard 无 cell。");
-
-                // detach all existing hosts before clearing
-                foreach (var s in _cells) DetachHost(s);
-                _cells.Clear();
-
-                foreach (var cell in d.Cells)
-                {
-                    var slot = new CellSlot { Id = cell.Id, Role = cell.Role, HeightRatio = cell.HeightRatio };
-                    slot.Schema.StateChanged      += (_, __) => RefreshJson();
-                    slot.Schema.NodeEditRequested += node => OnNodeEdit(slot, node);
-                    slot.Schema.State  = GraphDeserializer.FromBlueprint(cell.Blueprint);
-                    slot.RootBorder    = BuildCellRoot(slot);
-                    slot.TabButton     = BuildTabButton(slot);
-                    _cells.Add(slot);
-                }
-
-                RebuildGrid();
-                Activate(0);
+                LoadDashboardCore(d);
             }
             catch (Exception ex)
             {
                 MessageBox.Show(Window.GetWindow(this), $"导入失败：{ex.Message}",
                     "导入 JSON", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
+        }
+
+        /// <summary>
+        /// 外部宿主直接塞 Dashboard 进编辑器 —— 不经 _jsonBox.Text,跳过用户拷贝粘贴一步。
+        /// 典型场景:BlueprintDashboardCanvas 弹编辑器时把当前 dashboard 注入,让用户从当前状态开始编辑。
+        /// 失败抛 ArgumentException(空 dashboard / 无 cell),由宿主决定怎么提示。
+        /// </summary>
+        public void LoadDashboard(Dashboard dashboard)
+        {
+            if (dashboard == null) throw new ArgumentNullException(nameof(dashboard));
+            if (dashboard.Cells == null || dashboard.Cells.Count == 0)
+                throw new ArgumentException("Dashboard 无 cell,无法加载。", nameof(dashboard));
+            LoadDashboardCore(dashboard);
+        }
+
+        // ImportJson + LoadDashboard 共享主体 —— detach 旧 hosts、重建 slots、RebuildGrid、Activate(0)。
+        // 不 fire BlueprintStabilized(避免外部 LoadDashboard 后立刻又被自己 emit 回去形成回环;
+        // 用户后续手编辑改 cell 时 StateChanged 路径会自然触发)。
+        private void LoadDashboardCore(Dashboard d)
+        {
+            if (d.Cells.Count == 0) throw new Exception("Dashboard 无 cell。");
+
+            // detach all existing hosts before clearing
+            foreach (var s in _cells) DetachHost(s);
+            _cells.Clear();
+
+            foreach (var cell in d.Cells)
+            {
+                var slot = new CellSlot { Id = cell.Id, Role = cell.Role, HeightRatio = cell.HeightRatio };
+                WireSlot(slot);
+                slot.State.State = GraphDeserializer.FromBlueprint(cell.Blueprint);
+                slot.RootBorder  = BuildCellRoot(slot);
+                slot.TabButton   = BuildTabButton(slot);
+                _cells.Add(slot);
+            }
+
+            RebuildGrid();
+            Activate(0);
+            RefreshJson();
         }
 
         // ── Run Dashboard ─────────────────────────────────────────────────────
@@ -532,30 +638,11 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                 return;
             }
 
-            // build data-source context per cell (same context for all cells, typical demo usage)
-            string? ctxText = _tbCtx.Text?.Trim();
-            object? context = null;
-            if (!string.IsNullOrEmpty(ctxText))
-            {
-                if (ContextParser != null)
-                {
-                    try { context = ContextParser(ctxText); }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show(Window.GetWindow(this), $"上下文解析失败：{ex.Message}", "运行 Dashboard",
-                            MessageBoxButton.OK, MessageBoxImage.Warning);
-                        return;
-                    }
-                }
-                context ??= ctxText;
-            }
-
+            // 节点化协议:DS 运行时 context 由各 cell 蓝图里 DataSourceModel.DefaultContext 字段承载,
+            // DashboardLauncher 装配时按 leaf 自动调 LoadAsync。这里不再注入全局 DataSourceContexts。
             var opts = new DashboardLaunchOptions
             {
-                Owner             = Window.GetWindow(this),
-                DataSourceContexts = context != null
-                    ? dashboard.Cells.ToDictionary(c => c.Id, _ => context)
-                    : null,
+                Owner = Window.GetWindow(this),
             };
 
             var result = DashboardLauncher.LaunchEx(dashboard, opts);
@@ -714,18 +801,6 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             b.Margin   = new Thickness(0);
             return b;
         }
-
-        private static TextBox CtxBox() => new()
-        {
-            Width  = 150,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            Margin  = new Thickness(0, 4, 0, 4),
-            Padding = new Thickness(6, 2, 6, 2),
-            Background  = new SolidColorBrush(Color.FromRgb(0x14, 0x15, 0x1A)),
-            Foreground  = new SolidColorBrush(Color.FromRgb(0xE0, 0xE6, 0xEC)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0x33, 0x35, 0x3A)),
-            Text = "USZA300059",
-        };
 
         private static TextBox DlgField(StackPanel parent, string label, string value)
         {

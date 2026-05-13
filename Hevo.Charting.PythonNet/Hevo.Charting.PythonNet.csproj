@@ -1,0 +1,31 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<LangVersion>preview</LangVersion>
+		<UseWPF>true</UseWPF>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+		<ImplicitUsings>enable</ImplicitUsings>
+
+		<!-- Python 集成层 ——
+		     - 抽象层 (IPythonRuntime / NullPythonRuntime / PythonHandlerRegistry / 装饰器扫 / 委托类型推断 / 热重载 / 诊断异常)
+		     - 后续 §D2.5 PythonNetRuntime 实装(嵌入 CPython)+ PyComputeFeature/PyHandlerFeature 蓝图节点 也放这里
+		     业务侧引用此项目即可获得 "蓝图侧 Python handler 接入" 能力,Hevo.Charting 主项目 0 Python 概念。
+		-->
+		<Description>Hevo.Charting 的 Python 集成层 —— IPythonRuntime 抽象 + PythonHandlerRegistry + 蓝图层 PyFeature 节点。业务按需引用。</Description>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Hevo.Charting\Hevo.Charting.csproj" />
+		<ProjectReference Include="..\Hevo.Trade.Abstractions\Hevo.Trade.Abstractions.csproj" />
+	</ItemGroup>
+
+	<!-- §D2.5.1 嵌入 CPython 走 pythonnet。namespace = Python.Runtime,NuGet 包名 = pythonnet。
+	     版本 ≥ 3.0.4 才支持 Python 3.7-3.12 的 numpy buffer protocol(低版本有 bug)。
+	     启动时通过 PYTHONNET_PYDLL 环境变量 / Runtime.PythonDLL 显式指定 dll 路径。 -->
+	<ItemGroup>
+		<PackageReference Include="pythonnet" Version="3.0.5" />
+	</ItemGroup>
+
+</Project>

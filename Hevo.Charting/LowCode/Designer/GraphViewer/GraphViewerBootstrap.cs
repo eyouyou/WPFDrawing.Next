@@ -45,6 +45,12 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             FeatureCategoryRegistry.Register<LineSeriesFeature>(FeatureCategory.Series);
             FeatureCategoryRegistry.Register<BarSeriesFeature>(FeatureCategory.Series);
             FeatureCategoryRegistry.Register<CandleFeature>(FeatureCategory.Series);
+            // PlotFeature(scatter / arrow_markers / line / bar 统一容器)概念上是 series,跟 LineSeries 平级。
+            // ComputeFeature / IncrementalComputeFeature 沿 ComputeNodeFeature 继承链命中,跟 LowCodeDemo
+            // BuildSampleGraph 的约定一样在 Series 泳道里跟 LineSeries 同行水平排开(Compute → LineSeries 数据流)——
+            // 不另起一行避免视觉碎片化。
+            FeatureCategoryRegistry.Register<PlotFeature>(FeatureCategory.Series);
+            FeatureCategoryRegistry.Register<Wrappers.ComputeNodeFeature>(FeatureCategory.Series);
             // AnonymousLayerFeature 是 internal,不通过 picker 暴露;业务 DSL 自己 new。
 
             FeatureCategoryRegistry.Register<ChartInteractionFeature>(FeatureCategory.Interaction);

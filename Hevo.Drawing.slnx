@@ -3,10 +3,25 @@
     <Platform Name="Any CPU" />
     <Platform Name="x64" />
   </Configurations>
-  <Project Path="Hevo.Charting.Benchmarks/Hevo.Charting.Benchmarks.csproj" />
-  <Project Path="Hevo.Charting.CodeAnalysis/Hevo.Charting.CodeAnalysis.csproj" Id="8ef253f3-4977-4fa0-bd57-d3de28cd8c0d" />
-  <Project Path="Hevo.Charting.Mcp/Hevo.Charting.Mcp.csproj" />
-  <Project Path="Hevo.Charting.Tests/Hevo.Charting.Tests.csproj" />
-  <Project Path="Hevo.Charting/Hevo.Charting.csproj" Id="ed78d99a-b467-470a-972e-76a1d8edba49" />
-  <Project Path="Hevo.Drawing.LowCodeDemo/Hevo.Drawing.LowCodeDemo.csproj" />
+  <Folder Name="/00/">
+    <Project Path="Hevo.Charting.CodeAnalysis/Hevo.Charting.CodeAnalysis.csproj" Id="8ef253f3-4977-4fa0-bd57-d3de28cd8c0d" />
+    <Project Path="Hevo.Charting/Hevo.Charting.csproj" Id="ed78d99a-b467-470a-972e-76a1d8edba49" />
+  </Folder>
+  <Folder Name="/01-sample/">
+    <Project Path="Hevo.Drawing.LowCodeDemo/Hevo.Drawing.LowCodeDemo.csproj" />
+  </Folder>
+  <Folder Name="/02-tests/">
+    <Project Path="Hevo.Charting.Tests/Hevo.Charting.Tests.csproj" />
+    <Project Path="Hevo.Charting.Benchmarks/Hevo.Charting.Benchmarks.csproj" />
+  </Folder>
+  <Folder Name="/03-mcp/">
+    <Project Path="Hevo.Charting.Mcp/Hevo.Charting.Mcp.csproj" />
+  </Folder>
+  <Folder Name="/04-trade/">
+    <Project Path="Hevo.Trade.Abstractions/Hevo.Trade.Abstractions.csproj" />
+    <Project Path="Hevo.Trade.Mock/Hevo.Trade.Mock.csproj" />
+  </Folder>
+  <Folder Name="/05-python/">
+    <Project Path="Hevo.Charting.PythonNet/Hevo.Charting.PythonNet.csproj" />
+  </Folder>
 </Solution>

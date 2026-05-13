@@ -1,0 +1,14 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net8.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<LangVersion>preview</LangVersion>
+		<ImplicitUsings>enable</ImplicitUsings>
+
+		<!-- 纯通用交易抽象,不依赖 Hevo.Charting / WPF / Skia 等 ——
+		     任何 .NET 8 项目(命令行回测 / Web API / Console Trader / 图表)都能引用。 -->
+		<Description>Hevo Trade abstractions: ITradeService 接口 + DTO + NullTradeService。broker 适配 / 远端 gRPC client 各自独立子项目实装。</Description>
+	</PropertyGroup>
+
+</Project>

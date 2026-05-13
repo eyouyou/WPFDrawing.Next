@@ -92,7 +92,7 @@ namespace Hevo.Charting.CodeAnalysis
             sb.AppendLine($"        public static ScatterConfigurator<TSource, {typeName}> AutoMap<TSource>(");
             sb.AppendLine($"            this ScatterConfigurator<TSource, {typeName}> cfg, ");
             sb.AppendLine($"            {groupName} ports)");
-            sb.AppendLine($"            where TSource : DataSource<TSource, {typeName}>");
+            sb.AppendLine($"            where TSource : BufferedDataSource<TSource, {typeName}>");
             sb.AppendLine("        {");
             foreach (var port in ports)
             {
@@ -103,7 +103,7 @@ namespace Hevo.Charting.CodeAnalysis
 
             sb.AppendLine($"        public static ScatterConfigurator<TSource, {typeName}> AutoMap<TSource>(");
             sb.AppendLine($"            this ScatterConfigurator<TSource, {typeName}> cfg)");
-            sb.AppendLine($"            where TSource : DataSource<TSource, {typeName}>");
+            sb.AppendLine($"            where TSource : BufferedDataSource<TSource, {typeName}>");
             sb.AppendLine("        {");
             sb.AppendLine($"            return cfg.AutoMap({groupName}.Default);");
             sb.AppendLine("        }");

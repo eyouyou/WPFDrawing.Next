@@ -12,7 +12,21 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
     /// <param name="Description">端口注释,鼠标悬停时浮窗显示。来自 .NET 属性上的 <c>[Description]</c> 标注或 XML 文档摘要。</param>
     /// <param name="IsArray">true = 扇入端口,可同时接受多根连线 (对应 <c>DataPort&lt;T&gt;[]</c> 数组属性,如 UniversalAutoScale.ValuePorts)。
     /// 序列化时所有 incoming edges 合并成 CSV;运行时由 DynamicChartSchema 拆出来塞数组。</param>
-    public record Port(string Id, string Name, string DataTypeName, bool IsInput, string? Description = null, bool IsArray = false);
+    /// <param name="BindingId">
+    /// 该 port 绑的 dataflow 字符串 key —— GraphState 一等数据,跨 serialize/deserialize roundtrip 原样保留。
+    /// null = 该 port 未连接。
+    /// 命名约定(scope 前缀):
+    /// <list type="bullet">
+    ///   <item><c>local:{guid8}_{hint}</c> —— cell 内匿名 wire(editor 拖线 auto-gen)</item>
+    ///   <item><c>cell:viewport.active / userRange / logicalLength</c> —— cell-shared 视口(原 <c>VP_*</c> 老名走 legacy alias 翻译)</item>
+    ///   <item><c>dashboard:{name}</c> —— dashboard-shared(由 <see cref="Dashboard.SharedPorts"/> 顶层声明,LinkedChartContext 实例化 + 镜像)</item>
+    ///   <item><c>process:{name}</c> —— 预留,业务自管 process-singleton port</item>
+    /// </list>
+    /// 同 cell 内两个 port 持同一 BindingId ⇔ 概念上连成一根线;
+    /// 跨 cell 同 BindingId(<c>cell:</c> 例外,各 cell 独立)⇔ 走 <see cref="Linked.LinkedChartContext"/> 镜像桥跨 cell 同步。
+    /// </param>
+    public record Port(string Id, string Name, string DataTypeName, bool IsInput,
+                      string? Description = null, bool IsArray = false, string? BindingId = null);
 
     public enum NodeKind
     {
@@ -82,10 +96,35 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
     }
 
     /// <summary>
+    /// 边类型。Phase 2 引入 Cascade 后,蓝图层把"DS-to-DS push"跟"Feature.in ← DS.scalar"在画布上分桶,
+    /// GraphSerializer 按 Kind 路由到不同的 ChartBlueprint 子集合(PortBindings vs Cascades vs Stream IsArray)。
+    /// </summary>
+    public enum EdgeKind
+    {
+        /// <summary>现有 pull 路径:Feature.in ← DS.scalar / DS.vector / Feature.out。序列化进 PortBindings。</summary>
+        DataPort = 0,
+
+        /// <summary>Phase 4 push 路径:Feature/Operator.streamIn ← DS.Stream(订阅整 snapshot)。序列化进 PortBindings 的扇入数组。</summary>
+        Stream = 1,
+
+        /// <summary>Phase 2 push+driver:DS.Context ← DS.Stream + ContextDriver。序列化进 <see cref="ChartBlueprint.Cascades"/>。</summary>
+        Cascade = 2,
+    }
+
+    /// <summary>
     /// 节点间连线。FromPort 必须是 Output,ToPort 必须是 Input。
     /// 不在此处做类型校验——交给 GraphSchema.TryConnect。
+    /// <para>
+    /// Phase 2 默认 <see cref="EdgeKind.DataPort"/>(零破坏旧 Edge);Cascade 边 <see cref="Driver"/> 为
+    /// <see cref="LowCode.Designer.Handlers.ContextDriverAttribute"/> 注册名。
+    /// </para>
     /// </summary>
-    public record Edge(string Id, string FromNodeId, string FromPortId, string ToNodeId, string ToPortId);
+    public record Edge(
+        string Id,
+        string FromNodeId, string FromPortId,
+        string ToNodeId, string ToPortId,
+        EdgeKind Kind = EdgeKind.DataPort,
+        string? Driver = null);
 
     /// <summary>
     /// 画布的全局 pan/zoom 变换。canvasPx → screenPx: screen = canvas * Scale + Offset。

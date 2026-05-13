@@ -123,21 +123,8 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
 
             var diagnostics = new List<BlueprintDiagnostic>();
 
-            if (blueprint.DataSource == null || string.IsNullOrEmpty(blueprint.DataSource.TypeName))
+            if (blueprint.DataSources.Count == 0)
                 return new BlueprintLaunchResult { Error = "蓝图缺少 DataSource 节点。请先在画布上添加一个数据源。" };
-
-            Type dsType;
-            try { dsType = ComponentRegistry.Resolve(blueprint.DataSource.TypeName); }
-            catch (Exception ex) { return new BlueprintLaunchResult { Error = $"DataSource 类型未登记:{ex.Message}" }; }
-
-            if (dsType.GetConstructor(Type.EmptyTypes) == null)
-                return new BlueprintLaunchResult { Error = $"{dsType.Name} 没有公共无参构造函数,低代码场景无法实例化。" };
-
-            if (NodeFactory.FindDataSourceItemType(dsType) == null)
-                return new BlueprintLaunchResult { Error = $"{dsType.Name} 不是 DataSource<TSource, TItem> 的派生类型。" };
-
-            if (dsType.GetProperty("Stream", BindingFlags.Public | BindingFlags.Instance) == null)
-                return new BlueprintLaunchResult { Error = $"{dsType.Name}.Stream 属性不存在,请确认其继承自 DataSource<,>。" };
 
             // 端口类型登记表 —— 模拟运行时 GetOrCreatePort 的"先注册先赢"语义,
             // 第二次以不同类型注册同 portId 即冲突。值里带 source 串方便诊断回溯。
@@ -148,26 +135,54 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             portTypes["VP_UserRange"]     = (typeof(RealRange), "Viewport.UserRange");
             portTypes["VP_ActiveRange"]   = (typeof(RealRange), "Viewport.ActiveRange");
 
-            // DataSource.ScalarMappings → portId 类型 = DataSource 上对应属性类型
-            foreach (var kv in blueprint.DataSource.ScalarMappings)
+            Type? primaryDsType = null;   // render-leaf 的 dsType,用于后面 fm.InputBindings/OutputBindings 校验
+            Type? primaryItemType = null;
+            foreach (var dsm in blueprint.DataSources)
             {
-                var pi = dsType.GetProperty(kv.Key, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
-                if (pi == null) continue;
-                RegisterPortType(portTypes, kv.Value, pi.PropertyType, $"{dsType.Name}.{kv.Key}", diagnostics);
-            }
+                if (string.IsNullOrEmpty(dsm.TypeName))
+                    return new BlueprintLaunchResult { Error = $"DataSource '{dsm.Id}' TypeName 为空。" };
 
-            // DataSource.VectorMappings → portId 类型 = ReadOnlyMemory<TItem.字段类型>
-            var itemType = NodeFactory.FindDataSourceItemType(dsType);
-            if (itemType != null)
-            {
-                foreach (var kv in blueprint.DataSource.VectorMappings)
+                Type curDsType;
+                try { curDsType = ComponentRegistry.Resolve(dsm.TypeName); }
+                catch (Exception ex) { return new BlueprintLaunchResult { Error = $"DataSource '{dsm.Id}' 类型未登记:{ex.Message}" }; }
+
+                if (curDsType.GetConstructor(Type.EmptyTypes) == null)
+                    return new BlueprintLaunchResult { Error = $"{curDsType.Name} 没有公共无参构造函数,低代码场景无法实例化。" };
+
+                var curItemType = NodeFactory.FindDataSourceItemType(curDsType);
+                if (curItemType == null)
+                    return new BlueprintLaunchResult { Error = $"{curDsType.Name} 不是 DataSource<TSource, TItem> 的派生类型。" };
+
+                if (curDsType.GetProperty("Stream", BindingFlags.Public | BindingFlags.Instance) == null)
+                    return new BlueprintLaunchResult { Error = $"{curDsType.Name}.Stream 属性不存在,请确认其继承自 DataSource<,>。" };
+
+                primaryDsType ??= curDsType;
+                primaryItemType ??= curItemType;
+
+                // 节点化协议:DS.OutputBindings —— 反射 DS 自身 scalar 优先,然后 TItem 行字段。
+                foreach (var kv in dsm.OutputBindings)
                 {
-                    var pi = itemType.GetProperty(kv.Key, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
-                    if (pi == null) continue;
-                    var memType = typeof(ReadOnlyMemory<>).MakeGenericType(pi.PropertyType);
-                    RegisterPortType(portTypes, kv.Value, memType, $"{itemType.Name}.{kv.Key}", diagnostics);
+                    var portId = PortBindingValue.ExtractSingle(kv.Value);
+                    if (string.IsNullOrEmpty(portId)) continue;
+
+                    var scalarProp = curDsType.GetProperty(kv.Key, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+                    if (scalarProp != null && IsScalarTypeForDryRun(scalarProp.PropertyType))
+                    {
+                        RegisterPortType(portTypes, portId, scalarProp.PropertyType, $"{curDsType.Name}.{kv.Key}", diagnostics);
+                        continue;
+                    }
+                    var vectorProp = curItemType.GetProperty(kv.Key, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+                    if (vectorProp != null && IsScalarTypeForDryRun(vectorProp.PropertyType))
+                    {
+                        var memType = typeof(ReadOnlyMemory<>).MakeGenericType(vectorProp.PropertyType);
+                        RegisterPortType(portTypes, portId, memType, $"{curItemType.Name}.{kv.Key}", diagnostics);
+                    }
                 }
             }
+            // 单 DS / 单 leaf 校验场景下,后面 feature 校验拿 primary(第一个 DS) 即可。
+            // 多 DS / 多 leaf 场景 BlueprintRunner.PickRenderLeaf 自己挑;DryRun 阶段不严格区分。
+            Type dsType = primaryDsType!;
+            Type itemType = primaryItemType!;
 
             // Trait TypeName 校验 (登记缺失即蓝图加载必抛)
             foreach (var t in blueprint.InitialTraits)
@@ -202,11 +217,13 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                 }
 
                 // Output 端口必须有 binding(参考 低代码.md §8.1 "GraphSerializer 漏写 OUTPUT 端口绑定"坑)
+                // nested dict Output(如 SeriesOutputs)用 StartsWith 前缀覆盖检查。
                 foreach (var pi in featureType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
                 {
                     if (!IsDataPortProperty(pi, out var portValueType, out _)) continue;
                     if (PortMetadataRegistry.ResolveDirection(featureType, pi) != PortDirection.Output) continue;
-                    if (!f.PortBindings.ContainsKey(pi.Name))
+                    if (!f.OutputBindings.ContainsKey(pi.Name)
+                        && !f.OutputBindings.Keys.Any(k => k.StartsWith(pi.Name + ".", StringComparison.Ordinal)))
                     {
                         diagnostics.Add(new BlueprintDiagnostic
                         {
@@ -214,14 +231,36 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                             Code = "BP_OUTPUT_PORT_UNBOUND",
                             FeatureTypeName = f.TypeName,
                             PortName = pi.Name,
-                            Message = "Output 端口未在 PortBindings 中焊接 → 运行时下游 Watch 拿到 null 触发 NRE 静默吞 → 黑屏",
+                            Message = "Output 端口未在 OutputBindings 中焊接 → 运行时下游 Watch 拿到 null 触发 NRE 静默吞 → 黑屏",
                         });
                     }
                 }
 
-                // 类型一致性 —— 用 binding 标注的 globalId,反向校验跟已注册端口类型是否吻合
-                foreach (var b in f.PortBindings)
+                // 类型一致性 —— 用 binding 标注的 globalId,反向校验跟已注册端口类型是否吻合。
+                // §D2.X 多输入指标 nested key 形如 "Inputs.high":拆 ParentField + ChildKey,
+                // 反查 Feature 上 Dictionary<string, DataPort<T>> 字段,取 value type 校验。
+                foreach (var b in f.InputBindings.Concat(f.OutputBindings))
                 {
+                    int dotIdx = b.Key.IndexOf('.');
+                    if (dotIdx > 0)
+                    {
+                        var parent = b.Key.Substring(0, dotIdx);
+                        var child  = b.Key.Substring(dotIdx + 1);
+                        var pp = featureType.GetProperty(parent,
+                            BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+                        if (pp == null) continue;
+                        var pt = pp.PropertyType;
+                        if (!pt.IsGenericType || pt.GetGenericTypeDefinition() != typeof(Dictionary<,>)) continue;
+                        var dictArgs = pt.GetGenericArguments();
+                        if (dictArgs[0] != typeof(string)) continue;
+                        if (!dictArgs[1].IsGenericType || dictArgs[1].GetGenericTypeDefinition() != typeof(DataPort<>)) continue;
+                        var nestedExpected = dictArgs[1].GetGenericArguments()[0];
+                        var id = PortBindingValue.ExtractSingle(b.Value);
+                        if (!string.IsNullOrEmpty(id))
+                            RegisterPortType(portTypes, id, nestedExpected, $"{f.TypeName}.{b.Key}", diagnostics);
+                        continue;
+                    }
+
                     var pi = featureType.GetProperty(b.Key,
                         BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
                     if (pi == null) continue;
@@ -237,6 +276,16 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                         RegisterPortType(portTypes, id, expected, $"{f.TypeName}.{b.Key}", diagnostics);
                     }
                 }
+
+                // §D2.X InputOrder 一致性校验 —— 多输入路径下,Feature 上有 Dictionary<string, DataPort<T>>
+                // 字段且 PortBindings 含 nested key,InputOrder 数组里每个名字必须有对应 PortBindings。
+                CheckMultiInputBindings(f, featureType, diagnostics);
+
+                // §D2.6.4 IncrementalComputeFeature 校验 —— state 端口必填 / handler 类型符合
+                CheckIncrementalCompute(f, featureType, handlers, diagnostics);
+
+                // PlotFeature 统一 series 协议校验 —— 每个 PlotSeriesSpec.Kind 落 line/bar/scatter/arrow_markers 之一
+                CheckPlotSeries(f, featureType, diagnostics);
 
                 // Delegate 属性的 handler 名引用 —— Properties 里 string 值指向 Delegate 类型属性时,
                 // 必须有同名 handler 注册过,否则运行时 ResolveHandlerReferences 会 silent skip → 黑屏。
@@ -260,6 +309,12 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                     }
                 }
             }
+
+            // §D2.5.E2E PyCompute / 任何"中间计算节点"的 ROM<double> 输出 → 必须连到 AutoScale.ValuePorts,
+            // 否则 Y 范围只看其他 series,该指标输出可能完全在画布外被裁掉。
+            // 检测:对每个 ROM<double> 输出端口,如果它的 globalId 被某 LineSeries.DataPort/BarSeries.DataPort
+            // 消费,但 *没* 被任何 UniversalAutoScale.ValuePorts 消费 → 警告 BP_OUTPUT_NOT_SCALED。
+            CheckOutputAutoScaleCoverage(blueprint, diagnostics);
 
             // Triggers 的 handler 引用校验 —— 协议扩展 §K
             foreach (var trig in blueprint.Triggers)
@@ -350,6 +405,293 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             registry[portId] = (type, source);
         }
 
+        // §D2.5.E2E "Output 没接 AutoScale" 警告 ——  PyComputeFeature / ComputeNodeFeature 等
+        // 中间节点的 ROM<double> 输出如果只接到 LineSeries.DataPort 而不接 UniversalAutoScale.ValuePorts,
+        // Y 范围只看其他 series,该指标在画布外被裁掉(典型坑见低代码.md §8 + 用户反馈)。
+        private static void CheckOutputAutoScaleCoverage(ChartBlueprint blueprint, List<BlueprintDiagnostic> diagnostics)
+        {
+            // 1. 收集所有 UniversalAutoScale.ValuePorts 引用的 globalId 集合
+            var autoScaleValueIds = new HashSet<string>(StringComparer.Ordinal);
+            // 2. 收集所有"消费 ROM<double> 的 series 节点"(LineSeries / BarSeries 等)的 DataPort 引用 id
+            var seriesConsumeIds = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var f in blueprint.Features)
+            {
+                Type? ft;
+                try { ft = ComponentRegistry.Resolve(f.TypeName); } catch { continue; }
+                if (ft == null) continue;
+
+                bool isAutoScale = ft.Name == "UniversalAutoScaleFeature"
+                                || ft.GetProperty("ValuePorts", BindingFlags.Public | BindingFlags.Instance) != null
+                                && ft.Name.Contains("AutoScale", StringComparison.OrdinalIgnoreCase);
+
+                bool isSeriesConsumer = ft.Name.EndsWith("LineSeriesFeature", StringComparison.OrdinalIgnoreCase)
+                                     || ft.Name.EndsWith("BarSeriesFeature", StringComparison.OrdinalIgnoreCase);
+
+                if (isAutoScale && f.InputBindings.TryGetValue("ValuePorts", out var vpBinding))
+                {
+                    foreach (var id in PortBindingValue.ExtractList(vpBinding))
+                        if (!string.IsNullOrEmpty(id)) autoScaleValueIds.Add(id);
+                }
+                if (isSeriesConsumer && f.InputBindings.TryGetValue("DataPort", out var dpBinding))
+                {
+                    var id = PortBindingValue.ExtractSingle(dpBinding);
+                    if (!string.IsNullOrEmpty(id)) seriesConsumeIds.Add(id);
+                }
+            }
+
+            // 3. 遍历每个 Feature 的输出端口(ROM<double>),如果 binding 的 globalId 在 series 消费里
+            //    但不在 AutoScale ValuePorts 里 → 警告
+            foreach (var f in blueprint.Features)
+            {
+                Type? ft;
+                try { ft = ComponentRegistry.Resolve(f.TypeName); } catch { continue; }
+                if (ft == null) continue;
+
+                foreach (var pi in ft.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    if (!IsDataPortProperty(pi, out var valueType, out _)) continue;
+                    if (PortMetadataRegistry.ResolveDirection(ft, pi) != PortDirection.Output) continue;
+                    if (valueType != typeof(ReadOnlyMemory<double>)) continue;
+                    if (!f.OutputBindings.TryGetValue(pi.Name, out var bindingValue)) continue;
+
+                    var id = PortBindingValue.ExtractSingle(bindingValue);
+                    if (string.IsNullOrEmpty(id)) continue;
+
+                    if (seriesConsumeIds.Contains(id) && !autoScaleValueIds.Contains(id))
+                    {
+                        diagnostics.Add(new BlueprintDiagnostic
+                        {
+                            Severity = BlueprintDiagnosticSeverity.Warning,
+                            Code = "BP_OUTPUT_NOT_SCALED",
+                            FeatureTypeName = f.TypeName,
+                            PortName = pi.Name,
+                            Message = $"输出端口 '{id}' 已接到 LineSeries/BarSeries,但未接到任何 UniversalAutoScale.ValuePorts —— "
+                                    + "Y 范围不会包含此指标输出,可能在画布外被裁掉。请把它也接进 ValuePorts(fan-in 数组,可加多源)。",
+                        });
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// §D2.X 多输入指标:校验 InputOrder ↔ PortBindings nested keys 一致性。
+        /// 1. Feature 类型上每个 Dictionary&lt;string, DataPort&lt;T&gt;&gt; 字段都扫一遍,
+        /// 2. 收集 PortBindings 里 <c>{fieldName}.*</c> 形态的 child names,
+        /// 3. 跟 Properties["InputOrder"] 声明的顺序对账,缺失项报 <c>BP_PYHANDLER_INPUT_UNCONNECTED</c>。
+        /// 没有声明 InputOrder 的多输入 Feature 也单独警告(否则运行时会跳过装配)。
+        /// </summary>
+        private static void CheckMultiInputBindings(FeatureModel f, Type featureType, List<BlueprintDiagnostic> diagnostics)
+        {
+            // 找所有 Dictionary<string, DataPort<T>> 输入字段。Output 方向的 dict(如 PlotFeature.SeriesOutputs)
+            // 不参与 multi-input 校验 —— 它走的是 fan-out 输出语义,跟 InputOrder 形参列表无关。
+            var dictFields = featureType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Where(pi =>
+                {
+                    var pt = pi.PropertyType;
+                    if (!pt.IsGenericType || pt.GetGenericTypeDefinition() != typeof(Dictionary<,>)) return false;
+                    var args = pt.GetGenericArguments();
+                    if (args[0] != typeof(string)) return false;
+                    if (!args[1].IsGenericType || args[1].GetGenericTypeDefinition() != typeof(DataPort<>)) return false;
+                    return PortMetadataRegistry.ResolveDirection(featureType, pi) != PortDirection.Output;
+                }).ToArray();
+            if (dictFields.Length == 0) return;
+
+            // 收集 InputBindings 里的 nested keys(多输入),按 parent 分组
+            var nestedByParent = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var b in f.InputBindings)
+            {
+                int dot = b.Key.IndexOf('.');
+                if (dot <= 0) continue;
+                var parent = b.Key.Substring(0, dot);
+                var child = b.Key.Substring(dot + 1);
+                if (!nestedByParent.TryGetValue(parent, out var set))
+                {
+                    set = new HashSet<string>(StringComparer.Ordinal);
+                    nestedByParent[parent] = set;
+                }
+                set.Add(child);
+            }
+
+            // 拿 InputOrder 字符串数组(可能是 string[] / List<string> / JsonElement Array)
+            var inputOrder = ExtractInputOrderProp(f);
+
+            foreach (var pi in dictFields)
+            {
+                bool hasNested = nestedByParent.TryGetValue(pi.Name, out var boundChildren);
+                if (!hasNested) continue;   // 该字段没接 → 走单输入兼容路径,无需校验
+
+                if (inputOrder == null || inputOrder.Count == 0)
+                {
+                    diagnostics.Add(new BlueprintDiagnostic
+                    {
+                        Severity = BlueprintDiagnosticSeverity.Warning,
+                        Code = "BP_PYHANDLER_INPUT_ORDER_MISSING",
+                        FeatureTypeName = f.TypeName,
+                        PortName = pi.Name,
+                        Message = $"PortBindings 含 nested key '{pi.Name}.*' 但 Properties.InputOrder 未声明 — "
+                                + "运行时无法确定调 Compute 委托的形参顺序,装配会跳过。",
+                    });
+                    continue;
+                }
+
+                // 对账:InputOrder 里每个 name 必须在 boundChildren 里出现
+                foreach (var name in inputOrder)
+                {
+                    if (string.IsNullOrEmpty(name)) continue;
+                    if (boundChildren!.Contains(name)) continue;
+                    diagnostics.Add(new BlueprintDiagnostic
+                    {
+                        Severity = BlueprintDiagnosticSeverity.Warning,
+                        Code = "BP_PYHANDLER_INPUT_UNCONNECTED",
+                        FeatureTypeName = f.TypeName,
+                        PortName = $"{pi.Name}.{name}",
+                        Message = $"InputOrder 声明 '{name}' 但 PortBindings 缺 '{pi.Name}.{name}' 焊接 — "
+                                + "运行时该输入端口为 null,装配会跳过当前节点。",
+                    });
+                }
+            }
+        }
+
+        /// <summary>
+        /// §D2.6.4 单 Feature 检查:IncrementalComputeFeature(及派生类)的 handler 类型必须是 ValueTuple 返回。
+        /// 用 IsAssignableFrom 而非字符串名匹配 —— 派生子类自动受保护,不怕重命名 / 跨 assembly 同名。
+        /// </summary>
+        private static void CheckIncrementalCompute(
+            FeatureModel f, Type featureType, BlueprintHandlerRegistry? handlers, List<BlueprintDiagnostic> diagnostics)
+        {
+            if (!typeof(Hevo.Charting.Features.IncrementalComputeFeature).IsAssignableFrom(featureType)) return;
+
+            // BP_PYHANDLER_INCREMENTAL_NOT_STATEFUL:Compute 属性引用的 handler 必须是 ValueTuple<,> 返回的 Func。
+            // 强类型 StatefulCompute 字段(C# 业务侧路径)蓝图 JSON 表达不出来,这里只校验 Compute(string handler 名)路径。
+            if (f.Properties.TryGetValue("Compute", out var rawComputeName) &&
+                rawComputeName is string handlerName && !string.IsNullOrEmpty(handlerName) &&
+                handlers != null)
+            {
+                var delType = handlers.GetDelegateType(handlerName);
+                if (delType != null)
+                {
+                    var invokeMethod = delType.GetMethod("Invoke");
+                    var retType = invokeMethod?.ReturnType;
+                    bool returnsValueTuple = retType != null && retType.IsGenericType
+                        && IsValueTupleDef(retType.GetGenericTypeDefinition());
+                    if (!returnsValueTuple)
+                    {
+                        diagnostics.Add(new BlueprintDiagnostic
+                        {
+                            Severity = BlueprintDiagnosticSeverity.Warning,
+                            Code = "BP_PYHANDLER_INCREMENTAL_NOT_STATEFUL",
+                            FeatureTypeName = f.TypeName,
+                            PortName = "Compute",
+                            Message = $"IncrementalComputeFeature.Compute 引用的 handler '{handlerName}' 返回 {retType?.Name ?? "?"} 而非 ValueTuple<,> — "
+                                    + "增量协议要求 handler 签名 (input, prev_state) -> (output, next_state),运行时该 feature 装配会跳过。",
+                        });
+                    }
+                }
+            }
+        }
+
+        // 跟 NodeFactory.IsScalarType / DynamicChartSchema.IsScalarType 同款 —— 反射 DS / TItem 字段时
+        // 区分"可投影端口"(基本类型 / DateTime / string / Nullable<T>),非标量字段不进 PortBindings 校验。
+        private static bool IsScalarTypeForDryRun(Type t)
+        {
+            if (t == typeof(string)) return true;
+            if (t == typeof(DateTime) || t == typeof(DateTimeOffset) || t == typeof(TimeSpan)) return true;
+            if (t.IsPrimitive) return true;
+            if (t == typeof(decimal)) return true;
+            if (Nullable.GetUnderlyingType(t) is { } u) return IsScalarTypeForDryRun(u);
+            return false;
+        }
+
+        private static bool IsValueTupleDef(Type genericTypeDef)
+            => genericTypeDef == typeof(ValueTuple<,>) ||
+               genericTypeDef == typeof(ValueTuple<,,>) ||
+               genericTypeDef == typeof(ValueTuple<,,,>) ||
+               genericTypeDef == typeof(ValueTuple<,,,,>) ||
+               genericTypeDef == typeof(ValueTuple<,,,,,>) ||
+               genericTypeDef == typeof(ValueTuple<,,,,,,>);
+
+        // PlotFeature 统一 series 协议校验 —— 遍历 Series 数组,按每个 PlotSeriesSpec.Kind 校验:
+        //   - Kind 在 line/bar/scatter/arrow_markers 之外 → BP_PLOT_KIND_UNKNOWN(error)
+        //   - arrow_markers spec 配 Domain → BP_PLOT_DOMAIN_MISMATCH(warning,arrow 永远 inherit,domain 被忽略)
+        // 仅看 Properties 描述本身的形态闭合,运行时再细致 fail-fast。
+        private static void CheckPlotSeries(FeatureModel f, Type featureType, List<BlueprintDiagnostic> diagnostics)
+        {
+            if (!string.Equals(featureType.Name, "PlotFeature", StringComparison.Ordinal)) return;
+            if (!f.Properties.TryGetValue("Series", out var rawSeries) || rawSeries == null) return;
+
+            // 容错 Series 字段形态(蓝图反射加载可能拿到 PlotSeriesSpec[] / IReadOnlyList<PlotSeriesSpec> / object[])。
+            IEnumerable<object?>? seriesEnum = rawSeries switch
+            {
+                System.Collections.IEnumerable e and not string => e.Cast<object?>(),
+                _ => null,
+            };
+            if (seriesEnum == null) return;
+
+            int idx = 0;
+            foreach (var item in seriesEnum)
+            {
+                if (item == null) { idx++; continue; }
+                var t = item.GetType();
+                string? kind = t.GetProperty("Kind")?.GetValue(item) as string;
+
+                if (!string.IsNullOrWhiteSpace(kind))
+                {
+                    var k = kind.Trim().ToLowerInvariant();
+                    if (k != "line" && k != "bar" && k != "scatter" && k != "arrow_markers")
+                    {
+                        diagnostics.Add(new BlueprintDiagnostic
+                        {
+                            Severity = BlueprintDiagnosticSeverity.Error,
+                            Code = "BP_PLOT_KIND_UNKNOWN",
+                            FeatureTypeName = f.TypeName,
+                            PortName = $"Series[{idx}].Kind",
+                            Message = $"Series[{idx}].Kind '{kind}' 不支持(line / bar / scatter / arrow_markers)",
+                        });
+                    }
+                    else if (k == "arrow_markers")
+                    {
+                        // arrow_markers 永远 inherit;XDomain/YDomain 配置被忽略,提醒一下。
+                        var xDomain = t.GetProperty("XDomain")?.GetValue(item);
+                        var yDomain = t.GetProperty("YDomain")?.GetValue(item);
+                        if (xDomain != null || yDomain != null)
+                        {
+                            diagnostics.Add(new BlueprintDiagnostic
+                            {
+                                Severity = BlueprintDiagnosticSeverity.Warning,
+                                Code = "BP_PLOT_DOMAIN_MISMATCH",
+                                FeatureTypeName = f.TypeName,
+                                PortName = $"Series[{idx}].XDomain/YDomain",
+                                Message = "arrow_markers 永远 inherit 主图 axes,XDomain/YDomain 配置会被忽略。",
+                            });
+                        }
+                    }
+                }
+                idx++;
+            }
+        }
+
+        /// <summary>从 FeatureModel.Properties["InputOrder"] 里抓字符串数组,容错多种形态。</summary>
+        private static IReadOnlyList<string>? ExtractInputOrderProp(FeatureModel f)
+        {
+            if (!f.Properties.TryGetValue("InputOrder", out var raw) || raw == null) return null;
+            if (raw is string[] arr) return arr;
+            if (raw is IReadOnlyList<string> rls) return rls;
+            if (raw is IEnumerable<string> seq) return seq.ToArray();
+            if (raw is IEnumerable<object?> oseq) return oseq.Select(o => o?.ToString() ?? string.Empty).ToArray();
+            if (raw is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                var list = new List<string>();
+                foreach (var el in je.EnumerateArray())
+                {
+                    if (el.ValueKind == System.Text.Json.JsonValueKind.String)
+                        list.Add(el.GetString() ?? string.Empty);
+                }
+                return list;
+            }
+            return null;
+        }
+
         private static string? LaunchInternal(
             ChartBlueprint blueprint,
             Window? owner,
@@ -357,36 +699,49 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             Action<object>? configureDataSource,
             BlueprintHandlerRegistry? handlers)
         {
-            if (blueprint.DataSource == null || string.IsNullOrEmpty(blueprint.DataSource.TypeName))
+            if (blueprint.DataSources.Count == 0)
                 return "蓝图缺少 DataSource 节点。请先在画布上添加一个数据源。";
 
-            // 1. 解析 DataSource 类型
-            Type dsType;
-            try { dsType = ComponentRegistry.Resolve(blueprint.DataSource.TypeName); }
+            // Render-leaf = 无 incoming Cascade 的 DS。BlueprintLauncher 的 dataSourceContext / configureDataSource
+            // 两个回调只作用在 leaf 上(预览用例就只关心"渲染那个");其余 DS 由 framework 自动实例化 + DefaultContext。
+            var upstreamIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var c in blueprint.Cascades)
+                if (!string.IsNullOrEmpty(c.FromDataSourceId)) upstreamIds.Add(c.FromDataSourceId);
+            var leafCandidates = blueprint.DataSources.Where(d => !upstreamIds.Contains(d.Id)).ToList();
+            if (leafCandidates.Count == 0)
+                return "Render-leaf 推导失败:DataSources 全是 Cascade 上游(无人渲染)。";
+            if (leafCandidates.Count > 1)
+                return $"Render-leaf 推导失败:多 leaf({string.Join(", ", leafCandidates.Select(l => l.Id))}) —— Parallel 暂不支持。";
+
+            var leafDsModel = leafCandidates[0];
+            if (string.IsNullOrEmpty(leafDsModel.TypeName)) return $"DataSource '{leafDsModel.Id}' TypeName 为空。";
+            if (string.IsNullOrEmpty(leafDsModel.Id)) return "DataSource Id 为空(节点化协议必填)。";
+
+            // 1. 解析 leaf DataSource 类型(framework 后面装配时也会再走一次,但 BlueprintLauncher 这里要预先实例化 leaf,
+            //    给 dataSourceContext + configureDataSource 回调用 —— 完了再塞 instances 字典给 BlueprintRunner)。
+            Type leafDsType;
+            try { leafDsType = ComponentRegistry.Resolve(leafDsModel.TypeName); }
             catch (Exception ex) { return $"DataSource 类型未登记:{ex.Message}"; }
 
-            // 2. 必须有 public 无参 ctor (低代码运行时唯一可走的实例化路径)
-            if (dsType.GetConstructor(Type.EmptyTypes) == null)
-                return $"{dsType.Name} 没有公共无参构造函数,低代码场景无法实例化。"
-                     + "请用业务侧 BlueprintRunner.Run<...>(cell, blueprint, ds) 自行装配。";
+            if (leafDsType.GetConstructor(Type.EmptyTypes) == null)
+                return $"{leafDsType.Name} 没有公共无参构造函数,低代码场景无法实例化。"
+                     + "请用业务侧 BlueprintRunner.Run(cell, blueprint, instances) 自行装配。";
 
-            // 3. 找出 TItem 类型 (走 DataSource<TSource,TItem> 基类链)
-            var itemType = NodeFactory.FindDataSourceItemType(dsType);
-            if (itemType == null)
-                return $"{dsType.Name} 不是 DataSource<TSource, TItem> 的派生类型。";
+            if (!BlueprintDataSourceProbe.IsValidDataSourceType(leafDsType, out var probeError))
+                return probeError!;
 
-            // 4. 实例化数据源 (走 ComponentRegistry 的编译委托缓存,首次反射后续直接 newobj)
-            object dsInstance;
-            try { dsInstance = ComponentRegistry.CreateInstance(dsType); }
-            catch (Exception ex) { return $"实例化 {dsType.Name} 失败:{ex.Message}"; }
+            // 2. 实例化 leaf DS (走 ComponentRegistry 编译委托缓存,首次反射后续直接 newobj)
+            object leafDsInstance;
+            try { leafDsInstance = ComponentRegistry.CreateInstance(leafDsType); }
+            catch (Exception ex) { return $"实例化 {leafDsType.Name} 失败:{ex.Message}"; }
 
-            // 4.1 类型化上下文参数 (优先) — 反射约定:找参数类型可吃 dataSourceContext 的 LoadAsync 方法。
+            // 2.1 类型化上下文参数 (优先) — 反射约定:找参数类型可吃 dataSourceContext 的 LoadAsync 方法。
             //   ReactiveDataSource<TSource, TContext, TItem>.LoadAsync(TContext) / LoadAsync(TContext, CancellationToken)
             //   两种 overload 都能命中,默认 CancellationToken.None。
             if (dataSourceContext != null)
             {
                 var ctxType = dataSourceContext.GetType();
-                var loadMethod = dsType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                var loadMethod = leafDsType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
                     .Where(m => m.Name == "LoadAsync" && m.GetParameters().Length >= 1)
                     .FirstOrDefault(m => m.GetParameters()[0].ParameterType.IsAssignableFrom(ctxType));
                 if (loadMethod != null)
@@ -399,27 +754,49 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                         args[i] = ps[i].HasDefaultValue ? ps[i].DefaultValue
                                   : (ps[i].ParameterType.IsValueType ? Activator.CreateInstance(ps[i].ParameterType) : null);
                     }
-                    try { _ = loadMethod.Invoke(dsInstance, args); }    // fire & forget
-                    catch (Exception ex) { return $"调用 {dsType.Name}.LoadAsync 失败:{ex.Message}"; }
+                    try
+                    {
+                        // ⚠️ 关键:必须等 LoadAsync 完成才 BindTo,否则 fire-and-forget 路径有 race ——
+                        // LoadAsync 走 _requestBus 异步管线,BindTo 之前若 OnFetchAsync 还没跑完,
+                        // GetSnapshot() 返回空快照(version=default=v0)。ContextIngestor / ScatterIngestor
+                        // 版本去重跟初始 _lastVersion=v0 撞车 → 全部 skip,LogicalLength=0,黑屏。
+                        //
+                        // 直接 task.Wait() 在 UI 线程上会 sync-over-async 死锁(SwitchContextAsync 内部
+                        // `await tcs.Task` 默认捕获 sync context,resume 回 UI 线程,而 UI 线程被 Wait 卡)。
+                        // 解法:用 Task.Run 把 Wait 推到 ThreadPool,UI 线程在 ThreadPool Task 上 Wait,
+                        // 内部 await 的 continuation 调度回 UI 时不需要拿锁(Task.Run 的 awaiter 在
+                        // ThreadPool 上 resume),无死锁。
+                        var loadResult = loadMethod.Invoke(leafDsInstance, args);
+                        if (loadResult is System.Threading.Tasks.Task task)
+                        {
+                            try
+                            {
+                                System.Threading.Tasks.Task.Run(() => task).Wait(System.TimeSpan.FromSeconds(5));
+                            }
+                            catch (AggregateException ae)
+                            {
+                                return $"调用 {leafDsType.Name}.LoadAsync 抛异常:{ae.GetBaseException().Message}";
+                            }
+                            if (!task.IsCompleted)
+                            {
+                                Console.WriteLine($"[Hevo 蓝图警告] {leafDsType.Name}.LoadAsync 5 秒未完成,fall through 让 BindTo 走异步路径(可能首帧黑屏)。");
+                            }
+                        }
+                    }
+                    catch (Exception ex) { return $"调用 {leafDsType.Name}.LoadAsync 失败:{ex.Message}"; }
                 }
                 // 没找到匹配的 LoadAsync 不算错 —— 业务可能想用 configureDataSource 走别的路径。
             }
 
-            // 4.2 万能回调,业务自由发挥。
-            try { configureDataSource?.Invoke(dsInstance); }
+            // 2.2 万能回调,业务自由发挥。
+            try { configureDataSource?.Invoke(leafDsInstance); }
             catch (Exception ex) { return $"configureDataSource 抛异常:{ex.Message}"; }
 
-            // 5. 取 ds.Stream(IWorkflow<DataSnapshot<TItem>>)
-            var streamProp = dsType.GetProperty("Stream", BindingFlags.Public | BindingFlags.Instance);
-            object? stream = streamProp?.GetValue(dsInstance);
-            if (stream == null)
-                return $"{dsType.Name}.Stream 取不到值。请确认其继承自 DataSource<,>。";
-
-            // 6. 拉起预览窗口
+            // 3. 拉起预览窗口
             var cell = new ChartCell { Background = new SolidColorBrush(Color.FromRgb(0x1A, 0x1B, 0x1F)) };
             var win = new Window
             {
-                Title = $"蓝图预览 — {dsType.Name}",
+                Title = $"蓝图预览 — {leafDsType.Name}",
                 Width = 1024, Height = 600,
                 Owner = owner,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
@@ -427,21 +804,17 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                 Background = new SolidColorBrush(Color.FromRgb(0x14, 0x15, 0x1A)),
             };
 
-            // 7. 反射调 BlueprintRunner.Run<TItem>(cell, blueprint, dsInstance, stream, handlers)
-            //    handlers 可选,蓝图无 Triggers / 无 Delegate 字段时为 null。
+            // 4. 装配 schema 到 cell。leaf 实例显式塞 instances;其它 DS(Cascade 上游 stocklist 等)
+            //    交给 BlueprintRunner 自动 ComponentRegistry.Resolve + new + InjectProperties。
             try
             {
-                // 选 5 参数版 Run<TItem>(ChartCell, ChartBlueprint, object, IWorkflow<>, BlueprintHandlerRegistry?)
-                var runMethod = typeof(BlueprintRunner).GetMethods(BindingFlags.Public | BindingFlags.Static)
-                    .Where(m => m.Name == "Run" && m.IsGenericMethod && m.GetGenericArguments().Length == 1
-                                && m.GetParameters().Length == 5)
-                    .FirstOrDefault();
-                if (runMethod == null) return "找不到 BlueprintRunner.Run<TItem>(...) 方法,反射调度失败。";
-                var generic = runMethod.MakeGenericMethod(itemType);
-                generic.Invoke(null, new object?[] { cell, blueprint, dsInstance, stream, handlers });
+                var instances = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    [leafDsModel.Id] = leafDsInstance,
+                };
+                BlueprintRunner.Run(cell, blueprint, instances, handlers);
             }
-            catch (TargetInvocationException ex) { return $"BlueprintRunner.Run 抛异常:{ex.InnerException?.Message ?? ex.Message}"; }
-            catch (Exception ex) { return $"BlueprintRunner.Run 抛异常:{ex.Message}"; }
+            catch (Exception ex) { return $"RunBlueprint 抛异常:{(ex.InnerException ?? ex).Message}"; }
 
             // 8. 窗口关闭时回收 ChartCell 状态
             win.Closed += (_, __) => cell.Shutdown();

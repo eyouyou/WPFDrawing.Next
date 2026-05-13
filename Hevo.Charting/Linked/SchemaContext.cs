@@ -24,11 +24,34 @@ namespace Hevo.Charting.Linked
     /// </summary>
     public abstract class SchemaContext
     {
-        /// <summary>schema 的顶层视口端口集。独立=自建;联动=共享。</summary>
-        public abstract ViewportPorts Viewport { get; }
+        // Viewport 抽象属性已删:viewport 唯一权威 = ViewportManagerFeature.Ports / ExternalViewportFeature.Ports
+        // —— 由 Decorate 钩子在装配阶段把共享端口塞进 feature,schema 不再"持有"viewport。
 
         /// <summary>schema 的指针 hit 端口。独立=自建;联动=共享。</summary>
         public abstract DataPort<PointerHitState?> HitPort { get; }
+
+        /// <summary>
+        /// dashboard 共享的 viewport ports —— Standalone 返 null(各 schema 自带 local viewport);
+        /// LinkedMaster/Pane 返 <see cref="LinkedChartContext.SharedViewport"/>(共享同一实例)。
+        /// ChartBlueprint.DefineFeatures 用此对象提前注册 <c>cell:viewport.*</c> 到 _portRegistry,
+        /// 让 features 的 PortBinding 在解析时拿到 Decorate 后真正写入的 port instance,
+        /// 不被"DefineFeatures 跑在 Decorate 之前"的时序坑掉。
+        /// </summary>
+        public abstract ViewportPorts? SharedViewport { get; }
+
+        /// <summary>
+        /// schema 可见的 dashboard 级共享端口注册表。
+        /// <list type="bullet">
+        ///   <item>Standalone:返空字典(无 dashboard 上下文)</item>
+        ///   <item>LinkedMaster / LinkedPane:返 <see cref="LinkedChartContext.SharedPorts"/>(共享 dict 引用)</item>
+        /// </list>
+        /// <para>
+        /// <see cref="LowCode.Designer.ChartBlueprint"/> 在 DefineFeatures 期间遍历此字典,把每项以
+        /// <c>"dashboard:{name}"</c> 形态注入 schema 私有 <c>_portRegistry</c>,Feature 的 PortBindings
+        /// 引用 <c>"dashboard:linkedHit"</c> 等即拿到同一 DataPort 实例(实现跨 cell 同步)。
+        /// </para>
+        /// </summary>
+        public abstract IReadOnlyDictionary<string, IDataPort> SharedPorts { get; }
 
         /// <summary>
         /// 装饰钩子:由 <see cref="ReactiveSchema"/> 在 <c>DefineFeatures</c> 跑完之后调用。
@@ -72,8 +95,14 @@ namespace Hevo.Charting.Linked
 
     internal sealed class StandaloneSchemaContext : SchemaContext
     {
-        public override ViewportPorts Viewport { get; } = new();
         public override DataPort<PointerHitState?> HitPort { get; } = new("LocalHit");
+
+        private static readonly IReadOnlyDictionary<string, IDataPort> _empty
+            = new Dictionary<string, IDataPort>();
+        public override IReadOnlyDictionary<string, IDataPort> SharedPorts => _empty;
+
+        // Standalone:无 dashboard 共享 viewport。schema 用自家 ViewportPortsFeature.Ports(local)。
+        public override ViewportPorts? SharedViewport => null;
     }
 
     internal sealed class LinkedMasterSchemaContext : SchemaContext
@@ -81,12 +110,25 @@ namespace Hevo.Charting.Linked
         private readonly LinkedChartContext _ctx;
         public LinkedMasterSchemaContext(LinkedChartContext ctx) => _ctx = ctx;
 
-        public override ViewportPorts Viewport => _ctx.SharedViewport;
         public override DataPort<PointerHitState?> HitPort => _ctx.SharedHit;
+        public override IReadOnlyDictionary<string, IDataPort> SharedPorts => _ctx.SharedPorts;
+        public override ViewportPorts? SharedViewport => _ctx.SharedViewport;
 
-        /// <summary>主图装饰:仅强制水平边距与 ctx 对齐(crosshair 跨 cell 对齐前提)。</summary>
+        /// <summary>
+        /// 主图装饰:
+        /// <list type="bullet">
+        ///   <item>强制水平边距与 ctx 对齐(crosshair 跨 cell 对齐前提)</item>
+        ///   <item>把框架 ensure 的 <see cref="ViewportPortsFeature"/>.Ports 替换为 dashboard 共享端口
+        ///         (viewport 权威源 = PortsFeature.Ports,联动多 cell 必须指向同一份;
+        ///         主图保留 VPM 钳制业务,副图 Remove VPM 见 LinkedPane)</item>
+        /// </list>
+        /// </summary>
         public override void Decorate(IFeatureContext canvas)
-            => ForceHorizontalMargin(canvas, _ctx.HorizontalLeft, _ctx.HorizontalRight);
+        {
+            ForceHorizontalMargin(canvas, _ctx.HorizontalLeft, _ctx.HorizontalRight);
+            var ports = canvas.Find<ViewportPortsFeature>();
+            if (ports != null) ports.Ports = _ctx.SharedViewport;
+        }
 
         internal static void ForceHorizontalMargin(IFeatureContext canvas, ChartLength left, ChartLength right)
         {
@@ -104,15 +146,17 @@ namespace Hevo.Charting.Linked
         private readonly LinkedChartContext _ctx;
         public LinkedPaneSchemaContext(LinkedChartContext ctx) => _ctx = ctx;
 
-        public override ViewportPorts Viewport => _ctx.SharedViewport;
         public override DataPort<PointerHitState?> HitPort => _ctx.SharedHit;
+        public override IReadOnlyDictionary<string, IDataPort> SharedPorts => _ctx.SharedPorts;
+        public override ViewportPorts? SharedViewport => _ctx.SharedViewport;
 
         /// <summary>
         /// 联动副图装饰:
         /// <list type="bullet">
         ///   <item>强制水平边距与 ctx 对齐(crosshair 对齐前提)</item>
-        ///   <item>摘除 <see cref="ViewportManagerFeature"/>(避免双管家)</item>
-        ///   <item>挂 <see cref="ExternalViewportFeature"/> 标记,告知 AddDomainAxis 视口由外部提供</item>
+        ///   <item>摘除 <see cref="ViewportManagerFeature"/>(避免双管家:副图 ActiveRange 由主图 VPM 写,自家挂会双写竞态)</item>
+        ///   <item>把框架 ensure 的 <see cref="ViewportPortsFeature"/>.Ports 替换为 dashboard 共享端口 ——
+        ///         兄弟 ChartFeature 通过 <see cref="ReactiveSchema.GetEffectiveViewport"/> 拿到共享 ports</item>
         ///   <item>摘除 <see cref="TooltipWidgetFeature"/>(业务规约:tooltip 只主图弹)</item>
         /// </list>
         /// </summary>
@@ -120,7 +164,12 @@ namespace Hevo.Charting.Linked
         {
             LinkedMasterSchemaContext.ForceHorizontalMargin(canvas, _ctx.HorizontalLeft, _ctx.HorizontalRight);
             canvas.Remove<ViewportManagerFeature>();
-            canvas.Add(new ExternalViewportFeature());
+            var ports = canvas.Find<ViewportPortsFeature>();
+            if (ports != null)
+            {
+                ports.Ports = _ctx.SharedViewport;
+                ports.IsExternal = true;  // 替代旧 ExternalViewportFeature marker —— 告诉 AddDomainAxis 视口策略主图配,本副图豁免 VPM 检查
+            }
             canvas.Remove<TooltipWidgetFeature>();
         }
     }

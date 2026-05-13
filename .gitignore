@@ -257,6 +257,10 @@ paket-files/
 __pycache__/
 *.pyc
 
+# §D2.5 嵌入 Python 运行时:首次 build 由 scripts/setup-python.ps1 自动下载部署,
+# ~30MB 二进制(dll/pyd) + numpy,不入版本控制;团队成员 clone 后首次 build 自动拉取。
+/Python312/
+
 # Misc Data
 Logs
 healthchecksdb
@@ -265,3 +269,5 @@ healthchecksdb
 
 # BenchmarkDotNet artifacts
 BenchmarkDotNet.Artifacts/
+
+/DataAnalysis

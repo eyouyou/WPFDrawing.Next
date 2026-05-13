@@ -391,95 +391,9 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
         }
     }
 
-    /// <summary>
-    /// Minimap 缩略层:右下角浮窗,把整个画布按比例缩到 fit 进 200x140 的小框里,
-    /// 用低饱和方块画节点位置,再用一个亮色矩形标当前视口位置。
-    /// 点击/拖动 minimap 可平移画布(<see cref="GraphSchema.HitTestMinimap"/> + Set Transform)。
-    /// </summary>
-    internal sealed class GraphMinimapLayer : ChartLayer
-    {
-        // Minimap 浮窗几何(屏幕坐标)。改尺寸只动这俩,渲染 + 命中两端共用。
-        public const float MinimapWidth = 200f;
-        public const float MinimapHeight = 140f;
-        public const float MinimapMargin = 12f;
-        public const float MinimapPadding = 6f;
-
-        public GraphMinimapLayer()
-        {
-            Name = "GraphMinimapLayer";
-            Mode = RenderMode.Software;
-            Level = ChartLayerType.Interaction;
-        }
-
-        protected override void OnUpdate(IVisualData data, IDrawingSink draw, WidgetBuffer widget)
-        {
-            var t = data.Get<GraphRenderTrait>();
-            var size = data.Get<ViewportSizeTrait>();
-            if (t == null || size == null) return;
-            var s = t.State;
-            if (s.Nodes.Count == 0) return;
-
-            // Minimap 浮窗位置:右下角
-            float winW = (float)size.Width;
-            float winH = (float)size.Height;
-            float mx = winW - MinimapWidth - MinimapMargin;
-            float my = winH - MinimapHeight - MinimapMargin;
-            var minimapRect = new HevoRect(mx, my, MinimapWidth, MinimapHeight);
-
-            // 1. 浮窗背板
-            draw.DrawRoundedRectangle(GraphPalette.MinimapBg, GraphPalette.MinimapBorder, minimapRect, 4f, 4f);
-
-            // 2. 计算节点 AABB → minimap 缩放比例
-            var (bbX, bbY, bbW, bbH) = ComputeContentBounds(s.Nodes);
-            float drawAreaW = MinimapWidth - 2 * MinimapPadding;
-            float drawAreaH = MinimapHeight - 2 * MinimapPadding;
-            float scale = Math.Min(drawAreaW / Math.Max(bbW, 1f), drawAreaH / Math.Max(bbH, 1f));
-            float ox = mx + MinimapPadding + (drawAreaW - bbW * scale) / 2f - bbX * scale;
-            float oy = my + MinimapPadding + (drawAreaH - bbH * scale) / 2f - bbY * scale;
-
-            // 3. 节点
-            foreach (var n in s.Nodes)
-            {
-                var b = n.GetBounds();
-                var mini = new HevoRect(ox + b.X * scale, oy + b.Y * scale, b.Width * scale, b.Height * scale);
-                draw.DrawRectangle(GraphPalette.MinimapNodeFill, null, mini);
-            }
-
-            // 4. 当前视口框(屏幕坐标 → 反算回画布坐标 → 投影到 minimap)
-            var tr = s.Transform;
-            float vpCanvasLeft = -tr.OffsetX / tr.Scale;
-            float vpCanvasTop = -tr.OffsetY / tr.Scale;
-            float vpCanvasRight = (winW - tr.OffsetX) / tr.Scale;
-            float vpCanvasBottom = (winH - tr.OffsetY) / tr.Scale;
-            var vpRect = new HevoRect(
-                ox + vpCanvasLeft * scale,
-                oy + vpCanvasTop * scale,
-                (vpCanvasRight - vpCanvasLeft) * scale,
-                (vpCanvasBottom - vpCanvasTop) * scale);
-            // 跟 minimap 边界做 clip,免得视口框跑出来
-            vpRect = vpRect.Intersect(minimapRect);
-            if (!vpRect.IsEmpty)
-                draw.DrawRectangle(null, GraphPalette.MinimapViewport, vpRect);
-        }
-
-        /// <summary>
-        /// 计算所有节点的合并 AABB。给 <see cref="GraphSchema"/> 的命中检测复用,共享一份算法。
-        /// </summary>
-        public static (float x, float y, float w, float h) ComputeContentBounds(IReadOnlyList<Node> nodes)
-        {
-            if (nodes.Count == 0) return (0f, 0f, 1f, 1f);
-            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
-            foreach (var n in nodes)
-            {
-                var b = n.GetBounds();
-                if (b.X < minX) minX = b.X;
-                if (b.Y < minY) minY = b.Y;
-                if (b.X + b.Width > maxX) maxX = b.X + b.Width;
-                if (b.Y + b.Height > maxY) maxY = b.Y + b.Height;
-            }
-            return (minX, minY, Math.Max(1f, maxX - minX), Math.Max(1f, maxY - minY));
-        }
-    }
+    // GraphMinimapLayer 已合并到通用 Hevo.Charting.Layers.MinimapLayer ——
+    // GraphSchema.PushTraitToLayers 自己负责把 GraphState 翻译成 MinimapTrait(ContentBounds + ContentItems + Viewport)。
+    // 旧的 ComputeContentBounds 静态方法搬到 GraphSchema.ComputeNodesAabb,跟 ComputeMinimapMapping 共用。
 
     /// <summary>
     /// 交互预览层:橡皮筋拖出连线 + 端口悬停 tooltip。

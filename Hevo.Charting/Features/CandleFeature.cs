@@ -9,7 +9,7 @@ namespace Hevo.Charting.Features
     public static class CandleFeatureExtensions
     {
         // --- 🕯️ 3. Series ---
-        // Viewport 由 ReactiveSchema.Add 自动注入（L6 / §B.2.6），外部不再显式传 vp。
+        // Viewport 由 ChartFeature.InternalCompose 从 ViewportManagerFeature.Ports 自动注入（L6 / §B.2.6），外部不再显式传 vp。
         public static SeriesBuilder AddCandle(
         this SeriesBuilder builder,
         DataPort<RealRange> rangePort,
@@ -69,7 +69,7 @@ namespace Hevo.Charting.Features
         // 🔌 第一组：核心物理引脚注入
         // ==========================================
 
-        // Viewport 由 ChartFeature 基类统一持有，由 ReactiveSchema.Add 自动注入（L6 / §B.2.6）
+        // Viewport 由 ChartFeature 基类持有,由 InternalCompose 从 ViewportManagerFeature.Ports 注入（L6 / §B.2.6）
 
         /// <summary>Y 轴极值引脚：由外部 AutoScaleFeature 计算后传入</summary>
         public DataPort<RealRange> YRangePort { get; init; } = null!;

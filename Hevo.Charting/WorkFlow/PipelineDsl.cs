@@ -3,11 +3,48 @@ using Hevo.Charting.LowCode;
 
 namespace Hevo.Charting.WorkFlow
 {
+    /// <summary>
+    /// 管线收尾的共享接线工具:把 stream 接进 pipe + 挂 dispose 回调。
+    /// <para>
+    /// 之前 <see cref="DataPipeBuilder{TSource,TItem}.Seal"/>(强类型 DSL 路径)和
+    /// <c>ChartBlueprint.DefineDataFlow</c>(蓝图反射路径)各自手撸了一遍同样的
+    /// <c>stream.Select(pipe.Process).DoOnDispose(pipe.Dispose)</c> 链路 —— DoOnDispose
+    /// 的诊断日志、回调签名都得维护两份。这里抽出来一处定义,排查 dispose 链不用再两边翻。
+    /// </para>
+    /// </summary>
+    public static class PipelineWiring
+    {
+        /// <summary>
+        /// 把 snapshot stream 接到 pipe 上,产出 board 流;订阅链 dispose 时同步释放 pipe。
+        /// 调用方负责 caller-specific 的 <c>BindTo(chart)</c> / <c>StartWith(snapshot)</c> 等装饰。
+        /// </summary>
+        public static IWorkflow<DataBlackboard> WireToPipe<TItem>(
+            IWorkflow<DataSnapshot<TItem>> stream,
+            UniversalDataPipe<TItem> pipe,
+            Action? onDispose = null)
+        {
+            return stream
+                .Select(snap => pipe.Process(snap))
+                .DoOnDispose(() =>
+                {
+#if DEBUG
+                    // 谁触发了订阅链 dispose → pipe.Dispose → board.Dispose。
+                    // 一般是 ChartSession.Dispose(Template 替换 / cell unload)。Template 替换正常路径
+                    // 也会进来一次(旧 schema 的 board 回收),不是 bug;只有"没人切 template 但日志出现"才异常。
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[PipelineWiring.DoOnDispose] pipe=#{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(pipe)} board=#{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(pipe.Board)}");
+#endif
+                    pipe.Dispose();
+                    onDispose?.Invoke();
+                });
+        }
+    }
+
     // ==========================================
     // 💥 强类型管道构建器：完美接管 CRTP 的派生类类型
     // [架构哲学]：向外提供 Fluent API，支持无限连写，绝不主动封口。
     // ==========================================
-    public class DataPipeBuilder<TSource, TItem> where TSource : DataSource<TSource, TItem>
+    public class DataPipeBuilder<TSource, TItem> where TSource : BufferedDataSource<TSource, TItem>
     {
         private readonly TSource _dataSource; // 💥 强类型的大管家！
         private readonly IWorkflow<DataSnapshot<TItem>> _stream;
@@ -104,15 +141,8 @@ namespace Hevo.Charting.WorkFlow
         {
             // 💥 绝杀修复：在管线的源头强行注入一次大管家的当前快照！
             // 这样无论下游（图表）什么时候来 Subscribe，都能瞬间拿到当前的最新状态（哪怕是空的），绝不丢失第一帧！
-            var boardStream = _stream
-                .StartWith(_dataSource.GetSnapshot()) // 👈👈👈 就加这一行！！！
-                .Select(snapshot => _pipe.Process(snapshot));
-
-            return boardStream.DoOnDispose(() =>
-            {
-                _pipe.Dispose();
-                _onDisposeCallbacks?.Invoke();
-            });
+            var stream = _stream.StartWith(_dataSource.GetSnapshot());
+            return PipelineWiring.WireToPipe(stream, _pipe, _onDisposeCallbacks);
         }
 
         /// <summary>
@@ -137,7 +167,7 @@ namespace Hevo.Charting.WorkFlow
     // ==========================================
     // 💥 标量分支路由器 (持有强类型的 TSource 用于 End() 链式返回)
     // ==========================================
-    public class ValueLinker<TContext, TItem, TValue, TSource> where TSource : DataSource<TSource, TItem>
+    public class ValueLinker<TContext, TItem, TValue, TSource> where TSource : BufferedDataSource<TSource, TItem>
     {
         private readonly DataPipeBuilder<TSource, TItem> _parent;
         private readonly ContextBranchingIngestor<TContext, TItem, TValue> _ingestor;
@@ -172,7 +202,7 @@ namespace Hevo.Charting.WorkFlow
     // ==========================================
     // 💥 AoS 向量切片配置器 (升级：全量支持 TSource 泛型透传)
     // ==========================================
-    public class ScatterConfigurator<TSource, TItem> where TSource : DataSource<TSource, TItem>
+    public class ScatterConfigurator<TSource, TItem> where TSource : BufferedDataSource<TSource, TItem>
     {
         private readonly UniversalDataPipe<TItem> _pipe;
         private readonly Func<TItem, int>? _indexSelector;

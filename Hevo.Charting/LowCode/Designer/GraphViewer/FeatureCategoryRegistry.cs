@@ -20,7 +20,9 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
         Environment,
         /// <summary>坐标轴域 (对应 <see cref="AxesBuilder"/>)。</summary>
         Axes,
-        /// <summary>数据序列渲染域:线 / 柱 / K 线 (对应 <see cref="SeriesBuilder"/>)。</summary>
+        /// <summary>数据序列渲染域:线 / 柱 / K 线 / Plot / Compute (对应 <see cref="SeriesBuilder"/>)。
+        /// Compute 节点跟 LowCodeDemo / KLineDetailBlueprint 的约定一样归入 Series 泳道,跟下游 LineSeries
+        /// 同行水平排开 —— 数据流从左到右(Compute → LineSeries),不另起一行避免视觉碎片化。</summary>
         Series,
         /// <summary>交互行为域:十字光标 / Tooltip / 滚轮缩放 (对应 <see cref="InteractionBuilder"/>)。</summary>
         Interaction,

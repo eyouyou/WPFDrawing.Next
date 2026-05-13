@@ -51,7 +51,7 @@ namespace Hevo.Charting.Tests
             bp.Features.Add(new FeatureModel
             {
                 TypeName = nameof(UniversalAutoScaleFeature),
-                PortBindings = new Dictionary<string, object?>
+                InputBindings = new Dictionary<string, object?>
                 {
                     // 故意只焊 ValuePorts 不焊 YRangePort
                     [nameof(UniversalAutoScaleFeature.ValuePorts)] = "RealTime_Price",
@@ -75,7 +75,7 @@ namespace Hevo.Charting.Tests
             bp.Features.Add(new FeatureModel
             {
                 TypeName = nameof(LineSeriesFeature),
-                PortBindings = new Dictionary<string, object?>
+                InputBindings = new Dictionary<string, object?>
                 {
                     [nameof(LineSeriesFeature.YRangePort)] = "shared_id",
                 },
@@ -83,7 +83,7 @@ namespace Hevo.Charting.Tests
             bp.Features.Add(new FeatureModel
             {
                 TypeName = nameof(LineSeriesFeature),
-                PortBindings = new Dictionary<string, object?>
+                InputBindings = new Dictionary<string, object?>
                 {
                     [nameof(LineSeriesFeature.DataPort)]   = "shared_id",  // 类型跟上面冲突
                 },
@@ -105,7 +105,7 @@ namespace Hevo.Charting.Tests
             bp.Features.Add(new FeatureModel
             {
                 TypeName = nameof(ChartInteractionFeature),
-                PortBindings = new Dictionary<string, object?>
+                OutputBindings = new Dictionary<string, object?>
                 {
                     [nameof(ChartInteractionFeature.PointerHitPort)] = "hit_state",
                 },
@@ -129,10 +129,7 @@ namespace Hevo.Charting.Tests
             EnsureTestDataSourceRegistered();
             return new ChartBlueprint
             {
-                DataSource = new DataSourceModel
-                {
-                    TypeName = nameof(TestDataSource),
-                },
+                DataSources = { new DataSourceModel { Id = "primary", TypeName = nameof(TestDataSource) } },
             };
         }
 
