@@ -47,7 +47,7 @@ namespace Hevo.Charting.Tests
                 // 优先 Release(perf 友好+一般 CI 跑这个),fallback Debug
                 foreach (var conf in new[] { "Release", "Debug" })
                 {
-                    var exe = Path.Combine(benchProj, "bin", conf, "net8.0-windows10.0.19041.0", "Hevo.Charting.Benchmarks.exe");
+                    var exe = Path.Combine(benchProj, "bin", conf, "net10.0-windows10.0.19041.0", "Hevo.Charting.Benchmarks.exe");
                     if (File.Exists(exe)) return exe;
                 }
             }

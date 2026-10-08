@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- net8 only — 测试项目不在 .NET 5 兼容硬约束里 (README §2),可以用 xUnit / 任何 net6+ API。 -->
+    <!-- net10 only — 测试项目不在 .NET 5 兼容硬约束里 (README §2),可以用 xUnit / 任何 net6+ API。 -->
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <Nullable>enable</Nullable>
     <LangVersion>preview</LangVersion>

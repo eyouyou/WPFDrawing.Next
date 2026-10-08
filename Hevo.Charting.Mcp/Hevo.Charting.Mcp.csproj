@@ -3,7 +3,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <!--
-      技术约束:Hevo.Charting 锁 net8.0-windows + UseWPF (WPF 渲染层耦合无法剥离),
+      技术约束:Hevo.Charting 锁 net10.0-windows + UseWPF (WPF 渲染层耦合无法剥离),
       MCP server 作为下游消费方只能锁同 TFM 才能 ProjectReference 进来。
 
       但 MCP server 自身不渲染任何 UI:

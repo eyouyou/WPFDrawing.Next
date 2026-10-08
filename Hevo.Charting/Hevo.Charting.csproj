@@ -5,7 +5,7 @@
 		<Nullable>enable</Nullable>
 		<UseWPF>true</UseWPF>
 		<!-- LangVersion=preview 同时锁定 .NET 5 SDK 5.0.408 (net5 LangVersion=preview 才能解锁 record struct / global using),
-		     在 net8 上无副作用 — 详见 CLAUDE.md "维持 .NET 5 兼容" 一节。 -->
+		     在 net10 上无副作用 — 详见 CLAUDE.md "维持 .NET 5 兼容" 一节。 -->
 		<LangVersion>preview</LangVersion>
 
 		<EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>

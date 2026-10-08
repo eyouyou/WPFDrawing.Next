@@ -111,7 +111,7 @@ Response on stdout will contain a `content[].text` JSON array of feature aliases
 
 ## Platform note
 
-This MCP server currently targets `net8.0-windows10.0.19041.0` because it ProjectReferences `Hevo.Charting.csproj` which uses WPF. The MCP server itself **does not render UI** (`<UseWPF>` is intentionally not set), but the WPF runtime must be available — meaning **Windows-only** for now. Cross-platform requires upstream work to split the WPF rendering layer from `Hevo.Charting`'s schema/blueprint model. That's a separate engineering item.
+This MCP server currently targets `net10.0-windows10.0.19041.0` because it ProjectReferences `Hevo.Charting.csproj` which uses WPF. The MCP server itself **does not render UI** (`<UseWPF>` is intentionally not set), but the WPF runtime must be available — meaning **Windows-only** for now. Cross-platform requires upstream work to split the WPF rendering layer from `Hevo.Charting`'s schema/blueprint model. That's a separate engineering item.
 
 ## Caveats
 
