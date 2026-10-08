@@ -126,4 +126,12 @@ dotnet test  "Hevo.Charting.Tests/Hevo.Charting.Tests.csproj" -c Release
 dotnet run --project Hevo.Charting.Benchmarks -c Release -- --filter "*"
 ```
 
+发布(ReadyToRun 预编译,省冷启动 JIT;LowCodeDemo / Mcp / Benchmarks 都带 `ReadyToRun` 发布配置,输出到 `bin/publish/r2r/`):
+
+```bash
+dotnet publish "Hevo.Drawing.LowCodeDemo/Hevo.Drawing.LowCodeDemo.csproj" -c Release -p:PublishProfile=ReadyToRun
+```
+
+> 实测首张图冷启动(装配 + 首帧)JIT 约 242ms → R2R 约 194ms,热启动不变;数据见 [Benchmarks README](./Hevo.Charting.Benchmarks/README.md)。
+
 > 目标平台：Any CPU / x64。需要支持 WPF 的 .NET 10 SDK；MCP / Tests / Benchmarks 子项目同样锁 `net10.0-windows10.0.19041.0`（因 ProjectReference 透传 WPF 依赖）。

@@ -94,7 +94,11 @@ Most MCP clients accept a `command` + `args` setup. Example for Claude Desktop /
 }
 ```
 
-For production, prefer `dotnet publish -c Release` once and point `command` at the resulting exe to skip startup compilation.
+For production, prefer publishing once and pointing `command` at the resulting exe to skip startup compilation. `-p:PublishProfile=ReadyToRun` additionally precompiles the assemblies (ReadyToRun, win-x64, output in `bin/publish/r2r/`), which removes most JIT time on cold start:
+
+```bash
+dotnet publish Hevo.Charting.Mcp -c Release -p:PublishProfile=ReadyToRun
+```
 
 ## Try it (manual JSON-RPC)
 

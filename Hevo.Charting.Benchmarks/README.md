@@ -265,6 +265,9 @@ dotnet run -c Release -- --render-probe --scenarios=Hover,Zoom --rounds=10 --out
 - Resize 走环境纪元 FullPass,增量和全量本来就一样。
 - `inc-par` / `full-par`(PlotMode.Parallel)在所有组合里都没有收益,全量时略慢(单图 10 个图层,并行调度开销盖过收益)。
 - Startup:冷启动 装配 167 ms / 首帧 49 ms;热启动 装配 14.3 ms / 首帧 0.94 ms(2000 根,10 个图层)。
+- ReadyToRun 发布(`dotnet publish -c Release -p:PublishProfile=ReadyToRun`)跟普通 JIT 构建交替各跑 6 个进程,
+  中位数:冷启动 装配 187 → 161 ms、首帧 54.5 → 33 ms,合计 **~242 → ~194 ms**(-20%),波动也小了(JIT 偶发 256 ms);
+  热启动不变。剩下 ~160 ms 装配不是本仓库代码的 JIT(WPF 框架本身已是 R2R),要再压得先抓启动 trace。
 
 **数据量伸缩**(`--bars=2000,20000,100000`,3 轮,增量 / 全量,帧耗时 ms,K 线 LOD 优化后):
 
