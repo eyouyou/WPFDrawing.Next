@@ -81,7 +81,15 @@ namespace Hevo.Charting.Features
         /// (env.SetupUniversalHeader / AddDomainAxis 等)在 DefineFeatures 内即可拿到 attached ports。
         /// </para>
         /// </summary>
-        protected override void OnAttached() => ViewportPorts.SetAttached(Chart, _ports);
+        protected override void OnAttached()
+        {
+            // 联动 dashboard 的 cell 在赋 Template 之前就挂好了 SchemaContext:这里直接采用共享 viewport,
+            // 让 DefineFeatures 里 RequireAttached(Chart) 拿到的(如 AddDomainAxis 捕获的 vp.ActiveRange)
+            // 一开始就是共享端口。否则要等 DefineFeatures 之后的 Decorate 才换,先捕获的是本地端口 ——
+            // 主图 VPM 写共享 ActiveRange,X 轴还盯着本地那份,平移 / 缩放时时间轴不跟随。
+            if (Linked.SchemaContext.GetAttached(Chart)?.SharedViewport is { } shared) _ports = shared;
+            ViewportPorts.SetAttached(Chart, _ports);
+        }
 
         protected override void OnCompose(ChartCell chart, RenderContext ctx, IRenderFlow<DataBlackboard> flow) { }
         protected override void OnProject(FeatureContext ctx) { }
