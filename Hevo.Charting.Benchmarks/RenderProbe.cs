@@ -186,6 +186,7 @@ namespace Hevo.Charting.Benchmarks
             }
 
             var suites = new List<SuiteResult>();
+            if (s_allocSampler != null) FeedProbe.Sampler = s_allocSampler;
             foreach (var name in opt.SuiteNames)
             {
                 Console.WriteLine($"[render-probe] 套件 {name} 开始");
@@ -201,6 +202,14 @@ namespace Hevo.Charting.Benchmarks
 
             var report = BuildReport(env, opt, combos, startups);
             if (s_allocSampler != null) report = report with { Markdown = report.Markdown + AllocTypesMarkdown(combos) };
+            if (FeedProbe.SamplerResults.Count > 0)
+            {
+                var sb = new StringBuilder();
+                sb.AppendLine().AppendLine("### 分配类型采样(套件,全进程所有线程;\"每帧\"列按每秒计)").AppendLine();
+                foreach (var (label, rows, seconds) in FeedProbe.SamplerResults)
+                    sb.AppendLine(AllocTypeSampler.Format(label, rows, (int)Math.Round(seconds)));
+                report = report with { Markdown = report.Markdown + sb };
+            }
             if (suites.Count > 0)
             {
                 report = report with { Markdown = report.Markdown + string.Concat(suites.Select(x => x.Markdown)) };

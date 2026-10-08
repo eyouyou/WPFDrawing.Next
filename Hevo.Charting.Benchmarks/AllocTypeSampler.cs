@@ -42,13 +42,13 @@ namespace Hevo.Charting.Benchmarks
             if (source.Name == "Microsoft-Windows-DotNETRuntime") _runtime = source;
         }
 
-        /// <summary>在 UI 线程调用:开始统计当前线程的分配采样。</summary>
-        public void Begin()
+        /// <summary>开始统计。allThreads=false 只统计调用线程(逐帧场景在 UI 线程调);true 统计全进程(数据源推送线程等)。</summary>
+        public void Begin(bool allThreads = false)
         {
             lock (_lock)
             {
                 _buckets.Clear();
-                _uiThreadId = GetCurrentThreadId();
+                _uiThreadId = allThreads ? 0 : GetCurrentThreadId();
                 _active = true;
             }
             if (_runtime != null) EnableEvents(_runtime, EventLevel.Verbose, GcKeyword);
@@ -71,7 +71,7 @@ namespace Hevo.Charting.Benchmarks
         protected override void OnEventWritten(EventWrittenEventArgs e)
         {
             if (e.EventId != GCAllocationTickId || e.Payload == null || e.PayloadNames == null) return;
-            if (e.OSThreadId != _uiThreadId) return;
+            if (_uiThreadId != 0 && e.OSThreadId != _uiThreadId) return;
 
             long amount = 0, objectSize = 0;
             int kind = 0;

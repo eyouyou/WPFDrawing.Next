@@ -268,6 +268,10 @@ namespace Hevo.Charting.Benchmarks
         }
 
         /// <summary>按 rate tick/s 推 seconds 秒,返回交付统计。warmup 秒先推不计。</summary>
+        /// <summary>--alloc-types 时 Feed / Soak 按全进程采样分配类型(推送线程上的 Publish 也算进来)。</summary>
+        internal static AllocTypeSampler? Sampler;
+        internal static readonly List<(string Label, List<AllocTypeSampler.Row> Rows, double Seconds)> SamplerResults = new();
+
         private static FeedRun Measure(Rig rig, string label, int rate, double seconds, double warmup, ConcurrentQueue<double>? computeMs = null)
         {
             long total = (long)Math.Ceiling(rate * (seconds + warmup)) + 1;
@@ -331,8 +335,15 @@ namespace Hevo.Charting.Benchmarks
             measureStartTicks = Stopwatch.GetTimestamp();
             measuring = true;
             int latCountAtStart = latencies.Count;
+            bool sample = Sampler != null && label != "warmup";
+            if (sample) Sampler!.Begin(allThreads: true);
             RenderProbe.Pump((int)(seconds * 1000));
             measuring = false;
+            if (sample)
+            {
+                RenderProbe.Pump(300);
+                SamplerResults.Add((label, Sampler!.End(), seconds));
+            }
             var computeSnapshot = computeMs?.ToList(); // 只算测量窗口内完成的调用
             double elapsed = (Stopwatch.GetTimestamp() - measureStartTicks) / (double)Stopwatch.Frequency;
             long pushedDuring = Interlocked.Read(ref pushed) - pushed0;
