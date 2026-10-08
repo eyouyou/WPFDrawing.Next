@@ -149,3 +149,40 @@ Hevo.Charting.Benchmarks.SeedDispatchReflectionVsCompiledBenchmarks-report-githu
 Hevo.Charting.Benchmarks.CtorReflectionVsCompiledBenchmarks-report-github.md
 Hevo.Charting.Benchmarks.BlueprintEndToEndBenchmarks-report-github.md
 ```
+
+## 增量渲染前后对比 (`--render-probe`, [RenderProbe](RenderProbe.cs))
+
+不是 BenchmarkDotNet:要真窗口和完整 WPF 管线,所以单独一个入口。
+
+```bash
+cd Hevo.Charting.Benchmarks
+dotnet run -c Release -- --render-probe                       # 默认 2000 根 K 线,每场景 600 步
+dotnet run -c Release -- --render-probe --bars=5000 --steps=1000 --out=probe.csv
+```
+
+**图表**:跟 LowCodeDemo `KLineMainSchema` 同款装配(蜡烛 + SMA20 + 时间轴 + 价格轴 + 联动头 + 标准交互),
+数据是固定种子的随机游走,黑板由脚本直接写。
+
+**场景**(每步改一次黑板,再手动跑一帧 `ExecutePipeline + Invalidate`,跟 `CompositionTarget` 回调里那一帧是同一段代码,不受 VSync 节奏影响):
+
+| 场景 | 每步做什么 |
+|---|---|
+| Hover | 十字光标在绘图区横扫,每步 3px,写 `PointerHitPort`(命中计算复刻 `ChartInteractionFeature`) |
+| Pan | 平移 1 根 K 线,写 `Viewport.UserRange`,每 100 步换方向 |
+| Tick | 最后一根 K 线收盘价跳动,`ForceWrite` High/Low/Close |
+
+**模式**(`DevTools/IncrementalRenderProbe` 的静态开关,默认全关,关着时行为跟原来一致):
+
+| 模式 | 含义 |
+|---|---|
+| 增量(默认) | 现状 |
+| 去掉Bag短路 | 关掉 `RenderContext.SubmitSync` 的 Bag 级短路,图层仍做引用比对。验证短路只是省 CPU,不改变重绘集合 |
+| 图层侧全重绘 | 已发现的图层每帧都重录(关掉 `VisualDependencyTracker` 判脏) |
+| Feature侧全量 | 每帧都当作环境纪元变化,所有 Feature 重投影、`UsePort` 全部视为变脏 |
+| 全量(两侧都关) | 上面两项同时打开,相当于没有增量机制 |
+
+**输出**:控制台打印 Markdown 汇总表(帧耗时中位/P95、输入耗时、每帧 Feature 重算数、图层重录数、绘制命令数、每帧分配),
+逐帧明细写 CSV。"帧耗时"只算 `ExecutePipeline + Invalidate`(Feature 投影 + 判脏 + 图层录制 + 上屏指令派发),
+不含 WPF 合成线程的 GPU 时间;"输入耗时"是写黑板本身,含同步 `Watch` 副作用(视口钳位、自动量程),不受模式开关影响。
+
+> ⚠️ 必须 Release。DEBUG 下每个 schema 都挂拓扑追踪器,每次读写都有记录开销。

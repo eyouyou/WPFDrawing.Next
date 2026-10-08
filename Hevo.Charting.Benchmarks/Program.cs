@@ -27,6 +27,11 @@ namespace Hevo.Charting.Benchmarks
             if (args.Length > 0 && args[0] == "--sandbox-probe")
                 return SandboxProbeMain(args);
 
+            // 增量渲染前后对比(真窗口,非 BenchmarkDotNet):
+            //   `dotnet run -c Release -- --render-probe [--bars=2000] [--steps=600] [--out=render-probe.csv]`
+            if (args.Length > 0 && args[0] == "--render-probe")
+                return RenderProbe.Run(args);
+
             BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
             return 0;
         }

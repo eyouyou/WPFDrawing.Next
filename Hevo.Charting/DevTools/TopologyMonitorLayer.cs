@@ -487,6 +487,7 @@ namespace Hevo.Charting.DevTools
                 double dx = pos.X - _timelineDragStart.X;
                 _timelineDragStart = pos;
 
+#if DEBUG
                 if (_tracer != null)
                 {
                     long elapsed = _tracer.ElapsedTicks;
@@ -501,6 +502,7 @@ namespace Hevo.Charting.DevTools
                             _timelineViewOffsetTicks + deltaTicks, 0, maxOffset);
                     }
                 }
+#endif
                 base.OnMouseMove(e);
                 return;
             }
@@ -923,6 +925,8 @@ namespace Hevo.Charting.DevTools
             return 600;
         }
 
+#if DEBUG
+        // 时间线明细绘制依赖 TopologyTracer 的 DEBUG-only 成员,调用方 DrawTimeline 也只在 DEBUG 下有内容。
         private void DrawTimelineKeyEvents(DrawingContext dc, double xLeft, double xRight, double y,
                                            long vMin, long vMax)
         {
@@ -1090,6 +1094,7 @@ namespace Hevo.Charting.DevTools
             TopologyTracer.EventKind.DataSourcePublish   => ("◈", new SolidColorBrush(Color.FromRgb(200, 140, 230))),
             _                                            => ("·", new SolidColorBrush(Color.FromRgb(200, 200, 200))),
         };
+#endif
 
         // target id 优先查 NodeMetadata 取展示名,查不到回退原 id(handler / scheme name 等没节点的 case)。
         // disambiguateBy:为通用端口名(OutputPort / InputPort 等)去重时,
