@@ -1,0 +1,34 @@
+{
+  "Entries": {
+    "bars=2000|charts=1|Hover|inc": {
+      "FeaturesPerFrame": 3,
+      "LayersPerFrame": 2,
+      "DrawCmdsPerFrame": 6
+    },
+    "bars=2000|charts=1|Pan|inc": {
+      "FeaturesPerFrame": 3.0333,
+      "LayersPerFrame": 5.0667,
+      "DrawCmdsPerFrame": 14.67
+    },
+    "bars=2000|charts=1|Zoom|inc": {
+      "FeaturesPerFrame": 3.2667,
+      "LayersPerFrame": 5.5333,
+      "DrawCmdsPerFrame": 22.17
+    },
+    "bars=2000|charts=1|Tick|inc": {
+      "FeaturesPerFrame": 1,
+      "LayersPerFrame": 2,
+      "DrawCmdsPerFrame": 9
+    },
+    "bars=2000|charts=1|Append|inc": {
+      "FeaturesPerFrame": 6.225,
+      "LayersPerFrame": 7.45,
+      "DrawCmdsPerFrame": 22.63
+    },
+    "bars=2000|charts=1|Resize|inc": {
+      "FeaturesPerFrame": 12,
+      "LayersPerFrame": 10,
+      "DrawCmdsPerFrame": 40
+    }
+  }
+}
