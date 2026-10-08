@@ -18,41 +18,46 @@ dotnet run -c Release -- --filter "*" --warmupCount 3 --iterationCount 5
 ```
 
 > ⚠️ **必须 Release 配置**。Debug 数据没意义。
-> ⚠️ 不要传 `--runtimes net10.0`。项目 TFM 是 `net10.0-windows10.0.19041.0`,BDN 自动 boilerplate 会跟主项目对齐;手动覆盖会导致 NU1201 mismatch。
+> ⚠️ 不要传 `--runtimes net10.0`。项目 TFM 是 `net10.0-windows10.0.19041.0`;BDN 0.14 不认识 .NET 10,
+> 按宿主 runtime 生成的 boilerplate 是 `net10.0`,引用本项目会 NU1201。`Program.BenchConfig` 已把默认 job 的工具链
+> 钉到 `net10.0-windows10.0.19041.0`(`--job dry/short/medium/long` 也在那里映射),不要再手动覆盖。
 
-## 实测结果 (.NET 8.0.26, Win11, 5 warmup / 10 iter)
+## 实测结果 (.NET 10.0.12, Win11, 5 warmup / 10 iter)
+
+测量机:AMD Ryzen 9 9950X3D(16C/32T),BenchmarkDotNet 0.14.0,2026-10-08。
+"旧数据"列是此前 .NET 8.0.26 的实测,**机器不同**,两列差异是 runtime + 硬件的合计,只看量级和相对排序。
 
 ### §3 属性 setter 编译化 ([SetterReflectionVsCompiledBenchmarks](ReflectionVsCompiledBenchmarks.cs))
 
-| 路径 | Mean | Allocated | Ratio |
-|---|---|---|---|
-| `PropertyInfo.SetValue` (含 GetProperty,模拟旧 SmartActivator 路径) | 121 ns | 40 B | 1.00× (baseline) |
-| `SmartActivator.InjectProperties` (编译 setter 缓存) | **58 ns** | **0 B** | **0.48× (2.1× faster)** |
-| `PropertyInfo.SetValue` (无 GetProperty,直接写) | 33 ns | 0 B | 0.27× |
+| 路径 | Mean | Allocated | Ratio | 旧数据 (.NET 8) |
+|---|---:|---:|---:|---:|
+| `PropertyInfo.SetValue` (含 GetProperty,模拟旧 SmartActivator 路径) | 20.4 ns | 40 B | 1.00 (baseline) | 121 ns |
+| `SmartActivator.InjectProperties` (编译 setter 缓存) | **14.2 ns** | **0 B** | **0.70** | 58 ns |
+| `PropertyInfo.SetValue` (无 GetProperty,直接写) | 6.7 ns | 0 B | 0.33 | 33 ns |
 
-**结论**:跟旧的"GetProperty + SetValue"路径比,编译 setter 快 2 倍且零分配。
-单次 ~63ns 的节省 + 40B GC 减负看似小,但 50 Feature × 5 prop = 250 次注入累计:
-旧路径 30μs + 10KB / 新路径 15μs + 0B,蓝图加载阶段 GC 压力可见下降。
+**结论**:编译 setter 仍比"GetProperty + SetValue"快且零分配,但 .NET 10 下反射路径本身快了很多,
+差距从 2.1× 缩到 1.4×。50 Feature × 5 prop = 250 次注入:旧路径 ~5μs + 10KB / 新路径 ~3.6μs + 0B,
+收益主要剩"零分配"。
 
 ### §4 Seed 编译委托缓存 ([SeedDispatchReflectionVsCompiledBenchmarks](ReflectionVsCompiledBenchmarks.cs))
 
-| 路径 | Mean | Allocated | Ratio |
-|---|---|---|---|
-| `MakeGenericMethod + Invoke` (每次) | 589 ns | 232 B | 1.00× (baseline) |
-| 缓存的 `Action<IFeatureContext, object>` | **38 ns** | **0 B** | **0.07× (15× faster)** |
+| 路径 | Mean | Allocated | Ratio | 旧数据 (.NET 8) |
+|---|---:|---:|---:|---:|
+| `MakeGenericMethod + Invoke` (每次) | 116.6 ns | 232 B | 1.00 (baseline) | 589 ns |
+| 缓存的 `Action<IFeatureContext, object>` | **6.6 ns** | **0 B** | **0.06 (17.6× faster)** | 38 ns |
 
 **结论**:Seed dispatch 的核心成本是 `MakeGenericMethod` 跟 `Invoke` 的 box arg 数组分配。
-编译委托 15× 快 + 完全消除 232B/调用的分配。InitialTraits 多于 5 个的蓝图收益最明显。
+编译委托 ~18× 快 + 完全消除 232B/调用的分配。InitialTraits 多于 5 个的蓝图收益最明显。
 
 ### §2 ctor 编译委托 ([CtorReflectionVsCompiledBenchmarks](ReflectionVsCompiledBenchmarks.cs))
 
-| 路径 | Mean | Allocated | Ratio |
-|---|---|---|---|
-| `Activator.CreateInstance(type)` | **14 ns** | 24 B | 1.00× (baseline) |
-| `ComponentRegistry.CreateInstance(type)` (编译委托缓存) | 25 ns | 24 B | 1.76× (slower!) |
+| 路径 | Mean | Allocated | Ratio | 旧数据 (.NET 8) |
+|---|---:|---:|---:|---:|
+| `Activator.CreateInstance(type)` | **4.2 ns** | 24 B | 1.00 (baseline) | 14 ns |
+| `ComponentRegistry.CreateInstance(type)` (编译委托缓存) | 5.3 ns | 24 B | 1.24 (slower) | 25 ns |
 
-**结论 (诚实交代)**:.NET 8 的 `Activator.CreateInstance(Type)` 内部已经做得很好,
-我们的 `ConcurrentDictionary.GetOrAdd → Func<object> invoke` 反而比它慢 11ns。
+**结论 (诚实交代)**:.NET 8 / 10 的 `Activator.CreateInstance(Type)` 内部已经做得很好,
+我们的 `ConcurrentDictionary.GetOrAdd → Func<object> invoke` 仍比它慢约 1ns(.NET 8 上是 11ns)。
 
 但这是**空 POCO** 的微基准,放大了 dispatch 比例。真实业务里:
 - LineSeriesFeature 的 ctor 本身 ~50μs(各种字段、PortGenerator 注册),dispatch 占比 <1%,
@@ -66,21 +71,22 @@ dotnet run -c Release -- --filter "*" --warmupCount 3 --iterationCount 5
 
 50 Feature 蓝图实测:
 
-| Benchmark | Mean | Allocated |
-|---|---|---|
-| `CreateNode_50Features` (端口扫描走缓存命中) | **15-17 μs** (~300 ns/node) | 14 KB |
-| `DryRun_50Features` (诊断 50 Feature 的端口冲突 / 未焊接) | **110-121 μs** (~2.4 μs/feature) | 23 KB |
+| Benchmark | Mean | Allocated | 旧数据 (.NET 8) |
+|---|---:|---:|---:|
+| `CreateNode_50Features` (端口扫描走缓存命中) | **3.6 μs** (~70 ns/node) | 14.5 KB | 15-17 μs / 14 KB |
+| `DryRun_50Features` (诊断 50 Feature 的端口冲突 / 未焊接) | **59.5 μs** (~1.2 μs/feature) | 79.3 KB | 110-121 μs / 23 KB |
 
 **结论**:
 - §1 的 NodePortCache 让端口扫描收敛到 ConcurrentDictionary 查找 + Node 实例分配,
-  300ns/node 主要是 Guid 生成 + Properties dict alloc,反射开销几乎消失。
-- §5 的 DryRun 在 50 Feature 蓝图上 110-121μs 一次,可以接受 —— Launcher 入口跑一次诊断,
+  ~70ns/node 主要是 Guid 生成 + Properties dict alloc,反射开销几乎消失。
+- §5 的 DryRun 在 50 Feature 蓝图上 ~60μs 一次,可以接受 —— Launcher 入口跑一次诊断,
   把"加载成功但黑屏"的隐性故障早期暴露出来,RoI 极高。
+- ⚠️ DryRun 分配从旧记录的 23KB 涨到 79KB(耗时反而降了),原因未查;旧数据不是同一台机器同一提交,
+  需要在同一机器上对比旧提交确认是不是回归。
 - §8 数组化后 DryRun 不变(在噪声内),证明新格式没拖慢 hot path。
 
 ### §D2.X Python marshalling round-trip ([PythonMarshallingBenchmarks](PythonMarshallingBenchmarks.cs))
 
-**MR 加 + 未跑实测**(交付 benchmark 文件 + InProcess 配置;实跑数据交业务侧手动触发)。
 ROM&lt;double&gt; ↔ numpy.ndarray round-trip 跨边界开销,4 个 size:1 / 100 / 1000 / 10000 点。
 
 ```bash
@@ -91,50 +97,54 @@ dotnet run -c Release --project Hevo.Charting.Benchmarks -- --filter "*PythonMar
 子进程 BaseDirectory 不在 repo 内 → ResolveDll 找不到 Python312/python312.dll → GlobalSetup throw → benchmark NA。
 InProcess 让 benchmark 在主进程内跑(共享 PythonEngine 全进程 single-init 状态)。
 
-**预期量级**(开发机 i7 / Win11):
+**实测**(.NET 10.0.12,Ryzen 9 9950X3D,Python 3.12;原先的预估一并列出):
 
-| size | 预期 Mean | 主导成本 |
-|---|---|---|
-| 1 点 | ~50-100μs | GIL acquire + Marshal.Copy + Task 调度税(数据量不重要) |
-| 100 点 | 同上 | 数据 cost ~0.1μs 可忽略 |
-| 1000 点(time-share 典型) | ~60-120μs | 数据 ~1μs,marshalling 路径仍主导 |
-| 10000 点 | ~80-150μs | 数据 ~10μs 开始可见 |
+| size | Mean | Allocated | 原预估 Mean |
+|---|---:|---:|---:|
+| 1 点 | **6.0 μs** | 1.6 KB | ~50-100 μs |
+| 100 点 | **6.4 μs** | 2.4 KB | 同上 |
+| 1000 点(time-share 典型) | **8.3 μs** | 9.4 KB | ~60-120 μs |
+| 10000 点 | **10.4 μs** | 79.7 KB | ~80-150 μs |
 
-**结论指引**:
-- 每次 invoke ~50-150μs 主要是 GIL + 调度税,数据 size 影响小 → 指标算子层(1-10Hz)完全够
-- 60Hz 热路径(crosshair 每帧 16ms)绝对不要走 Python(单次 invoke ~6-9% 帧预算)→ §D2.X 已划线
-- zero-copy(待 D2.5.3 优化)真正受益的 case 是 10K+ 点指标,那时 Marshal.Copy 才显著
+**结论**:
+- 实测比预估低一个数量级。固定成本(GIL + Marshal + 调度)约 6μs,数据量从 1 到 1 万点只多出约 4μs,
+  分配随点数线性增长(1 万点约 80KB,已接近 LOH 阈值)。
+- 指标算子层(1-10Hz)完全够用。按实测,单次 round-trip 约占 60Hz 帧预算(16.7ms)的 0.04-0.06%,
+  原来"热路径每帧 6-9% 帧预算"的判断不成立;但这个基准是单线程、无 GIL 竞争、Python 侧不做计算的纯搬运,
+  §D2.X 的热路径划线要不要放宽,得拿真实算子 + 并发场景再测。
+- zero-copy(待 D2.5.3 优化)真正受益的 case 是 10K+ 点指标,那时 Marshal.Copy 和 80KB 分配才显著。
 
 ### §8 PortBindings 解析 ([PortBindingValueBenchmarks](PortBindingValueBenchmarks.cs))
 
 5 个 globalId 的扇入端口三种输入形态对比:
 
-| Benchmark | Mean | Allocated | Ratio |
-|---|---|---|---|
-| `ExtractList: CSV 5 ids (老格式)` | 610 ns | 568 B | 1.00× (baseline) |
-| `ExtractList: List<string> 5 ids (新格式)` | **388 ns** | **336 B** | **0.64× (1.57× faster, 41% 少分配)** |
-| `ExtractList: single string (退化)` | 30 ns | 32 B | 0.05× |
-| `ExtractSingle: string (单端口典型)` | **5 ns** | **0 B** | 0.008× |
+| Benchmark | Mean | Allocated | Ratio | 旧数据 (.NET 8) |
+|---|---:|---:|---:|---:|
+| `ExtractList: CSV 5 ids (老格式)` | 72.9 ns | 424 B | 1.00 (baseline) | 610 ns / 568 B |
+| `ExtractList: List<string> 5 ids (新格式)` | **40.5 ns** | **192 B** | **0.56 (1.8× faster, 55% 少分配)** | 388 ns / 336 B |
+| `ExtractList: single string (退化)` | 4.4 ns | 32 B | 0.06 | 30 ns |
+| `ExtractSingle: string (单端口典型)` | **≈0 ns** (低于计时分辨率) | **0 B** | - | 5 ns |
 
-**结论**:新数组格式比老 CSV 1.57× 快 + 减 41% 分配 —— 省了一次 `string.Split + Trim + Where` 链的临时对象。
-但绝对值只在几百 ns 量级,落到 50 Feature 蓝图整体 110μs 流程里贡献 <5%,优化主要价值在
+**结论**:新数组格式比老 CSV 1.8× 快 + 减 55% 分配 —— 省了一次 `string.Split + Trim + Where` 链的临时对象。
+但绝对值只在几十 ns 量级,落到 50 Feature 蓝图整体 ~60μs 流程里贡献 <5%,优化主要价值在
 **JSON 可读性 / diff 友好 / AI 生成正确率**,perf 是顺手红利。
 
 ## 总评
 
-| § | 描述 | 实测收益 | 评估 |
+| § | 描述 | 实测收益 (.NET 10) | 评估 |
 |---|---|---|---|
-| §1 | 端口元数据缓存 | 300 ns/node (反射开销近消失) | ✅ 编辑器手感 |
-| §2 | ctor 编译委托 | 微基准 -11 ns(略慢于 .NET 8 Activator) | ⚠️ 维持代码一致性,无业务收益 |
-| §3 | setter 编译化 | **2.1× faster + 0 alloc** | ✅ 蓝图加载阶段 GC 减压 |
-| §4 | Seed 编译委托 | **15× faster + 0 alloc** | ✅ 高 Trait 蓝图明显提速 |
-| §5 | DryRun 早期诊断 | 50 Feature 110-121μs | ✅ 调试时间省分钟级 |
+| §1 | 端口元数据缓存 | ~70 ns/node (反射开销近消失) | ✅ 编辑器手感 |
+| §2 | ctor 编译委托 | 微基准 +1 ns(略慢于 Activator) | ⚠️ 维持代码一致性,无业务收益 |
+| §3 | setter 编译化 | **1.4× faster + 0 alloc**(.NET 8 上 2.1×) | ✅ 蓝图加载阶段 GC 减压 |
+| §4 | Seed 编译委托 | **17.6× faster + 0 alloc** | ✅ 高 Trait 蓝图明显提速 |
+| §5 | DryRun 早期诊断 | 50 Feature ~60μs(分配 79KB 待查) | ✅ 调试时间省分钟级 |
 | §7 | JsonConverter | 2 个 leaf converter 撑住整个 trait 树 | ✅ AI 生成 / diff 友好 |
-| §8 | PortBindings 数组化 | 老 CSV → 新数组,**1.57× faster + 41% 少分配** | ✅ JSON 可读性主升,perf 顺手红利 |
+| §8 | PortBindings 数组化 | 老 CSV → 新数组,**1.8× faster + 55% 少分配** | ✅ JSON 可读性主升,perf 顺手红利 |
 
 实事求是:
 - **§3 §4 §8 是真实 perf 优化**,§7 是 AI / 可读性优化,§5 是工程价值,§1 是编辑器交互优化
-- **§2 在 .NET 8 上意义有限** (.NET 5 / 老 runtime 上仍有意义,且统一了 dispatch 路径)
+- **§2 在 .NET 8 / 10 上意义有限** (.NET 5 / 老 runtime 上仍有意义,且统一了 dispatch 路径)
+- **§3 的收益随 runtime 进步在缩小**:.NET 10 反射 setter 已经很快,剩下的主要是零分配
 - **§7 的"少做"**:`LineStyle` / `AxisStyleTrait` 不需要单独写 converter ——
   顶层多态 (IHevoBrush) + 叶子值类型 (Color) 各自有 converter,中间普通 record 由 System.Text.Json
   默认 primary ctor 反序列化处理,组合即可。这把"每个 trait 单独 converter"的工作量从 "n 个" 降到 "2 个"。
@@ -148,6 +158,12 @@ Hevo.Charting.Benchmarks.SetterReflectionVsCompiledBenchmarks-report-github.md
 Hevo.Charting.Benchmarks.SeedDispatchReflectionVsCompiledBenchmarks-report-github.md
 Hevo.Charting.Benchmarks.CtorReflectionVsCompiledBenchmarks-report-github.md
 Hevo.Charting.Benchmarks.BlueprintEndToEndBenchmarks-report-github.md
+Hevo.Charting.Benchmarks.PortBindingValueBenchmarks-report-github.md
+Hevo.Charting.Benchmarks.PythonMarshallingBenchmarks-report-github.md
+Hevo.Charting.Benchmarks.SubmitSyncBenchmarks-report-github.md        # 增量核心组,见下文
+Hevo.Charting.Benchmarks.ProjectAllBenchmarks-report-github.md
+Hevo.Charting.Benchmarks.FrameScalingBenchmarks-report-github.md
+Hevo.Charting.Benchmarks.BlackboardTransactionBenchmarks-report-github.md
 ```
 
 ## 增量渲染前后对比 (`--render-probe`, [RenderProbe](RenderProbe.cs))
@@ -216,6 +232,45 @@ dotnet run -c Release -- --render-probe --scenarios=Hover,Zoom --rounds=10 --out
 
 > ⚠️ 必须 Release。DEBUG 下每个 schema 都挂拓扑追踪器,每次读写都有记录开销。
 
+### 实测 (render-probe)
+
+> ⚠️ **以下实测数据的环境**:Ryzen 9 9950X3D,.NET 10.0.12,2026-10-08,**远程桌面会话**
+> (GPU = Microsoft Remote Display Adapter,WPF **RenderTier 0 软件渲染**,刷新率 32Hz)。
+> render-probe 只测 UI 线程 CPU 管线,数字可比;**本机直显 + GPU 下的数据和 `--latency-probe` 结果待补**。
+
+**2000 根 × 1 张图**(默认参数,300 帧 × 5 轮,1280x720;帧耗时 = 各轮中位数的均值,单位 ms):
+
+| 场景 | 增量 帧耗时 | 全量 帧耗时 | 增量 Feature重算 / 图层重录 每帧 | 全量 Feature重算 / 图层重录 每帧 | 增量 分配/帧 |
+|---|---:|---:|---:|---:|---:|
+| Hover | **0.030** | 0.112 | 3 / 2 | 12 / 10 | 14.6 KB |
+| Pan | **0.052** | 0.073 | 3 / 5.1 | 12 / 10 | 61.8 KB |
+| Zoom | 0.101 | 0.100 | 3.3 / 5.5 | 12 / 10 | 209 KB |
+| Tick | **0.020** | 0.064 | 1 / 2 | 12 / 10 | 40.0 KB |
+| Append | **0.047** | 0.064 | 6.2 / 7.4 | 12 / 10 | 69.8 KB |
+| Resize | 0.061 | 0.060 | 12 / 10 | 12 / 10 | 80.5 KB |
+
+- Resize 走环境纪元 FullPass,增量和全量本来就一样。
+- `inc-par` / `full-par`(PlotMode.Parallel)在所有组合里都没有收益,全量时略慢(单图 10 个图层,并行调度开销盖过收益)。
+- Startup:冷启动 装配 167 ms / 首帧 49 ms;热启动 装配 14.3 ms / 首帧 0.94 ms(2000 根,10 个图层)。
+
+**数据量伸缩**(`--bars=2000,20000,100000`,3 轮,增量 / 全量,帧耗时 ms):
+
+| 场景 | 2000 根 | 2 万根 | 10 万根 |
+|---|---:|---:|---:|
+| Tick | 0.038 / 0.109 | 0.017 / 0.060 | 0.017 / 0.057 |
+| Append | 0.082 / 0.106 | 0.042 / 0.065 | 0.042 / 0.062 |
+| Zoom | 0.145 / 0.178 | 0.208 / 0.215(P99 4.1) | 0.192 / 0.210(P99 4.1) |
+
+Tick / Append 跟数据量无关(只碰最后一根 / 视口跟随)。Zoom 的可见跨度上限是 min(数据量, 2 万) 根,
+2 万根可见时每帧分配约 1.07 MB、每千帧 ~64 次 Gen2 GC。`--alloc-types` 采样显示其中 68% 是 LOH 上的
+`System.Byte[]`(单个最大 1.4 MB),另有 80–158 KB 的 `System.Object[]`:都是 WPF 内部缓冲
+(CandleLayer 的 2 万 figure 影线 StreamGeometry、2 万次 `DrawRectangle` 的 RenderData 及其依赖资源列表),
+不是图表自己的数组。根因是 1280px 画 2 万根(每像素 ~15 根)的 overdraw,改进方向是单根宽度 <1px 时按像素列聚合 OHLC(LOD)。
+
+**多图**(`--charts=1,4,9`,Hover,3 轮,增量 / 全量,帧耗时 ms):1 图 0.067 / 0.326,4 图 0.083 / 0.245,9 图 0.192 / 0.504。
+
+完整表(含 P95/P99、GC、置信区间)见 `--out=` 输出的 `.md`。
+
 ## 输入到画面的端到端延迟 (`--latency-probe`, [LatencyProbe](LatencyProbe.cs))
 
 ```bash
@@ -236,6 +291,8 @@ dotnet run -c Release -- --latency-probe [--samples=150] [--bars=2000] [--out=la
 
 > ⚠️ 必须本机直接显示(不要远程桌面),测量约 30 秒,期间不要碰鼠标、不要切窗口。
 
+**实测:待补**。2026-10-08 那轮测量机是远程桌面会话(RenderTier 0),按上面的要求跳过了,需要在本机直显时补跑。
+
 ## 增量核心路径微基准 ([IncrementalCoreBenchmarks](IncrementalCoreBenchmarks.cs))
 
 ```bash
@@ -248,6 +305,34 @@ dotnet run -c Release -- --filter "*SubmitSync*" "*ProjectAll*" "*FrameScaling*"
 | `ProjectAllBenchmarks` | Feature 数 8 / 32 / 128 | Idle / OnePort / AllPorts / FullPass |
 | `FrameScalingBenchmarks` | 图层数 8 / 32 / 128(每层 1 个 Feature) | 整帧 `RunFrameNow`:Idle / OneDirty / AllDirty |
 | `BlackboardTransactionBenchmarks` | 每事务端口数 1 / 8 / 32 | Unchanged(值防抖命中)/ Changed(真实写入 + 订阅标脏 + 弹脏名单);另有锁内读 |
+
+### 实测 (.NET 10.0.12, Ryzen 9 9950X3D, 5 warmup / 10 iter)
+
+BDN 微基准不经过 WPF 渲染线程,跟远程桌面 / RenderTier 无关。单位 ns,括号内为每次分配。
+
+| 基准 | 场景 | 8 | 32 | 128 |
+|---|---|---:|---:|---:|
+| SubmitSync(图层数) | Idle | 68 (224 B) | 212 | 852 |
+| | OneLocal | 140 (664 B) | 327 | 1,108 |
+| | GlobalRepublish | 104 | 330 | 1,414 |
+| | GlobalChanged | 110 | 344 | 1,339 |
+| ProjectAll(Feature 数) | Idle | 33 (224 B) | 36 | 34 |
+| | OnePort | 338 | 418 | 738 |
+| | AllPorts | 2,235 (±781) | 6,095 | 25,388 |
+| | FullPass | 598 | 1,724 | 6,793 |
+| FrameScaling(图层数,整帧) | Idle | 107 (224 B) | 335 | 1,359 |
+| | OneDirty | 985 | 1,502 | 3,267 |
+| | AllDirty | 4,381 (8.4 KB) | 16,487 | 77,381 (122 KB) |
+
+| BlackboardTransaction(每事务端口数) | 1 | 8 | 32 |
+|---|---:|---:|---:|
+| Transaction / Changed | 122 (48 B) | 805 (384 B) | 3,409 (1.5 KB) |
+| Transaction / Unchanged(值防抖命中) | 31 (0 B) | 117 | 434 |
+| ReadUnderLock | 13 | 31 | 103 |
+
+- ProjectAll 的 Idle 不随 Feature 数增长;SubmitSync / FrameScaling 的 Idle 仍随图层数线性增长(每层约 7–11 ns),每帧固定分配 224 B。
+- 整帧 OneDirty vs AllDirty 在 128 层时差 24×,这是增量机制在核心路径上的收益上限。
+- ProjectAll 8 Feature / AllPorts 误差偏大(±781 ns),要用这个数时加大 `--iterationCount` 重测。
 
 ## CI 回归门槛 ([.github/workflows/perf-regression.yml](../.github/workflows/perf-regression.yml))
 
