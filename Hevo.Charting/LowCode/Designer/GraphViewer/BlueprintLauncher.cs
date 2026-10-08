@@ -392,30 +392,36 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
         /// <summary>
         /// DryRun 按 Feature 类型缓存的端口元数据:DataPort 属性(按 GetProperties 顺序,含值类型 / 是否数组 / 方向)
         /// 和 Dictionary&lt;string, DataPort&lt;T&gt;&gt; 输入字段。三处校验共用,免得每个 Feature 反复 GetProperties
-        /// (每次都返回新数组)和 GetCustomAttribute。方向依赖 PortMetadataRegistry,登记变化时整表失效重建。
+        /// (每次都返回新数组)和 GetCustomAttribute。只放类型级信息,实例的焊接 / Properties 照常逐个现读。
+        /// <para>
+        /// 方向依赖 PortMetadataRegistry:每条缓存记下建立时的 <see cref="PortMetadataRegistry.DirectionVersion"/>,
+        /// 读取时版本不符就重建。版本在扫描属性之前读,扫描途中有人登记方向,这条缓存自带旧版本号,下次读取即重建,
+        /// 不会把过期方向留在缓存里。
+        /// </para>
         /// </summary>
-        private sealed class DryRunTypeInfo
+        internal sealed class DryRunTypeInfo
         {
             public readonly record struct Port(PropertyInfo Property, Type ValueType, bool IsArray, PortDirection Direction);
 
             public Port[] DataPorts { get; private init; } = Array.Empty<Port>();
             public PropertyInfo[] InputDictPorts { get; private init; } = Array.Empty<PropertyInfo>();
+            public int Version { get; private init; }
 
             private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, DryRunTypeInfo> s_cache = new();
-            private static int s_version = -1;
+
+            /// <summary>测试钩子:Build 读完方向、写入缓存之前回调(用来在这个窗口里插入方向登记,复现竞态)。</summary>
+            internal static Action<Type>? BuildScannedForTest;
 
             public static DryRunTypeInfo Get(Type featureType)
             {
                 int v = PortMetadataRegistry.DirectionVersion;
-                if (v != Volatile.Read(ref s_version))
-                {
-                    s_cache.Clear();
-                    Volatile.Write(ref s_version, v);
-                }
-                return s_cache.GetOrAdd(featureType, Build);
+                if (s_cache.TryGetValue(featureType, out var cached) && cached.Version == v) return cached;
+                var built = Build(featureType, v);
+                s_cache[featureType] = built;
+                return built;
             }
 
-            private static DryRunTypeInfo Build(Type featureType)
+            private static DryRunTypeInfo Build(Type featureType, int version)
             {
                 var ports = new List<Port>();
                 var dicts = new List<PropertyInfo>();
@@ -433,7 +439,8 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                     if (!args[1].IsGenericType || args[1].GetGenericTypeDefinition() != typeof(DataPort<>)) continue;
                     if (PortMetadataRegistry.ResolveDirection(featureType, pi) != PortDirection.Output) dicts.Add(pi);
                 }
-                return new DryRunTypeInfo { DataPorts = ports.ToArray(), InputDictPorts = dicts.ToArray() };
+                BuildScannedForTest?.Invoke(featureType);
+                return new DryRunTypeInfo { DataPorts = ports.ToArray(), InputDictPorts = dicts.ToArray(), Version = version };
             }
         }
 
