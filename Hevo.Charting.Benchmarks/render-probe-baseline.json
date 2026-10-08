@@ -29,6 +29,36 @@
       "FeaturesPerFrame": 12,
       "LayersPerFrame": 10,
       "DrawCmdsPerFrame": 40
+    },
+    "bars=2000|charts=1|HoverNoTip|inc": {
+      "FeaturesPerFrame": 2,
+      "LayersPerFrame": 1,
+      "DrawCmdsPerFrame": 6
+    },
+    "bars=2000|charts=1|DashHover|inc": {
+      "FeaturesPerFrame": 5,
+      "LayersPerFrame": 3,
+      "DrawCmdsPerFrame": 11
+    },
+    "bars=2000|charts=1|DashPan|inc": {
+      "FeaturesPerFrame": 4.1083,
+      "LayersPerFrame": 9.0833,
+      "DrawCmdsPerFrame": 32.42
+    },
+    "bars=2000|charts=1|DashTick|inc": {
+      "FeaturesPerFrame": 2,
+      "LayersPerFrame": 3,
+      "DrawCmdsPerFrame": 10
+    },
+    "bars=2000|charts=1|Zoom@150|inc": {
+      "FeaturesPerFrame": 3.2667,
+      "LayersPerFrame": 5.5333,
+      "DrawCmdsPerFrame": 15.83
+    },
+    "bars=2000|charts=1|Zoom@200|inc": {
+      "FeaturesPerFrame": 3.2667,
+      "LayersPerFrame": 5.5333,
+      "DrawCmdsPerFrame": 13.02
     }
   }
 }

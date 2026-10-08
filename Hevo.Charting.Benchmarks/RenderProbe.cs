@@ -61,9 +61,35 @@ namespace Hevo.Charting.Benchmarks
             new("full-par",  "全量+Parallel",      true,  false, true,  PlotMode.Parallel),
         };
 
+        /// <summary>默认跑的逐帧场景(不带 --scenarios 时)。</summary>
         internal static readonly string[] AllScenarios = { "Hover", "Pan", "Zoom", "Tick", "Append", "Resize" };
 
-        private readonly record struct Sample(double PipelineMs, double InputMs, long Features, int Layers, long DrawCmds, long AllocBytes);
+        /// <summary>
+        /// 需要另一种测量窗口的逐帧场景(显式 --scenarios 或 all 才跑):
+        /// HoverNoTip = 摘掉 Tooltip 的 Hover(跟 Hover 对照);Dash* = 联动 dashboard(主图 + 标记 + 成交量副图);
+        /// Zoom@150 / Zoom@200 = 模拟高 DPI 下的 Zoom(LOD 按物理像素的分支)。
+        /// </summary>
+        internal static readonly string[] ExtraScenarios = { "HoverNoTip", "DashHover", "DashPan", "DashTick", "Zoom@150", "Zoom@200" };
+
+        internal static readonly string[] AllFrameScenarios = AllScenarios.Concat(ExtraScenarios).ToArray();
+
+        /// <summary>
+        /// 不是逐帧脚本的测量套件(显式 --scenarios 才跑;all 包含除 Soak 以外的全部,Soak 默认 10 分钟只能显式点名):
+        /// Feed = 后台线程按 --feed-rates 推 tick 走真实数据源链路;PyFeed = 再挂 N 个 Python 指标;
+        /// Blueprint = demo dashboard 蓝图端到端冷 / 热启动;Soak = 长跑采样内存。
+        /// </summary>
+        internal static readonly string[] Suites = { "Feed", "PyFeed", "Blueprint", "Soak" };
+
+        internal static RigKind RigKindOf(string scenario) => scenario switch
+        {
+            "HoverNoTip" => RigKind.NoTooltip,
+            "DashHover" or "DashPan" or "DashTick" => RigKind.Dashboard,
+            "Zoom@150" => RigKind.Dpi150,
+            "Zoom@200" => RigKind.Dpi200,
+            _ => RigKind.Standard,
+        };
+
+        private readonly record struct Sample(double PipelineMs, double InputMs, long Features, int Layers, long DrawCmds, long AllocBytes, bool TooltipShown);
 
         private sealed class Combo
         {
@@ -110,6 +136,15 @@ namespace Hevo.Charting.Benchmarks
                 $"warmup={opt.Warmup} rounds={opt.Rounds} size={opt.WindowWidth}x{opt.WindowHeight} " +
                 $"scenarios={string.Join(',', opt.Scenarios)} modes={string.Join(',', opt.Modes.Select(m => m.Key))}"));
 
+            ProbeKLineSchema.HeavyLayers = opt.HeavyLayers;
+            ProbeKLineSchema.HeavyMs = opt.HeavyMs;
+            if (opt.HeavyLayers > 0)
+                Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                    $"[render-probe] 每张图额外挂 {opt.HeavyLayers} 个加重图层,每层录制忙等 {opt.HeavyMs} ms"));
+            if (opt.Modes.Any(m => m.Plot == PlotMode.Parallel))
+                Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                    $"[env] 逻辑核 {Environment.ProcessorCount};Parallel.ForEach 空任务调度开销中位数:3 项 {ParallelOverhead.MedianMicros(3):F1} μs / 10 项 {ParallelOverhead.MedianMicros(10):F1} μs / 30 项 {ParallelOverhead.MedianMicros(30):F1} μs"));
+
             var combos = new List<Combo>();
             var startups = new List<StartupResult>();
 
@@ -118,14 +153,18 @@ namespace Hevo.Charting.Benchmarks
                 if (opt.Startup) startups.Add(MeasureStartup(opt, bars));
 
                 foreach (int charts in opt.Charts)
+                foreach (var kindGroup in opt.Scenarios.GroupBy(RigKindOf))
                 {
-                    using var rig = ProbeRig.Create(opt, bars, charts, extraCapacity: Math.Max(opt.Steps, opt.Warmup) + 1);
+                    // dashboard 自带两张图(主图 + 副图),只在 charts=1 那一组跑
+                    if (kindGroup.Key == RigKind.Dashboard && charts != 1) continue;
+                    using var rig = ProbeRig.Create(opt, bars, charts, extraCapacity: Math.Max(opt.Steps, opt.Warmup) + 1, kindGroup.Key);
                     if (rig == null) return 99;
-                    Console.WriteLine($"[render-probe] bars={bars} charts={charts} layers/图={rig.Charts[0].Cell.ActiveLayers.Count} " +
-                                      $"features/图={rig.Charts[0].Schema.ListFeatures().Count}");
+                    Console.WriteLine($"[render-probe] bars={bars} charts={charts} 窗口={kindGroup.Key} layers/图={rig.Charts[0].Cell.ActiveLayers.Count} " +
+                                      $"features/图={rig.Charts[0].Schema.ListFeatures().Count}" +
+                                      (rig.Panes.Count > 0 ? $" 副图 layers={rig.Panes[0].Cell.ActiveLayers.Count}" : ""));
 
                     var local = new List<Combo>();
-                    foreach (var sc in opt.Scenarios)
+                    foreach (var sc in kindGroup)
                         foreach (var m in opt.Modes)
                             local.Add(new Combo { Bars = bars, Charts = charts, Scenario = sc, Mode = m });
 
@@ -146,8 +185,35 @@ namespace Hevo.Charting.Benchmarks
                 }
             }
 
+            var suites = new List<SuiteResult>();
+            foreach (var name in opt.SuiteNames)
+            {
+                Console.WriteLine($"[render-probe] 套件 {name} 开始");
+                suites.Add(name switch
+                {
+                    "Feed" => FeedProbe.RunFeed(opt),
+                    "PyFeed" => FeedProbe.RunPyFeed(opt),
+                    "Blueprint" => BlueprintProbe.RunBlueprint(opt),
+                    "Soak" => FeedProbe.RunSoak(opt),
+                    _ => throw new ArgumentException(name),
+                });
+            }
+
             var report = BuildReport(env, opt, combos, startups);
             if (s_allocSampler != null) report = report with { Markdown = report.Markdown + AllocTypesMarkdown(combos) };
+            if (suites.Count > 0)
+            {
+                report = report with { Markdown = report.Markdown + string.Concat(suites.Select(x => x.Markdown)) };
+                // JSON:在主报告对象末尾追加 suites 字段(主报告是缩进 JSON 对象,去掉最后的 } 再拼)
+                var suitesJson = JsonSerializer.Serialize(suites.ToDictionary(x => x.Name, x => x.Json),
+                    new JsonSerializerOptions
+                    {
+                        WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+                        NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals,
+                    });
+                int end = report.Json.LastIndexOf('}');
+                report = report with { Json = report.Json[..end].TrimEnd() + ",\n  \"suites\": " + suitesJson.Replace("\n", "\n  ") + "\n}" };
+            }
             Console.WriteLine(report.Markdown);
 
             foreach (var f in new[] { opt.OutCsv, opt.OutMd, opt.OutJson })
@@ -155,6 +221,13 @@ namespace Hevo.Charting.Benchmarks
             File.WriteAllText(opt.OutCsv, report.Csv, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
             File.WriteAllText(opt.OutMd, report.Markdown, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
             File.WriteAllText(opt.OutJson, report.Json, new UTF8Encoding(false));
+            foreach (var x in suites.Where(x => x.Csv.Length > 0))
+            {
+                var path = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(opt.OutCsv))!,
+                    Path.GetFileNameWithoutExtension(opt.OutCsv) + "-" + x.Name.ToLowerInvariant() + ".csv");
+                File.WriteAllText(path, x.Csv, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+                Console.WriteLine($"[render-probe] {x.Name} 明细 {path}");
+            }
             Console.WriteLine($"[render-probe] 逐帧明细 {Path.GetFullPath(opt.OutCsv)}");
             Console.WriteLine($"[render-probe] 汇总表 {Path.GetFullPath(opt.OutMd)} / {Path.GetFullPath(opt.OutJson)}");
 
@@ -200,7 +273,8 @@ namespace Hevo.Charting.Benchmarks
                 var sampler = record ? s_allocSampler : null;
                 sampler?.Begin();
                 int g0 = GC.CollectionCount(0), g1 = GC.CollectionCount(1), g2 = GC.CollectionCount(2);
-                for (int i = 0; i < steps; i++) samples.Add(RunStep(rig, step, i, c.Mode.Plot));
+                bool checkTip = c.Scenario.Contains("Hover", StringComparison.Ordinal);
+                for (int i = 0; i < steps; i++) samples.Add(RunStep(rig, step, i, c.Mode.Plot, checkTip));
                 if (sampler != null)
                 {
                     Pump(500); // EventPipe 异步派发,等缓冲里的采样事件到齐
@@ -260,7 +334,7 @@ namespace Hevo.Charting.Benchmarks
             IncrementalRenderProbe.ForceLayerRedraw = m.LayerRedraw;
         }
 
-        private static Sample RunStep(ProbeRig rig, Action<int> step, int i, PlotMode plot)
+        private static Sample RunStep(ProbeRig rig, Action<int> step, int i, PlotMode plot, bool checkTip)
         {
             long t0 = Stopwatch.GetTimestamp();
             step(i); // 写黑板 / 改窗口尺寸(含 Watch 副作用:视口钳位、自动量程、布局)
@@ -278,7 +352,8 @@ namespace Hevo.Charting.Benchmarks
                 Features: IncrementalRenderProbe.FeatureProjections - features0,
                 Layers: layers,
                 DrawCmds: drawCmds,
-                AllocBytes: alloc1 - alloc0);
+                AllocBytes: alloc1 - alloc0,
+                TooltipShown: checkTip && rig.TooltipShown());
         }
 
         // 一帧 = 每张图各跑一次 CompositionTarget 回调里的那段(排队事务 → ExecutePipeline → Invalidate)。
@@ -291,8 +366,26 @@ namespace Hevo.Charting.Benchmarks
                 layers += ch.Cell.RunFrameNow(plot);
                 cmds += ch.Cell.GetDiagnostics().LastFrameDrawCmds;
             }
+            foreach (var pane in rig.Panes)
+            {
+                layers += pane.Cell.RunFrameNow(plot);
+                cmds += pane.Cell.GetDiagnostics().LastFrameDrawCmds;
+            }
+            if (s_debugFrames > 0)
+            {
+                s_debugFrames--;
+                var cells = rig.Charts.Select(c => c.Cell).Concat(rig.Panes.Select(p => p.Cell));
+                Console.WriteLine("[debug] 脏图层: " + string.Join(" | ", cells.Select(c => string.Join(",", DirtyNames(c)))));
+            }
             return (layers, cmds);
         }
+
+        // HEVO_PROBE_DEBUG=N:打印前 N 帧每张图重录的图层名(排查计数异常用)
+        private static int s_debugFrames = int.TryParse(Environment.GetEnvironmentVariable("HEVO_PROBE_DEBUG"), out var n) ? n : 0;
+        private static readonly System.Reflection.FieldInfo s_dirtyField =
+            typeof(ChartCell).GetField("_dirtyLayerBuffer", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        private static IEnumerable<string> DirtyNames(ChartCell cell) =>
+            ((System.Collections.IEnumerable)s_dirtyField.GetValue(cell)!).Cast<ChartLayer>().Select(l => l.Name);
 
         // ── 场景脚本 ───────────────────────────────────────────────────────────
 
@@ -304,6 +397,14 @@ namespace Hevo.Charting.Benchmarks
             "Tick" => i => { foreach (var ch in rig.Charts) TickStep(ch, i); },
             "Append" => i => { foreach (var ch in rig.Charts) AppendStep(ch, i); },
             "Resize" => i => rig.ResizeStep(i),
+            "HoverNoTip" or "DashHover" => i => { foreach (var ch in rig.Charts) HoverStep(ch, i); },
+            "DashPan" => i => { foreach (var ch in rig.Charts) PanStep(ch, i); },
+            "DashTick" => i =>
+            {
+                foreach (var ch in rig.Charts) TickStep(ch, i);
+                foreach (var pane in rig.Panes) pane.TickStep(i);
+            },
+            "Zoom@150" or "Zoom@200" => i => { foreach (var ch in rig.Charts) ZoomStep(ch, i); },
             _ => throw new ArgumentException($"未知场景 {scenario}"),
         };
 
@@ -424,6 +525,7 @@ namespace Hevo.Charting.Benchmarks
                 var ch = ProbeChart.Create(bars, 0);
                 ch.Cell.Width = opt.WindowWidth;
                 ch.Cell.Height = opt.WindowHeight;
+                ch.Cell.IsHitTestVisible = false; // 同 ProbeRig:不让真实鼠标位置影响测量
                 var window = new Window
                 {
                     Title = "Hevo render probe (startup)",
@@ -548,6 +650,20 @@ namespace Hevo.Charting.Benchmarks
                 }
             }
 
+            var tipCombos = combos.Where(c => c.Scenario.Contains("Hover", StringComparison.Ordinal) && c.Rounds.Count > 0).ToList();
+            if (tipCombos.Count > 0)
+            {
+                md.AppendLine();
+                md.AppendLine("Tooltip 实际显示的帧占比(帧末 TooltipWidgetLayer 的 widget 指令非空):");
+                md.AppendLine();
+                foreach (var c in tipCombos)
+                {
+                    var all = c.Rounds.SelectMany(r => r).ToList();
+                    md.AppendLine(string.Create(CultureInfo.InvariantCulture,
+                        $"- {c.Key}: {100.0 * all.Count(x => x.TooltipShown) / all.Count:F0}%"));
+                }
+            }
+
             foreach (var c in combos.Where(c => c.ShortCircuitMisses > 0))
             {
                 md.AppendLine();
@@ -620,6 +736,16 @@ namespace Hevo.Charting.Benchmarks
         public double Tolerance = 0.02;
         public string? SummaryFile;
         public bool AllocTypes;
+        public int HeavyLayers;
+        public double HeavyMs = 1.0;
+        public string[] SuiteNames = Array.Empty<string>();
+        public int[] FeedRates = { 100, 500, 1000 };
+        public double FeedSeconds = 5;
+        public int[] PyIndicators = { 1, 4, 8 };
+        public int PyRate = 100;
+        public int SoakMinutes = 10;
+        public int SoakRate = 100;
+        public int BlueprintWarmRuns = 5;
 
         public static ProbeOptions Parse(string[] args)
         {
@@ -630,6 +756,7 @@ namespace Hevo.Charting.Benchmarks
                 o.Steps = 120; o.Warmup = 20; o.Rounds = 1; o.Startup = false;
                 o.WindowWidth = 960; o.WindowHeight = 540;
                 o.Modes = RenderProbe.AllModes.Where(m => m.Key == "inc").ToArray();
+                o.Scenarios = RenderProbe.AllFrameScenarios;
                 o.SummaryFile = Environment.GetEnvironmentVariable("GITHUB_STEP_SUMMARY");
             }
             if (Get(args, "--bars=") is { } bars) o.Bars = Ints(bars);
@@ -646,10 +773,12 @@ namespace Hevo.Charting.Benchmarks
             if (Get(args, "--scenarios=") is { } sc)
             {
                 var want = sc.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                o.Scenarios = RenderProbe.AllScenarios.Where(s => want.Contains(s, StringComparer.OrdinalIgnoreCase)).ToArray();
+                o.Scenarios = RenderProbe.AllFrameScenarios.Where(s => want.Contains(s, StringComparer.OrdinalIgnoreCase)).ToArray();
                 if (want.Contains("Startup", StringComparer.OrdinalIgnoreCase)) o.Startup = true;
                 else if (!want.Contains("all", StringComparer.OrdinalIgnoreCase)) o.Startup = false;
-                if (want.Contains("all", StringComparer.OrdinalIgnoreCase)) o.Scenarios = RenderProbe.AllScenarios;
+                if (want.Contains("all", StringComparer.OrdinalIgnoreCase)) o.Scenarios = RenderProbe.AllFrameScenarios;
+                o.SuiteNames = RenderProbe.Suites.Where(x => want.Contains(x, StringComparer.OrdinalIgnoreCase)
+                    || (x != "Soak" && want.Contains("all", StringComparer.OrdinalIgnoreCase))).ToArray();
             }
             if (Get(args, "--modes=") is { } modes && modes != "all")
             {
@@ -658,6 +787,15 @@ namespace Hevo.Charting.Benchmarks
             }
             if (Has(args, "--no-startup")) o.Startup = false;
             if (Has(args, "--alloc-types")) o.AllocTypes = true;
+            if (Get(args, "--heavy-layers=") is { } hl) o.HeavyLayers = int.Parse(hl, CultureInfo.InvariantCulture);
+            if (Get(args, "--heavy-ms=") is { } hm) o.HeavyMs = double.Parse(hm, CultureInfo.InvariantCulture);
+            if (Get(args, "--feed-rates=") is { } fr) o.FeedRates = Ints(fr);
+            if (Get(args, "--feed-seconds=") is { } fs) o.FeedSeconds = double.Parse(fs, CultureInfo.InvariantCulture);
+            if (Get(args, "--py-indicators=") is { } pi) o.PyIndicators = Ints(pi);
+            if (Get(args, "--py-rate=") is { } pr) o.PyRate = int.Parse(pr, CultureInfo.InvariantCulture);
+            if (Get(args, "--soak-minutes=") is { } sm) o.SoakMinutes = int.Parse(sm, CultureInfo.InvariantCulture);
+            if (Get(args, "--soak-rate=") is { } sr) o.SoakRate = int.Parse(sr, CultureInfo.InvariantCulture);
+            if (Get(args, "--blueprint-runs=") is { } br) o.BlueprintWarmRuns = int.Parse(br, CultureInfo.InvariantCulture);
             if (Get(args, "--out=") is { } outCsv)
             {
                 o.OutCsv = outCsv;
@@ -692,39 +830,78 @@ namespace Hevo.Charting.Benchmarks
     internal sealed class ProbeRig : IDisposable
     {
         public Window Window { get; }
+        /// <summary>场景脚本操作的图(dashboard 里是主图)。</summary>
         public List<ProbeChart> Charts { get; }
+        /// <summary>dashboard 的副图(其余窗口为空);每帧跟主图一起跑。</summary>
+        public List<ProbePane> Panes { get; }
         private readonly FrameworkElement _content;
         private readonly double _baseWidth;
+        private readonly TooltipWidgetLayer? _tipLayer;
 
-        private ProbeRig(Window window, FrameworkElement content, List<ProbeChart> charts)
+        private ProbeRig(Window window, FrameworkElement content, List<ProbeChart> charts, List<ProbePane> panes)
         {
             Window = window;
             _content = content;
             Charts = charts;
+            Panes = panes;
             _baseWidth = content.Width;
+            _tipLayer = charts[0].Cell.ActiveLayers.OfType<TooltipWidgetLayer>().FirstOrDefault();
         }
 
-        public static ProbeRig? Create(ProbeOptions opt, int bars, int charts, int extraCapacity)
+        /// <summary>第一张图的 tooltip 本帧是否真的上屏(TooltipWidgetLayer 前台 buffer 有 widget 指令)。</summary>
+        public bool TooltipShown() => _tipLayer?.Buffer is LayerBuffer lb && !lb.Widget.IsEmpty;
+
+        public static ProbeRig? Create(ProbeOptions opt, int bars, int charts, int extraCapacity, RigKind kind = RigKind.Standard)
         {
-            var list = Enumerable.Range(0, charts).Select(_ => ProbeChart.Create(bars, extraCapacity)).ToList();
+            var chartOptions = kind switch
+            {
+                RigKind.NoTooltip => new ProbeChartOptions(Tooltip: false),
+                RigKind.Dashboard => new ProbeChartOptions(Markers: true),
+                _ => ProbeChartOptions.Default,
+            };
+            double scale = ProbeDpi.ScaleOf(kind);
+
+            List<ProbeChart> list;
+            var panes = new List<ProbePane>();
             FrameworkElement content;
-            if (charts == 1) content = list[0].Cell;
+            if (kind == RigKind.Dashboard)
+            {
+                var masterSchema = new ProbeKLineSchema(chartOptions);
+                var volumeSchema = new ProbeVolumeSchema();
+                var dashboard = new Hevo.Charting.Linked.LinkedChartDashboard(new Hevo.Charting.Linked.LinkedChartContext())
+                    .AddMaster(masterSchema, heightRatio: 3)
+                    .AddPane(volumeSchema, heightRatio: 1);
+                var master = ProbeChart.Create(bars, extraCapacity, masterSchema, dashboard.Cells[0]);
+                list = new List<ProbeChart> { master };
+                panes.Add(new ProbePane { Schema = volumeSchema, Cell = dashboard.Cells[1], Board = new DataBlackboard(), Master = master });
+                content = dashboard;
+            }
             else
             {
-                int cols = (int)Math.Ceiling(Math.Sqrt(charts));
-                var grid = new UniformGrid { Columns = cols, Rows = (int)Math.Ceiling(charts / (double)cols) };
-                foreach (var ch in list) grid.Children.Add(ch.Cell);
-                content = grid;
+                list = Enumerable.Range(0, charts).Select(_ => ProbeChart.Create(bars, extraCapacity, chartOptions)).ToList();
+                if (charts == 1) content = list[0].Cell;
+                else
+                {
+                    int cols = (int)Math.Ceiling(Math.Sqrt(charts));
+                    var grid = new UniformGrid { Columns = cols, Rows = (int)Math.Ceiling(charts / (double)cols) };
+                    foreach (var ch in list) grid.Children.Add(ch.Cell);
+                    content = grid;
+                }
             }
-            content.Width = opt.WindowWidth;
-            content.Height = opt.WindowHeight;
+            // 高 DPI 模拟:内容按 1/scale 的 DIP 尺寸布局,LayoutTransform 放大回原像素尺寸
+            content.Width = opt.WindowWidth / scale;
+            content.Height = opt.WindowHeight / scale;
+            if (scale != 1.0) content.LayoutTransform = new ScaleTransform(scale, scale);
             content.HorizontalAlignment = HorizontalAlignment.Left;
             content.VerticalAlignment = VerticalAlignment.Top;
 
             // 外面再套一层定尺寸的宿主:Resize 场景只改图表宽度,窗口(HWND)尺寸不变。
             // 否则 SizeToContent 会跟着缩窗口,WM_SIZE 里 WPF 同步跑一次渲染,
             // CompositionTarget.Rendering 回调就在"输入"阶段把这一帧做掉,RunFrameNow 测到的是空帧。
-            var host = new System.Windows.Controls.Grid { Width = opt.WindowWidth, Height = opt.WindowHeight };
+            // IsHitTestVisible=false:窗口在屏幕正中,真实鼠标停在上面时 WPF 会合成 MouseMove,
+            // ChartInteractionFeature 据此写 PointerHitPort —— 十字光标 / tooltip / 标题栏跟着每次缩放平移重算,
+            // 计数就随鼠标位置漂移。测量全靠脚本直接写端口,窗口不需要接收鼠标。
+            var host = new System.Windows.Controls.Grid { Width = opt.WindowWidth, Height = opt.WindowHeight, IsHitTestVisible = false };
             host.Children.Add(content);
 
             var window = new Window
@@ -737,10 +914,17 @@ namespace Hevo.Charting.Benchmarks
             };
             window.Show();
             RenderProbe.Pump(300); // 等 OnApplyTemplate → ComposeAll + SizeChanged
+            if (scale != 1.0)
+            {
+                foreach (var ch in list) ProbeDpi.Apply(ch.Cell, scale);
+                RenderProbe.Pump(100);
+            }
 
             foreach (var ch in list) ch.LoadData();
+            foreach (var pane in panes) pane.LoadData();
             RenderProbe.Pump(300);
             foreach (var ch in list) ch.Cell.RunFrameNow(PlotMode.Sync);
+            foreach (var pane in panes) pane.Cell.RunFrameNow(PlotMode.Sync);
 
             foreach (var ch in list)
             {
@@ -752,7 +936,7 @@ namespace Hevo.Charting.Benchmarks
                     return null;
                 }
             }
-            return new ProbeRig(window, content, list);
+            return new ProbeRig(window, content, list, panes);
         }
 
         /// <summary>归位:数据长度回到初始、视口回到最右 120 根、清掉 hover、尺寸回到原宽。</summary>
@@ -764,6 +948,7 @@ namespace Hevo.Charting.Benchmarks
                 Window.UpdateLayout();
             }
             foreach (var ch in Charts) ch.Reset();
+            foreach (var pane in Panes) pane.WriteSeries(); // DashTick 改过的成交量 / Append 后的长度跟主图对齐
         }
 
         // 宽度三角波:每步 8px,在原宽和原宽 -168px 之间来回。走真实的 WPF 布局 → SizeChanged → 环境纪元 → FullPass。
@@ -793,13 +978,19 @@ namespace Hevo.Charting.Benchmarks
         /// <summary>当前对外可见的 K 线根数(Append 场景会增长)。</summary>
         public int Length { get; set; }
 
-        public static ProbeChart Create(int bars, int extraCapacity)
+        public static ProbeChart Create(int bars, int extraCapacity, ProbeChartOptions? options = null)
         {
-            var schema = new ProbeKLineSchema();
+            var schema = new ProbeKLineSchema(options ?? ProbeChartOptions.Default);
+            return Create(bars, extraCapacity, schema, new ChartCell { Template = schema });
+        }
+
+        /// <summary>cell 已由外部装配(如 LinkedChartDashboard.AddMaster)时用这个重载。</summary>
+        public static ProbeChart Create(int bars, int extraCapacity, ProbeKLineSchema schema, ChartCell cell)
+        {
             return new ProbeChart
             {
                 Schema = schema,
-                Cell = new ChartCell { Template = schema },
+                Cell = cell,
                 Board = new DataBlackboard(),
                 Data = ProbeData.Generate(bars + extraCapacity),
                 InitialLength = bars,
@@ -827,6 +1018,12 @@ namespace Hevo.Charting.Benchmarks
                 Board.WriteIfChanged(p.Low, Slice(Data.Low));
                 Board.WriteIfChanged(p.Close, Slice(Data.Close));
                 Board.WriteIfChanged(Schema.SmaPort, Slice(Data.Sma));
+                if (Schema.Options.Markers)
+                {
+                    Board.WriteIfChanged(Schema.ScatterPort, Data.MarkersUpTo(Data.Scatter, Length));
+                    Board.WriteIfChanged(Schema.ArrowPort, Data.MarkersUpTo(Data.Arrows, Length));
+                    Board.WriteIfChanged(Schema.TextPort, Data.MarkersUpTo(Data.Texts, Length));
+                }
                 Board.WriteIfChanged(Schema.Viewport.LogicalLength, Length);
                 if (follow)
                 {
@@ -861,6 +1058,18 @@ namespace Hevo.Charting.Benchmarks
         public double[] Low = Array.Empty<double>();
         public double[] Close = Array.Empty<double>();
         public double[] Sma = Array.Empty<double>();
+        public double[] Volume = Array.Empty<double>();
+        // 标记按 K 线下标升序:scatter 每 10 根一个、arrow 每 25 根、text 每 50 根
+        public ScatterPoint[] Scatter = Array.Empty<ScatterPoint>();
+        public ArrowMarker[] Arrows = Array.Empty<ArrowMarker>();
+        public TextMarker[] Texts = Array.Empty<TextMarker>();
+
+        /// <summary>前 length 根 K 线范围内的标记(各标记数组按下标升序,步长固定,直接算个数)。</summary>
+        public ReadOnlyMemory<T> MarkersUpTo<T>(T[] markers, int length)
+        {
+            int step = markers switch { ScatterPoint[] => 10, ArrowMarker[] => 25, _ => 50 };
+            return new ReadOnlyMemory<T>(markers, 0, Math.Min(markers.Length, (length + step - 1) / step));
+        }
 
         public static ProbeData Generate(int n)
         {
@@ -883,6 +1092,26 @@ namespace Hevo.Charting.Benchmarks
                 d.Low[i] = Math.Min(o, c) - rng.NextDouble();
                 last = c;
             }
+            // 成交量 / 标记由价格序列确定性派生,不消耗随机数(不改变已有序列,计数基线不受影响)
+            d.Volume = new double[n];
+            for (int i = 0; i < n; i++) d.Volume[i] = 1000 + Math.Abs(d.Close[i] - d.Open[i]) * 800 + (i % 7) * 40;
+            d.Scatter = new ScatterPoint[(n + 9) / 10];
+            for (int k = 0; k < d.Scatter.Length; k++)
+                d.Scatter[k] = new ScatterPoint(k * 10, (float)d.High[k * 10] + 0.5f, 3f, "#FFB74D");
+            d.Arrows = new ArrowMarker[(n + 24) / 25];
+            for (int k = 0; k < d.Arrows.Length; k++)
+            {
+                int i = k * 25;
+                bool up = d.Close[i] >= d.Open[i];
+                d.Arrows[k] = new ArrowMarker(i, up ? d.Low[i] - 0.5 : d.High[i] + 0.5, up ? "up" : "down", up ? "#26A69A" : "#EA476D", 8f);
+            }
+            d.Texts = new TextMarker[(n + 49) / 50];
+            for (int k = 0; k < d.Texts.Length; k++)
+            {
+                int i = k * 50;
+                d.Texts[k] = new TextMarker(i, d.High[i] + 1.0, k % 2 == 0 ? "BUY" : "SELL", "#FFFFFF", 11f, "above");
+            }
+
             const int len = 20;
             double sum = 0;
             for (int i = 0; i < n; i++)
@@ -901,10 +1130,21 @@ namespace Hevo.Charting.Benchmarks
     /// </summary>
     internal sealed class ProbeKLineSchema : ChartReactiveSchema
     {
+        public ProbeChartOptions Options { get; }
+        public ProbeKLineSchema(ProbeChartOptions? options = null) => Options = options ?? ProbeChartOptions.Default;
+
+        public DataPort<ReadOnlyMemory<ScatterPoint>> ScatterPort { get; } = new("P_Scatter");
+        public DataPort<ReadOnlyMemory<ArrowMarker>> ArrowPort { get; } = new("P_Arrows");
+        public DataPort<ReadOnlyMemory<TextMarker>> TextPort { get; } = new("P_Texts");
+
         public CandlePorts Ports { get; } = new(new("P_Time"), new("P_Open"), new("P_High"), new("P_Low"), new("P_Close"));
         public DataPort<ReadOnlyMemory<double>> SmaPort { get; } = new("P_SMA20");
         public DataPort<RealRange> YRangePort { get; } = new("P_YRange");
         public WorkflowTrigger<DataBlackboard> Trigger { get; } = new();
+
+        /// <summary>--heavy-layers / --heavy-ms:额外挂的人为加重图层(0 = 不挂)。</summary>
+        public static int HeavyLayers;
+        public static double HeavyMs = 1.0;
 
         public ViewportPorts Viewport { get; private set; } = null!;
         public DataPort<PointerHitState?> HitPortForProbe => HitPort;
@@ -918,6 +1158,7 @@ namespace Hevo.Charting.Benchmarks
         protected override void DefineFeatures(IFeatureContext canvas)
         {
             canvas.Seed<ScaleStrategyTrait>(ScaleStrategyTrait.CandleMode);
+            if (HeavyLayers > 0) canvas.Add(new HeavyLayersFeature(HeavyLayers, HeavyMs));
 
             var hitPort = HitPort;
             var timeMeta = FieldMeta.Literal("时间", Colors.White, "yyyy-MM-dd HH:mm");
@@ -962,6 +1203,17 @@ namespace Hevo.Charting.Benchmarks
                         Modes = ChartInteractionMode.All,
                         TooltipXMeta = timeMeta,
                     }));
+
+            // HoverNoTip 对照组:EnableStandard 总会挂 TooltipWidgetFeature,这里摘掉
+            if (!Options.Tooltip) canvas.Remove<TooltipWidgetFeature>();
+
+            // dashboard 主图:scatter / arrow / text 三类标记(跟 PlotFeature 展开出来的子 Feature 同一批类)
+            if (Options.Markers)
+            {
+                canvas.Add(new ScatterPlotFeature { Spec = ScatterPort, Name = "probe_scatter", HitStatePort = hitPort });
+                canvas.Add(new ArrowMarkerFeature { Spec = ArrowPort, Name = "probe_arrows", YRangePort = YRangePort, HitStatePort = hitPort });
+                canvas.Add(new TextMarkerFeature { Spec = TextPort, Name = "probe_texts", YRangePort = YRangePort, HitStatePort = hitPort });
+            }
         }
     }
 }
