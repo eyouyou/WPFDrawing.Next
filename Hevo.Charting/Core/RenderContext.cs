@@ -226,13 +226,19 @@ namespace Hevo.Charting.Core
                 // ⇒ 它跟踪的任何 trait ref 都不可能变 ⇒ 跳过 CheckIfDirty 的 foreach。
                 // hover / idle 帧通常只有 1 个 layer 的 local 被写,其余全部命中此短路。
                 // ==========================================
-                if (!globalChanged && !hasLocalDraft) continue;
+                // 测量对照组:关掉图层侧判脏(短路 + 引用比对),已发现的图层每帧重录(默认关,见 DevTools/IncrementalRenderProbe)
+                if (DevTools.IncrementalRenderProbe.ForceLayerRedraw) { cl.MarkDirty(); continue; }
+
+                bool bagUnchanged = !globalChanged && !hasLocalDraft;
+                if (bagUnchanged && !DevTools.IncrementalRenderProbe.BypassBagShortCircuit) continue;
 
                 // ==========================================
                 // 💥 策略 B：针对【工作状态】图层 (O(1) 引用指纹碰撞)
                 // ==========================================
                 if (cl.DependencyTracker.CheckIfDirty(liveLocalBag, _liveGlobalData))
                 {
+                    // 只在对照组里可能进入:短路会跳过但引用比对判脏,记下是哪个图层、哪个 Trait
+                    if (bagUnchanged) DevTools.IncrementalRenderProbe.RecordShortCircuitMiss(cl, liveLocalBag, _liveGlobalData);
                     cl.MarkDirty();
                 }
             }

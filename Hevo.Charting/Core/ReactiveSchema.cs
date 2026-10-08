@@ -589,6 +589,8 @@ namespace Hevo.Charting.Core
 
             // 2. 令牌对齐检查
             bool isEnvironmentSync = _renderedToken != targetToken;
+            // 测量对照组:强制 FullPass(默认关,见 DevTools/IncrementalRenderProbe)
+            if (DevTools.IncrementalRenderProbe.ForceFullPass) isEnvironmentSync = true;
 
             // 3. 修复 H3：填充模式弹出，_dirtySetBuffer 跨帧复用，零堆分配。
             //    先清空缓冲，再由 PopDirtyFeatures 直接填入脏 Feature 集合。
@@ -614,6 +616,7 @@ namespace Hevo.Charting.Core
                         // 💥 业务特征（Feature）在内部愉快地裸奔调用 Read()
                         // 因为我们在外层拿了读锁，底层的防弹衣校验将完美通过！
                         feature.Project(ctx, _latestBoard, Registry, isEnvironmentSync);
+                        DevTools.IncrementalRenderProbe.FeatureProjections++;
                     }
                 }
             }

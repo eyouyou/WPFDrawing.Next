@@ -20,7 +20,7 @@ internal static class Program
         // 框架内置 Feature / Trait / DataSource + GraphViewer wrappers 全登记 —— 否则
         // list_components 是空的,describe_component / validate_blueprint 全报"未注册"。
         // GraphViewerBootstrap 内部含 PortMetadataRegistry direction 标注,DryRun 校验 Output
-        // 端口绑定时要查它。WPF 引用在 net8.0-windows 运行时可加载,不实际触发渲染。
+        // 端口绑定时要查它。WPF 引用在 net10.0-windows 运行时可加载,不实际触发渲染。
         GraphViewerBootstrap.Initialize();
 
         var builder = Host.CreateApplicationBuilder(args);

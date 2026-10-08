@@ -27,7 +27,7 @@ dotnet build "Hevo.Drawing.slnx" -nologo
 dotnet run --project Hevo.Drawing.LowCodeDemo -c Debug
 ```
 
-> 要求：Windows + 支持 WPF 的 .NET 8 SDK（当前 TFM 为 `net8.0-windows10.0.19041.0`）。首次启动会同步嵌入式 Python 312 运行时与 demo 指标。
+> 要求：Windows + 支持 WPF 的 .NET 10 SDK（当前 TFM 为 `net10.0-windows10.0.19041.0`）。首次启动会同步嵌入式 Python 312 运行时与 demo 指标。
 
 启动后能看到：低代码 Node Editor、内嵌的 K 线 Dashboard、AvalonEdit Python 编辑器、Mock 撮合面板。改完蓝图 JSON 热加载即可生效。
 
@@ -126,4 +126,4 @@ dotnet test  "Hevo.Charting.Tests/Hevo.Charting.Tests.csproj" -c Release
 dotnet run --project Hevo.Charting.Benchmarks -c Release -- --filter "*"
 ```
 
-> 目标平台：Any CPU / x64。需要支持 WPF 的 .NET 8 SDK；MCP / Tests / Benchmarks 子项目同样锁 `net8.0-windows10.0.19041.0`（因 ProjectReference 透传 WPF 依赖）。
+> 目标平台：Any CPU / x64。需要支持 WPF 的 .NET 10 SDK；MCP / Tests / Benchmarks 子项目同样锁 `net10.0-windows10.0.19041.0`（因 ProjectReference 透传 WPF 依赖）。
