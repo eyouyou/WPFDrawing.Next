@@ -11,6 +11,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- LOH 阈值 1MB(默认 85000 字节):数据源读快照(2000 根 ≈ 110–220 KB)每收一根新 K 线重分配一次,
+         默认阈值下进 LOH,高频行情时每秒数次 Gen2。1MB 下实测自然 Gen2 ≈ 0(render-probe Feed,100 / 1000 tick/s)。
+         上万根 + 高频行情的图需要 4MB(4194304),工作集约多 100MB。见 Hevo.Charting.Benchmarks/README.md。 -->
+    <RuntimeHostConfigurationOption Include="System.GC.LOHThreshold" Value="1048576" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- 维持构建顺序，不以 OutputItemType=Analyzer 形式参与，避免与下面的 dll 形成双重注册 -->
     <ProjectReference Include="..\Hevo.Charting.CodeAnalysis\Hevo.Charting.CodeAnalysis.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
