@@ -117,6 +117,9 @@ namespace Hevo.Charting
         // 💥 挂载物理数据时钟
         protected readonly StateClock _dataClock = new();
 
+        // 最近一次 Publish 的有效长度(锁内写)。_buffer.Count 可能在两次 Publish 之间被子类改过,不能代替它。
+        private int _publishedCount;
+
         public VersionToken CurrentVersion => _dataClock.Snapshot();
 
         public DataPipeBuilder<TSource, TItem> Pipe() => new((TSource)this, Stream);
@@ -141,8 +144,10 @@ namespace Hevo.Charting
                     _readSnapshot = Array.Empty<TItem>();
                 }
 
-                // 2. 物理拷贝：把后厨数据端到前台
+                // 2. 物理拷贝：把后厨数据端到前台(没扩容时是原地覆盖 —— 已发布出去的同一个数组会被改写,
+                //    所以锁外读者不能直接拿 _readSnapshot,见 GetSnapshot)
                 _buffer.CopyTo(_readSnapshot);
+                _publishedCount = _buffer.Count;
 
                 // 3. 拨动时钟(融合 Advance+Snapshot,单次 Interlocked.Increment 取新值)
                 VersionToken newVersion = _dataClock.AdvanceAndSnapshot();
@@ -153,13 +158,26 @@ namespace Hevo.Charting
         }
 
         /// <summary>
-        /// 💥 重算提取器：供 DataPipeBuilder.Reevaluate 直接调用的 0-GC 方法
+        /// 当前数据的一致快照:锁内把 [0, 有效长度) 拷成独立数组再返回。
+        /// <para>
+        /// 不能直接返回 <c>_readSnapshot</c>:Publish 没扩容时是原地覆盖同一个数组,锁外的调用方(订阅首帧 StartWith、
+        /// Resume 补推、URI 模板 / trigger driver 取当前数据)读元素时可能正赶上后台线程在写,读到半新半旧的 struct;
+        /// 以前数组引用和 <c>_buffer.Count</c> 也是锁外分两次读,可能对不上。
+        /// </para>
+        /// <para>
+        /// 每次调用拷贝一次(有分配),只给上面这些低频路径用;热路径(Publish → Stream → Ingestor)在锁内同步消费,不走这里。
+        /// 子类在锁外直接读 <c>_readSnapshot</c> 有同样的问题(hevo.drawing 的 KLineDataSource.LatestClose、
+        /// MarketStrength.IndexToTime 都是 UI 线程直读),应改用本方法或在 <c>_lock</c> 内读。
+        /// </para>
         /// </summary>
         public DataSnapshot<TItem> GetSnapshot()
         {
-            // 这里不需要加锁，因为 _readSnapshot 是指针传递，_buffer.Count 是简单值。
-            // 传出去的是前台展示柜的引用，和实际有效长度
-            return new DataSnapshot<TItem>(_readSnapshot, _buffer.Count, _dataClock.Snapshot());
+            lock (_lock)
+            {
+                int n = _publishedCount;
+                var copy = n == 0 ? Array.Empty<TItem>() : _readSnapshot.AsSpan(0, n).ToArray();
+                return new DataSnapshot<TItem>(copy, n, _dataClock.Snapshot());
+            }
         }
 
         /// <summary>
