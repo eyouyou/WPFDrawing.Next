@@ -1,7 +1,11 @@
 using System;
 using System.IO;
 using System.Linq;
+using BenchmarkDotNet.Configs;
+using BenchmarkDotNet.Jobs;
 using BenchmarkDotNet.Running;
+using BenchmarkDotNet.Toolchains.CsProj;
+using BenchmarkDotNet.Toolchains.DotNetCli;
 using Hevo.Charting.PythonNet;
 using Python.Runtime;
 
@@ -37,8 +41,32 @@ namespace Hevo.Charting.Benchmarks
             if (args.Length > 0 && args[0] == "--latency-probe")
                 return LatencyProbe.Run(args);
 
-            BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
+            BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args, BenchConfig(args));
             return 0;
+        }
+
+        // BDN 0.14 不认识 .NET 10:按宿主 runtime 生成的 boilerplate 是 TargetFramework=net10.0,
+        // 引用本项目(net10.0-windows10.0.19041.0)时 NU1201,所有走子进程的基准都 NA。
+        // 这里把默认 job 的工具链钉到本项目的 TFM;--warmupCount / --iterationCount 等在它上面叠加。
+        // config 里的默认 job 会顶掉命令行 --job 选的基准 job,所以 --job 在这里自己映射。
+        // InProcess 的基准([Config(typeof(InProcessConfig))])自带工具链,不受影响。
+        private static IConfig BenchConfig(string[] args)
+        {
+            var toolchain = CsProjCoreToolchain.From(
+                new NetCoreAppSettings("net10.0-windows10.0.19041.0", runtimeFrameworkVersion: null, name: ".NET 10.0 (windows)"));
+
+            int i = Array.FindIndex(args, a => a is "--job" or "-j");
+            string jobName = i >= 0 && i + 1 < args.Length ? args[i + 1].ToLowerInvariant() : "default";
+            Job baseJob = jobName switch
+            {
+                "dry" => Job.Dry,
+                "short" => Job.ShortRun,
+                "medium" => Job.MediumRun,
+                "long" => Job.LongRun,
+                "verylong" => Job.VeryLongRun,
+                _ => Job.Default,
+            };
+            return DefaultConfig.Instance.AddJob(baseJob.WithToolchain(toolchain).AsDefault());
         }
 
         private static int SandboxProbeMain(string[] args)
