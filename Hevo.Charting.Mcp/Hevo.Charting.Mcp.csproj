@@ -15,7 +15,7 @@
       要彻底跨平台需先把 Hevo.Charting 的 WPF 渲染层从核心 schema/blueprint 模型切出去
       —— 这是单独的工程改造,不在本次 MCP server 的最小可用范围。
     -->
-    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>preview</LangVersion>
