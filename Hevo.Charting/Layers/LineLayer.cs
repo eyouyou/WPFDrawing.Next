@@ -83,6 +83,7 @@ namespace Hevo.Charting.Core
         private readonly List<HevoPoint> _screenPoints = new(2048);
         private readonly List<HevoPoint> _trimmedPoints = new(2048);
         private readonly List<HevoPoint> _smoothPoints = new(8192);
+        private readonly List<HevoPoint> _lodPoints = new(4096);
 
         public LineLayer()
         {
@@ -147,6 +148,19 @@ namespace Hevo.Charting.Core
             // 数学精确裁剪:首尾段按 plotArea 边界线性插值,跨边界段按原斜率收束到精确像素。
             TrimPolylineToPlotArea(_screenPoints, area, _trimmedPoints);
             if (_trimmedPoints.Count < 2) return;
+
+            // 💥 LOD:相邻点不足 1 个物理像素时(缩放到几千上万根可见),按物理像素列做 M4 抽稀(首 / 最低 / 最高 / 末),
+            // 1px 精度下形状一致,StreamGeometry 顶点数压到 ≤4×绘图区物理宽度,免掉每帧上百 KB 的 LOH 几何缓冲。
+            // 抽稀后不走样条:每像素好几个点时样条没有意义,还会在极值点之间过冲。
+            double pixelsPerDip = PixelsPerDip;
+            double dipsPerPoint = area.Width / Math.Max(1, _trimmedPoints.Count - 1);
+            if (PixelColumnLod.ShouldAggregate(dipsPerPoint, pixelsPerDip))
+            {
+                _lodPoints.Clear();
+                PixelColumnLod.DecimatePolyline(_trimmedPoints, _lodPoints, pixelsPerDip);
+                draw.DrawPolyline(style.LinePen, _lodPoints);
+                return;
+            }
 
             if (style.UseSpline)
             {

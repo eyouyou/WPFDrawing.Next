@@ -119,42 +119,51 @@ namespace Hevo.Charting.Core
             double bodyWidth = Math.Max(1.0, ppuX * (1.0 - style.BodyPadding));
             double halfBody = bodyWidth / 2.0;
 
-            for (int logicalIndex = logicalStart; logicalIndex <= logicalEnd; logicalIndex++)
+            // 💥 LOD:单根不足 1 个物理像素宽时(缩放到几千上万根可见),逐根画只是在同一列像素上反复覆盖,
+            // 却让 WPF 为每根建影线 figure + DrawRectangle 记录,2 万根可见时每帧上 MB 的 LOH 分配。
+            // 这时按物理像素列聚合(首开、最高、最低、末收,涨跌色按聚合后的开收),每列一根影线 + 一个 1px 实体,
+            // 输出上限 = 绘图区物理宽度。聚合只取决于本帧可见区和像素宽度,增量路径(Tick / Append)照常整层重录即可。
+            double pixelsPerDip = PixelsPerDip;
+            if (PixelColumnLod.ShouldAggregate(ppuX, pixelsPerDip))
             {
-                int arrayIndex = logicalIndex - baseIndex;
+                double columnHalf = 0.5 / pixelsPerDip;
+                var acc = new OhlcColumnAccumulator();
+                OhlcColumn done;
+                for (int logicalIndex = logicalStart; logicalIndex <= logicalEnd; logicalIndex++)
+                {
+                    int arrayIndex = logicalIndex - baseIndex;
+                    double o = opens[arrayIndex];
+                    if (o <= 0) continue;
 
-                double o = opens[arrayIndex];
-                if (o <= 0) continue;
-                double h = highs[arrayIndex];
-                double l = lows[arrayIndex];
-                double c = closes[arrayIndex];
+                    double xCenter = plotArea.Left + axis.DomainScale.Normalize(logicalIndex, xRange) * plotArea.Width;
+                    int column = PixelColumnLod.ColumnOf(xCenter, pixelsPerDip);
+                    // 整列都在绘图区内才画,跟逐根路径"柱体越界即剔除"同口径
+                    if (!PixelColumnLod.ColumnInside(column, pixelsPerDip, plotArea.Left, plotArea.Right)) continue;
 
-                // 💥 绝对中心点：Scale 去操心居中偏移，Layer 只管画！
-                double xNorm = axis.DomainScale.Normalize(logicalIndex, xRange);
-                double xCenter = plotArea.Left + (xNorm * plotArea.Width);
+                    if (acc.Add(column, o, highs[arrayIndex], lows[arrayIndex], closes[arrayIndex], out done))
+                        AddCandle(PixelColumnLod.ColumnCenter(done.Column, pixelsPerDip), columnHalf, done.Open, done.High, done.Low, done.Close, plotArea, yRange, axis);
+                }
+                if (acc.Flush(out done))
+                    AddCandle(PixelColumnLod.ColumnCenter(done.Column, pixelsPerDip), columnHalf, done.Open, done.High, done.Low, done.Close, plotArea, yRange, axis);
+            }
+            else
+            {
+                for (int logicalIndex = logicalStart; logicalIndex <= logicalEnd; logicalIndex++)
+                {
+                    int arrayIndex = logicalIndex - baseIndex;
 
-                double leftEdge = xCenter - halfBody;
-                double rightEdge = xCenter + halfBody;
+                    double o = opens[arrayIndex];
+                    if (o <= 0) continue;
 
-                // 边界剔除
-                if (leftEdge < plotArea.Left || rightEdge > plotArea.Right) continue;
+                    // 💥 绝对中心点：Scale 去操心居中偏移，Layer 只管画！
+                    double xNorm = axis.DomainScale.Normalize(logicalIndex, xRange);
+                    double xCenter = plotArea.Left + (xNorm * plotArea.Width);
 
-                double yOpen = CoordinateExtensions.ProjectValueToScreen(plotArea, yRange, axis, o);
-                double yHigh = CoordinateExtensions.ProjectValueToScreen(plotArea, yRange, axis, h);
-                double yLow = CoordinateExtensions.ProjectValueToScreen(plotArea, yRange, axis, l);
-                double yClose = CoordinateExtensions.ProjectValueToScreen(plotArea, yRange, axis, c);
+                    // 边界剔除
+                    if (xCenter - halfBody < plotArea.Left || xCenter + halfBody > plotArea.Right) continue;
 
-                _wicks.Add(new HevoPoint((float)xCenter, (float)yHigh));
-                _wicks.Add(new HevoPoint((float)xCenter, (float)yLow));
-
-                double top = Math.Min(yOpen, yClose);
-                double bottom = Math.Max(yOpen, yClose);
-                double height = Math.Max(1.0, bottom - top);
-
-                HevoRect rect = new HevoRect((float)leftEdge, (float)top, (float)(rightEdge - leftEdge), (float)height);
-
-                if (c >= o) _upRects.Add(rect);
-                else _downRects.Add(rect);
+                    AddCandle(xCenter, halfBody, o, highs[arrayIndex], lows[arrayIndex], closes[arrayIndex], plotArea, yRange, axis);
+                }
             }
 
             using (draw.PushClip(plotArea))
@@ -167,6 +176,29 @@ namespace Hevo.Charting.Core
                 if (_upRects.Count > 0) draw.DrawRectangles(style.UpBrush, null, _upRects);
                 if (_downRects.Count > 0) draw.DrawRectangles(style.DownBrush, null, _downRects);
             }
+        }
+
+        private void AddCandle(double xCenter, double halfBody, double o, double h, double l, double c,
+                               HevoRect plotArea, RealRange yRange, ScaleStrategyTrait axis)
+        {
+            double yOpen = CoordinateExtensions.ProjectValueToScreen(plotArea, yRange, axis, o);
+            double yHigh = CoordinateExtensions.ProjectValueToScreen(plotArea, yRange, axis, h);
+            double yLow = CoordinateExtensions.ProjectValueToScreen(plotArea, yRange, axis, l);
+            double yClose = CoordinateExtensions.ProjectValueToScreen(plotArea, yRange, axis, c);
+
+            _wicks.Add(new HevoPoint((float)xCenter, (float)yHigh));
+            _wicks.Add(new HevoPoint((float)xCenter, (float)yLow));
+
+            double top = Math.Min(yOpen, yClose);
+            double bottom = Math.Max(yOpen, yClose);
+            double height = Math.Max(1.0, bottom - top);
+
+            double leftEdge = xCenter - halfBody;
+            double rightEdge = xCenter + halfBody;
+            HevoRect rect = new HevoRect((float)leftEdge, (float)top, (float)(rightEdge - leftEdge), (float)height);
+
+            if (c >= o) _upRects.Add(rect);
+            else _downRects.Add(rect);
         }
     }
 }

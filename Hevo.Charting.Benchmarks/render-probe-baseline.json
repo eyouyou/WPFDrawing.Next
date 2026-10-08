@@ -13,7 +13,7 @@
     "bars=2000|charts=1|Zoom|inc": {
       "FeaturesPerFrame": 3.2667,
       "LayersPerFrame": 5.5333,
-      "DrawCmdsPerFrame": 22.17
+      "DrawCmdsPerFrame": 22.73
     },
     "bars=2000|charts=1|Tick|inc": {
       "FeaturesPerFrame": 1,

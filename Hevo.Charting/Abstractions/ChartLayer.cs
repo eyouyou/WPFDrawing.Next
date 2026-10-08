@@ -127,6 +127,12 @@ namespace Hevo.Charting.Abstractions
         /// </summary>
         protected internal virtual bool RequiresUiThread => false;
 
+        /// <summary>
+        /// 所在屏幕的 DIP→物理像素比(100% = 1.0,150% = 1.5)。ChartCell 每帧录制前写入,
+        /// 供按物理像素做 LOD 的图层(CandleLayer / LineLayer)使用;不在 ChartCell 里时保持 1.0。
+        /// </summary>
+        public double PixelsPerDip { get; internal set; } = 1.0;
+
         internal VisualDependencyTracker DependencyTracker { get; } = new();
 
         // 💥 是否已经被局部唤醒并完成了第一次采样？

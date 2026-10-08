@@ -419,7 +419,8 @@ namespace Hevo.Charting.Core
             if (Template is Abstractions.IPausable p) p.Resume();
 
             // Loaded 时注入真实 DPI:visual 已挂入 visual tree,VisualTreeHelper.GetDpi(this) 才能拿到所在屏的 DPI。
-            _wpfProvider.UpdateDpi(VisualTreeHelper.GetDpi(this).PixelsPerDip);
+            _pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+            _wpfProvider.UpdateDpi(_pixelsPerDip);
 
             _hookedWindow = Window.GetWindow(this);
             if (_hookedWindow != null)
@@ -463,6 +464,10 @@ namespace Hevo.Charting.Core
         {
             base.OnDpiChanged(oldDpi, newDpi);
             _wpfProvider.UpdateDpi(newDpi.PixelsPerDip);
+
+            // 按物理像素做 LOD 的图层要跟着重录:走环境纪元,下一帧全量重投影 + 重绘
+            _pixelsPerDip = newDpi.PixelsPerDip;
+            RequestUpdate(_ => (Template as IFeatureProjector)?.InvalidateEnvironment());
         }
 
         private void _rootContainer_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -495,6 +500,8 @@ namespace Hevo.Charting.Core
         /// 三阶段:① schema.ProjectAll → 让所有 Feature 重算 trait;② 标脏 + 制作 snapshot 喂给 Layer.Update;
         /// ③ 视任务量同步 / 并行执行。Parallel 阈值 ≥3 是经验值,任务太少时多线程 dispatch 反而亏。
         /// </summary>
+        private double _pixelsPerDip = 1.0;
+
         private static bool RequiresUiThread(IChartLayer layer) => layer is ChartLayer { RequiresUiThread: true };
 
         internal void ExecutePipeline(RenderContext ctx, PlotMode mode)
@@ -514,6 +521,7 @@ namespace Hevo.Charting.Core
                 if (active[i] is ChartLayer cl && cl.IsDirty) _dirtyLayerBuffer.Add(cl);
             }
             if (_dirtyLayerBuffer.Count == 0) return;
+            for (int i = 0; i < _dirtyLayerBuffer.Count; i++) _dirtyLayerBuffer[i].PixelsPerDip = _pixelsPerDip;
 
             // 2. 制作快照
             using var frame = ctx.PrepareTasks(_dirtyLayerBuffer);

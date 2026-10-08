@@ -68,6 +68,7 @@ namespace Hevo.Charting.Core
                 }
 
                 // 3. 让子层使用它自己的数据干活
+                if (child is ChartLayer cl) cl.PixelsPerDip = PixelsPerDip;
                 child.Update(childData);
                 masterBuffer.Append(child.Buffer);
             }
