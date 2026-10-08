@@ -395,11 +395,12 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
         /// (每次都返回新数组)和 GetCustomAttribute。只放类型级信息,实例的焊接 / Properties 照常逐个现读。
         /// <para>
         /// 方向依赖 PortMetadataRegistry:每条缓存记下建立时的 <see cref="PortMetadataRegistry.DirectionVersion"/>,
-        /// 读取时版本不符就重建。版本在扫描属性之前读,扫描途中有人登记方向,这条缓存自带旧版本号,下次读取即重建,
-        /// 不会把过期方向留在缓存里。
+        /// 读取时版本不符就重建,所以没有并发读者时,第一次 DryRun 之后再登记也能生效(如测试)。
         /// </para>
+        /// <para>线程:DryRun 可在任意线程并发调用(MCP validate_blueprint 在服务线程上并发跑),所以用 ConcurrentDictionary;
+        /// 并发时同一类型可能被重复建表,结果相同,后写覆盖即可。方向登记的约定见 PortMetadataRegistry。</para>
         /// </summary>
-        internal sealed class DryRunTypeInfo
+        private sealed class DryRunTypeInfo
         {
             public readonly record struct Port(PropertyInfo Property, Type ValueType, bool IsArray, PortDirection Direction);
 
@@ -408,9 +409,6 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             public int Version { get; private init; }
 
             private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, DryRunTypeInfo> s_cache = new();
-
-            /// <summary>测试钩子:Build 读完方向、写入缓存之前回调(用来在这个窗口里插入方向登记,复现竞态)。</summary>
-            internal static Action<Type>? BuildScannedForTest;
 
             public static DryRunTypeInfo Get(Type featureType)
             {
@@ -439,7 +437,6 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                     if (!args[1].IsGenericType || args[1].GetGenericTypeDefinition() != typeof(DataPort<>)) continue;
                     if (PortMetadataRegistry.ResolveDirection(featureType, pi) != PortDirection.Output) dicts.Add(pi);
                 }
-                BuildScannedForTest?.Invoke(featureType);
                 return new DryRunTypeInfo { DataPorts = ports.ToArray(), InputDictPorts = dicts.ToArray(), Version = version };
             }
         }
