@@ -74,15 +74,28 @@ dotnet run -c Release -- --filter "*" --warmupCount 3 --iterationCount 5
 | Benchmark | Mean | Allocated | 旧数据 (.NET 8) |
 |---|---:|---:|---:|
 | `CreateNode_50Features` (端口扫描走缓存命中) | **3.6 μs** (~70 ns/node) | 14.5 KB | 15-17 μs / 14 KB |
-| `DryRun_50Features` (诊断 50 Feature 的端口冲突 / 未焊接) | **59.5 μs** (~1.2 μs/feature) | 79.3 KB | 110-121 μs / 23 KB |
+| `DryRun_50Features` (诊断 50 Feature 的端口冲突 / 未焊接) | **2.3 μs** (~46 ns/feature) | 2.9 KB | 110-121 μs / 23 KB |
 
 **结论**:
 - §1 的 NodePortCache 让端口扫描收敛到 ConcurrentDictionary 查找 + Node 实例分配,
   ~70ns/node 主要是 Guid 生成 + Properties dict alloc,反射开销几乎消失。
-- §5 的 DryRun 在 50 Feature 蓝图上 ~60μs 一次,可以接受 —— Launcher 入口跑一次诊断,
+- §5 的 DryRun 在 50 Feature 蓝图上 ~2μs 一次 —— Launcher 入口跑一次诊断,
   把"加载成功但黑屏"的隐性故障早期暴露出来,RoI 极高。
-- ⚠️ DryRun 分配从旧记录的 23KB 涨到 79KB(耗时反而降了),原因未查;旧数据不是同一台机器同一提交,
-  需要在同一机器上对比旧提交确认是不是回归。
+- DryRun 曾有一次回归,同机同运行时(.NET 10,旧提交临时改 TFM 编译,InProcess + MemoryDiagnoser)对比:
+
+  | 提交 | DryRun Mean | Allocated |
+  |---|---:|---:|
+  | bba2322(上表 .NET 8 旧数据对应的提交) | 26.9 μs | 22.5 KB |
+  | ef87be9 | 25.4 μs | 22.5 KB |
+  | 0402be0 ~ 3bce488 | 64.8 – 74 μs | 79.3 KB |
+  | 修复后 | **2.3 μs** | **2.9 KB** |
+
+  来源是 0402be0 往 DryRun 新增的 4 项校验(Output 未接 AutoScale、多输入 InputOrder、IncrementalCompute handler、
+  Plot series):每个 Feature 要 Resolve 类型 2 次、`GetProperties` 3 次(每次返回新数组)、`GetCustomAttribute`
+  反复实例化,加上 LINQ 闭包和总会创建的 HashSet。修复按 Feature 类型缓存端口元数据(DataPort 属性 + 方向 +
+  dict 输入端口,`PortMetadataRegistry` 登记变化时失效),三处校验共用,顺带把 bba2322 时代就有的
+  每次反射开销也一并去掉了。诊断结果由 `BlueprintDryRunGoldenTests` 快照锁定,前后逐条一致。
+  (此前本文写过"DryRun 耗时反而降了",那是拿另一台机器上的 .NET 8 旧数做的比较,结论错误,以本表为准。)
 - §8 数组化后 DryRun 不变(在噪声内),证明新格式没拖慢 hot path。
 
 ### §D2.X Python marshalling round-trip ([PythonMarshallingBenchmarks](PythonMarshallingBenchmarks.cs))
@@ -126,7 +139,7 @@ InProcess 让 benchmark 在主进程内跑(共享 PythonEngine 全进程 single-
 | `ExtractSingle: string (单端口典型)` | **≈0 ns** (低于计时分辨率) | **0 B** | - | 5 ns |
 
 **结论**:新数组格式比老 CSV 1.8× 快 + 减 55% 分配 —— 省了一次 `string.Split + Trim + Where` 链的临时对象。
-但绝对值只在几十 ns 量级,落到 50 Feature 蓝图整体 ~60μs 流程里贡献 <5%,优化主要价值在
+但绝对值只在几十 ns 量级,落到 50 Feature 蓝图的加载流程里占比很小,优化主要价值在
 **JSON 可读性 / diff 友好 / AI 生成正确率**,perf 是顺手红利。
 
 ## 总评
@@ -137,7 +150,7 @@ InProcess 让 benchmark 在主进程内跑(共享 PythonEngine 全进程 single-
 | §2 | ctor 编译委托 | 微基准 +1 ns(略慢于 Activator) | ⚠️ 维持代码一致性,无业务收益 |
 | §3 | setter 编译化 | **1.4× faster + 0 alloc**(.NET 8 上 2.1×) | ✅ 蓝图加载阶段 GC 减压 |
 | §4 | Seed 编译委托 | **17.6× faster + 0 alloc** | ✅ 高 Trait 蓝图明显提速 |
-| §5 | DryRun 早期诊断 | 50 Feature ~60μs(分配 79KB 待查) | ✅ 调试时间省分钟级 |
+| §5 | DryRun 早期诊断 | 50 Feature ~2.3μs / 2.9KB(修复 0402be0 回归后) | ✅ 调试时间省分钟级 |
 | §7 | JsonConverter | 2 个 leaf converter 撑住整个 trait 树 | ✅ AI 生成 / diff 友好 |
 | §8 | PortBindings 数组化 | 老 CSV → 新数组,**1.8× faster + 55% 少分配** | ✅ JSON 可读性主升,perf 顺手红利 |
 
