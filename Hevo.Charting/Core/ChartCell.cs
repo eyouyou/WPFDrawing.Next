@@ -495,6 +495,8 @@ namespace Hevo.Charting.Core
         /// 三阶段:① schema.ProjectAll → 让所有 Feature 重算 trait;② 标脏 + 制作 snapshot 喂给 Layer.Update;
         /// ③ 视任务量同步 / 并行执行。Parallel 阈值 ≥3 是经验值,任务太少时多线程 dispatch 反而亏。
         /// </summary>
+        private static bool RequiresUiThread(IChartLayer layer) => layer is ChartLayer { RequiresUiThread: true };
+
         internal void ExecutePipeline(RenderContext ctx, PlotMode mode)
         {
             if (Template is IFeatureProjector projector)
@@ -519,7 +521,9 @@ namespace Hevo.Charting.Core
             // 3. 执行更新 (智能降级)
             if (mode == PlotMode.Parallel && frame.Tasks.Count >= 3)
             {
-                Parallel.ForEach(frame.Tasks, t => t.Layer.Update(t.DataSnapshot));
+                // 线程亲和的图层(OnUpdate 直接改 WPF 控件,如 TooltipWidgetLayer)不能进线程池,留在 UI 线程录制。
+                Parallel.ForEach(frame.Tasks, t => { if (!RequiresUiThread(t.Layer)) t.Layer.Update(t.DataSnapshot); });
+                foreach (var t in frame.Tasks) if (RequiresUiThread(t.Layer)) t.Layer.Update(t.DataSnapshot);
             }
             else
             {

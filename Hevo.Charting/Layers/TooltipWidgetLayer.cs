@@ -118,6 +118,9 @@ namespace Hevo.Charting.Layers
             };
         }
 
+        // OnUpdate 直接改 Border / TextBlock 等 WPF 控件,必须在 UI 线程。
+        protected internal override bool RequiresUiThread => true;
+
         private Size _cachedSize = Size.Empty;
         private HevoPoint _lastAnchor = new HevoPoint(-1f, -1f); // 💥 使用 HevoPoint
 

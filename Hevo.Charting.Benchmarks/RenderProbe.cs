@@ -680,13 +680,21 @@ namespace Hevo.Charting.Benchmarks
             }
             content.Width = opt.WindowWidth;
             content.Height = opt.WindowHeight;
+            content.HorizontalAlignment = HorizontalAlignment.Left;
+            content.VerticalAlignment = VerticalAlignment.Top;
+
+            // 外面再套一层定尺寸的宿主:Resize 场景只改图表宽度,窗口(HWND)尺寸不变。
+            // 否则 SizeToContent 会跟着缩窗口,WM_SIZE 里 WPF 同步跑一次渲染,
+            // CompositionTarget.Rendering 回调就在"输入"阶段把这一帧做掉,RunFrameNow 测到的是空帧。
+            var host = new System.Windows.Controls.Grid { Width = opt.WindowWidth, Height = opt.WindowHeight };
+            host.Children.Add(content);
 
             var window = new Window
             {
                 Title = "Hevo render probe",
                 SizeToContent = SizeToContent.WidthAndHeight,
                 ResizeMode = ResizeMode.NoResize,
-                Content = content,
+                Content = host,
                 WindowStartupLocation = WindowStartupLocation.CenterScreen,
             };
             window.Show();

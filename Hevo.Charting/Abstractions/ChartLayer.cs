@@ -121,6 +121,12 @@ namespace Hevo.Charting.Abstractions
             IsDirty = true;
         }
 
+        /// <summary>
+        /// OnUpdate 是否必须在 UI 线程执行(直接读写 WPF 控件 / DependencyObject 的图层返回 true)。
+        /// PlotMode.Parallel 下这类图层不进线程池,留在 UI 线程录制。
+        /// </summary>
+        protected internal virtual bool RequiresUiThread => false;
+
         internal VisualDependencyTracker DependencyTracker { get; } = new();
 
         // 💥 是否已经被局部唤醒并完成了第一次采样？
