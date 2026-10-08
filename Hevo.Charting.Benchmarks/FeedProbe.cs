@@ -235,7 +235,7 @@ namespace Hevo.Charting.Benchmarks
         internal sealed record FeedRun(
             string Label, int TargetRate, double Seconds, long Pushed, double PushRate, long Delivered, int Frames,
             double FrameRate, List<double> LatencyMs, double AllocMBps, double Gen0ps, double Gen1ps, double Gen2ps,
-            double CpuPct, List<double>? ComputeMs, int Indicators = 0);
+            double CpuPct, List<double>? ComputeMs, int Indicators = 0, double GcPauseMsPerSec = 0, double WorkingSetMB = 0);
 
         private sealed class Rig : IDisposable
         {
@@ -330,6 +330,7 @@ namespace Hevo.Charting.Benchmarks
             var proc = Process.GetCurrentProcess();
             int g0 = GC.CollectionCount(0), g1 = GC.CollectionCount(1), g2 = GC.CollectionCount(2);
             long alloc0 = GC.GetTotalAllocatedBytes(false);
+            var pause0 = GC.GetTotalPauseDuration();
             var cpu0 = proc.TotalProcessorTime;
             long pushed0 = Interlocked.Read(ref pushed);
             measureStartTicks = Stopwatch.GetTimestamp();
@@ -350,6 +351,8 @@ namespace Hevo.Charting.Benchmarks
             proc.Refresh();
             var cpu = (proc.TotalProcessorTime - cpu0).TotalSeconds / elapsed / Environment.ProcessorCount * 100;
             long alloc = GC.GetTotalAllocatedBytes(false) - alloc0;
+            double pauseMs = (GC.GetTotalPauseDuration() - pause0).TotalMilliseconds;
+            double wsMB = proc.WorkingSet64 / (1024.0 * 1024);
             int d0 = GC.CollectionCount(0) - g0, d1 = GC.CollectionCount(1) - g1, d2 = GC.CollectionCount(2) - g2;
 
             stop.Set();
@@ -359,13 +362,14 @@ namespace Hevo.Charting.Benchmarks
 
             return new FeedRun(label, rate, elapsed, pushedDuring, pushedDuring / elapsed, latencies.Count - latCountAtStart, frames,
                 frames / elapsed, latencies, alloc / elapsed / (1024 * 1024), d0 / elapsed, d1 / elapsed, d2 / elapsed, cpu,
-                computeSnapshot);
+                computeSnapshot, 0, pauseMs / elapsed, wsMB);
         }
 
         // ── Feed:C# SMA,100 / 500 / 1000 tick/s ───────────────────────────────
 
         public static SuiteResult RunFeed(ProbeOptions opt)
         {
+            ProbeFeedSource.SeedBars = opt.FeedBars;
             var runs = new List<FeedRun>();
             using (var rig = CreateRig(opt))
             {
@@ -378,7 +382,8 @@ namespace Hevo.Charting.Benchmarks
                         $"[feed] {rate}/s:交付 {r.Delivered} tick / {r.Frames} 帧,延迟中位 {Stats.Percentile(r.LatencyMs, 0.5):F1} ms"));
                 }
             }
-            return Report("Feed", "数据源链路(DataSource → pipe Ingestor → RequestUpdate → ComputeFeature SMA → 上屏)", runs);
+            string loh = Environment.GetEnvironmentVariable("DOTNET_GCLOHThreshold") is { Length: > 0 } t ? t : "默认(85000)";
+            return Report("Feed", $"数据源链路(DataSource → pipe Ingestor → RequestUpdate → ComputeFeature SMA → 上屏),{opt.FeedBars} 根,LOH 阈值 {loh}", runs);
         }
 
         // ── PyFeed:N 个 Python 指标同时挂在 Close 上 ──────────────────────────
@@ -533,8 +538,8 @@ namespace Hevo.Charting.Benchmarks
             md.AppendLine();
             md.AppendLine("真窗口 + CompositionTarget 渲染节奏(不手动跑帧);延迟 = tick 推入 → 含该 tick 的那一帧 UI 线程做完,不含渲染线程合成。");
             md.AppendLine();
-            md.AppendLine("| 负载 | 实际推送(tick/s) | 交付 tick | 帧/s | tick/帧 | 延迟中位(ms) | P95 | P99 | 最大 | 分配(MB/s) | GC 0/1/2 每秒 | CPU(%,全核) | 指标单次调用 中位/P95(ms) | 指标完成次数 / (tick×指标数) |");
-            md.AppendLine("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+            md.AppendLine("| 负载 | 实际推送(tick/s) | 交付 tick | 帧/s | tick/帧 | 延迟中位(ms) | P95 | P99 | 最大 | 分配(MB/s) | GC 0/1/2 每秒 | GC 暂停(ms/s) | 工作集(MB) | CPU(%,全核) | 指标单次调用 中位/P95(ms) | 指标完成次数 / (tick×指标数) |");
+            md.AppendLine("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
             foreach (var r in runs)
             {
                 string compute = r.ComputeMs is { Count: > 0 } c
@@ -547,7 +552,7 @@ namespace Hevo.Charting.Benchmarks
                 md.AppendLine(string.Create(CultureInfo.InvariantCulture,
                     $"| {r.Label} | {r.PushRate:F0} | {r.Delivered} | {r.FrameRate:F1} | {(r.Frames > 0 ? (double)r.Delivered / r.Frames : 0):F1} | " +
                     $"{Stats.Percentile(r.LatencyMs, 0.5):F1} | {Stats.Percentile(r.LatencyMs, 0.95):F1} | {Stats.Percentile(r.LatencyMs, 0.99):F1} | " +
-                    $"{(r.LatencyMs.Count > 0 ? r.LatencyMs.Max() : double.NaN):F1} | {r.AllocMBps:F1} | {r.Gen0ps:F2}/{r.Gen1ps:F2}/{r.Gen2ps:F2} | {r.CpuPct:F1} | {compute} | {keepUp} |"));
+                    $"{(r.LatencyMs.Count > 0 ? r.LatencyMs.Max() : double.NaN):F1} | {r.AllocMBps:F1} | {r.Gen0ps:F2}/{r.Gen1ps:F2}/{r.Gen2ps:F2} | {r.GcPauseMsPerSec:F2} | {r.WorkingSetMB:F0} | {r.CpuPct:F1} | {compute} | {keepUp} |"));
             }
             var csv = new StringBuilder("suite,label,target_rate,latency_ms\n");
             foreach (var r in runs)
@@ -563,6 +568,7 @@ namespace Hevo.Charting.Benchmarks
                     p99 = Math.Round(Stats.Percentile(r.LatencyMs, 0.99), 3),
                 },
                 allocMBps = Math.Round(r.AllocMBps, 2), gcPerSec = new[] { r.Gen0ps, r.Gen1ps, r.Gen2ps }, cpuPct = Math.Round(r.CpuPct, 1),
+                gcPauseMsPerSec = Math.Round(r.GcPauseMsPerSec, 3), workingSetMB = Math.Round(r.WorkingSetMB, 1),
                 computeMs = r.ComputeMs is { Count: > 0 } cm
                     ? new { p50 = Math.Round(Stats.Percentile(cm, 0.5), 3), p95 = Math.Round(Stats.Percentile(cm, 0.95), 3) }
                     : null,

@@ -205,7 +205,7 @@ dotnet run -c Release -- --render-probe --scenarios=Hover,Zoom --rounds=10 --out
 | `--ci` | | CI 预设:只跑 `inc`,全部逐帧场景(含扩展)120 帧 × 1 轮,图表区 960x540,无 Startup / 套件 |
 | `--alloc-types` | | 进程内订阅 GCAllocationTick,按类型 + SOH/LOH 汇总每帧分配(UI 线程,含脚本输入),追加到 `.md`。用来查"分配/帧"的大头 |
 | `--heavy-layers=` / `--heavy-ms=` | 0 / 1 | 每张图额外挂 N 个人为加重的图层(每层录制忙等 X ms,纯 CPU),测 `PlotMode.Parallel` 用 |
-| `--feed-rates=` / `--feed-seconds=` | 100,500,1000 / 5 | `Feed` 套件的推送频率(tick/s)与每档测量秒数 |
+| `--feed-rates=` / `--feed-seconds=` / `--feed-bars=` | 100,500,1000 / 5 / 2000 | `Feed` 套件的推送频率(tick/s)、每档测量秒数、历史 K 线根数;表里另报 GC 暂停(ms/s)与工作集,环境变量 `DOTNET_GCLOHThreshold` 会写进标题 |
 | `--py-indicators=` / `--py-rate=` | 1,4,8 / 100 | `PyFeed` 套件同时挂的 Python 指标数、推送频率 |
 | `--blueprint-runs=` | 5 | `Blueprint` 套件冷启动之后的热启动次数 |
 | `--soak-minutes=` / `--soak-rate=` | 10 / 100 | `Soak` 长跑分钟数、推送频率(CI 不跑) |
