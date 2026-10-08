@@ -1,0 +1,50 @@
+## mixed
+Error | BP_UNREGISTERED_TYPE | NoSuchTrait_Golden |  | Trait 类型未在 ComponentRegistry 登记,蓝图加载将抛异常
+Error | BP_UNREGISTERED_TYPE | TotallyMadeUpFeature_Golden |  | Feature 类型未在 ComponentRegistry 登记,蓝图加载将抛异常
+Warning | BP_PORT_TYPE_MISMATCH |  | shared_id | 端口类型冲突: 已被 LineSeriesFeature.YRangePort 注册为 RealRange, LineSeriesFeature.DataPort 试图重连为 ReadOnlyMemory`1,运行时将 skip 后者 → 数据流断开
+Warning | BP_PYHANDLER_INPUT_UNCONNECTED | ComputeFeature | Inputs.low | InputOrder 声明 'low' 但 PortBindings 缺 'Inputs.low' 焊接 — 运行时该输入端口为 null,装配会跳过当前节点。
+Warning | BP_PYHANDLER_INPUT_UNCONNECTED | ComputeFeature | Inputs.close | InputOrder 声明 'close' 但 PortBindings 缺 'Inputs.close' 焊接 — 运行时该输入端口为 null,装配会跳过当前节点。
+Warning | BP_OUTPUT_PORT_UNBOUND | UniversalAutoScaleFeature | YRangePort | Output 端口未在 OutputBindings 中焊接 → 运行时下游 Watch 拿到 null 触发 NRE 静默吞 → 黑屏
+Warning | BP_OUTPUT_PORT_UNBOUND | UniversalAutoScaleFeature | BaseLinePort | Output 端口未在 OutputBindings 中焊接 → 运行时下游 Watch 拿到 null 触发 NRE 静默吞 → 黑屏
+Warning | BP_OUTPUT_PORT_UNBOUND | UniversalAutoScaleFeature | RawExtremaPort | Output 端口未在 OutputBindings 中焊接 → 运行时下游 Watch 拿到 null 触发 NRE 静默吞 → 黑屏
+Warning | BP_PYHANDLER_INPUT_ORDER_MISSING | ComputeFeature | Inputs | PortBindings 含 nested key 'Inputs.*' 但 Properties.InputOrder 未声明 — 运行时无法确定调 Compute 委托的形参顺序,装配会跳过。
+Warning | BP_PYHANDLER_INCREMENTAL_NOT_STATEFUL | IncrementalComputeFeature | Compute | IncrementalComputeFeature.Compute 引用的 handler 'wrong_handler' 返回 ReadOnlyMemory`1 而非 ValueTuple<,> — 增量协议要求 handler 签名 (input, prev_state) -> (output, next_state),运行时该 feature 装配会跳过。
+Warning | BP_OUTPUT_PORT_UNBOUND | PlotFeature | HitStatePort | Output 端口未在 OutputBindings 中焊接 → 运行时下游 Watch 拿到 null 触发 NRE 静默吞 → 黑屏
+Error | BP_PLOT_KIND_UNKNOWN | PlotFeature | Series[0].Kind | Series[0].Kind 'scatterz' 不支持(line / bar / scatter / arrow_markers)
+Warning | BP_PLOT_DOMAIN_MISMATCH | PlotFeature | Series[1].XDomain/YDomain | arrow_markers 永远 inherit 主图 axes,XDomain/YDomain 配置会被忽略。
+Warning | BP_HANDLER_NOT_REGISTERED | DataPagingFeature | OnRequireDataAsync | Delegate 属性引用 handler 'on_require_paging_data' 但 BlueprintHandlerRegistry 未注册,运行时该字段会被 skip
+Warning | BP_OUTPUT_NOT_SCALED | ComputeFeature | OutputPort | 输出端口 'indicator_out' 已接到 LineSeries/BarSeries,但未接到任何 UniversalAutoScale.ValuePorts —— Y 范围不会包含此指标输出,可能在画布外被裁掉。请把它也接进 ValuePorts(fan-in 数组,可加多源)。
+Warning | BP_TRIGGER_UNKNOWN_KIND | on_cron |  | Trigger Kind 'Cron' 未支持(目前只有 Interval),运行时跳过
+Warning | BP_TRIGGER_BAD_INTERVAL | on_zero |  | Interval=0s 非法,需 >0
+Warning | BP_TRIGGER_HANDLER_MISSING | on_missing |  | Trigger handler 'on_missing' 未在 BlueprintHandlerRegistry 注册,运行时跳过
+## mixed-no-handlers
+Error | BP_UNREGISTERED_TYPE | NoSuchTrait_Golden |  | Trait 类型未在 ComponentRegistry 登记,蓝图加载将抛异常
+Error | BP_UNREGISTERED_TYPE | TotallyMadeUpFeature_Golden |  | Feature 类型未在 ComponentRegistry 登记,蓝图加载将抛异常
+Warning | BP_PORT_TYPE_MISMATCH |  | shared_id | 端口类型冲突: 已被 LineSeriesFeature.YRangePort 注册为 RealRange, LineSeriesFeature.DataPort 试图重连为 ReadOnlyMemory`1,运行时将 skip 后者 → 数据流断开
+Warning | BP_PYHANDLER_INPUT_UNCONNECTED | ComputeFeature | Inputs.low | InputOrder 声明 'low' 但 PortBindings 缺 'Inputs.low' 焊接 — 运行时该输入端口为 null,装配会跳过当前节点。
+Warning | BP_PYHANDLER_INPUT_UNCONNECTED | ComputeFeature | Inputs.close | InputOrder 声明 'close' 但 PortBindings 缺 'Inputs.close' 焊接 — 运行时该输入端口为 null,装配会跳过当前节点。
+Warning | BP_OUTPUT_PORT_UNBOUND | UniversalAutoScaleFeature | YRangePort | Output 端口未在 OutputBindings 中焊接 → 运行时下游 Watch 拿到 null 触发 NRE 静默吞 → 黑屏
+Warning | BP_OUTPUT_PORT_UNBOUND | UniversalAutoScaleFeature | BaseLinePort | Output 端口未在 OutputBindings 中焊接 → 运行时下游 Watch 拿到 null 触发 NRE 静默吞 → 黑屏
+Warning | BP_OUTPUT_PORT_UNBOUND | UniversalAutoScaleFeature | RawExtremaPort | Output 端口未在 OutputBindings 中焊接 → 运行时下游 Watch 拿到 null 触发 NRE 静默吞 → 黑屏
+Warning | BP_PYHANDLER_INPUT_ORDER_MISSING | ComputeFeature | Inputs | PortBindings 含 nested key 'Inputs.*' 但 Properties.InputOrder 未声明 — 运行时无法确定调 Compute 委托的形参顺序,装配会跳过。
+Warning | BP_HANDLER_NOT_REGISTERED | IncrementalComputeFeature | Compute | Delegate 属性引用 handler 'wrong_handler' 但 BlueprintHandlerRegistry 未注册,运行时该字段会被 skip
+Warning | BP_OUTPUT_PORT_UNBOUND | PlotFeature | HitStatePort | Output 端口未在 OutputBindings 中焊接 → 运行时下游 Watch 拿到 null 触发 NRE 静默吞 → 黑屏
+Error | BP_PLOT_KIND_UNKNOWN | PlotFeature | Series[0].Kind | Series[0].Kind 'scatterz' 不支持(line / bar / scatter / arrow_markers)
+Warning | BP_PLOT_DOMAIN_MISMATCH | PlotFeature | Series[1].XDomain/YDomain | arrow_markers 永远 inherit 主图 axes,XDomain/YDomain 配置会被忽略。
+Warning | BP_HANDLER_NOT_REGISTERED | DataPagingFeature | OnRequireDataAsync | Delegate 属性引用 handler 'on_require_paging_data' 但 BlueprintHandlerRegistry 未注册,运行时该字段会被 skip
+Warning | BP_OUTPUT_NOT_SCALED | ComputeFeature | OutputPort | 输出端口 'indicator_out' 已接到 LineSeries/BarSeries,但未接到任何 UniversalAutoScale.ValuePorts —— Y 范围不会包含此指标输出,可能在画布外被裁掉。请把它也接进 ValuePorts(fan-in 数组,可加多源)。
+Warning | BP_TRIGGER_UNKNOWN_KIND | on_cron |  | Trigger Kind 'Cron' 未支持(目前只有 Interval),运行时跳过
+Warning | BP_TRIGGER_BAD_INTERVAL | on_zero |  | Interval=0s 非法,需 >0
+Warning | BP_TRIGGER_HANDLER_MISSING | on_heartbeat |  | Trigger handler 'on_heartbeat' 未在 BlueprintHandlerRegistry 注册,运行时跳过
+Warning | BP_TRIGGER_HANDLER_MISSING | on_missing |  | Trigger handler 'on_missing' 未在 BlueprintHandlerRegistry 注册,运行时跳过
+## builtin-unbound
+Warning | BP_OUTPUT_PORT_UNBOUND | UniversalAutoScaleFeature | YRangePort | Output 端口未在 OutputBindings 中焊接 → 运行时下游 Watch 拿到 null 触发 NRE 静默吞 → 黑屏
+Warning | BP_OUTPUT_PORT_UNBOUND | UniversalAutoScaleFeature | BaseLinePort | Output 端口未在 OutputBindings 中焊接 → 运行时下游 Watch 拿到 null 触发 NRE 静默吞 → 黑屏
+Warning | BP_OUTPUT_PORT_UNBOUND | UniversalAutoScaleFeature | RawExtremaPort | Output 端口未在 OutputBindings 中焊接 → 运行时下游 Watch 拿到 null 触发 NRE 静默吞 → 黑屏
+Warning | BP_OUTPUT_PORT_UNBOUND | ChartInteractionFeature | PointerHitPort | Output 端口未在 OutputBindings 中焊接 → 运行时下游 Watch 拿到 null 触发 NRE 静默吞 → 黑屏
+Warning | BP_OUTPUT_PORT_UNBOUND | ComputeFeature | OutputPort | Output 端口未在 OutputBindings 中焊接 → 运行时下游 Watch 拿到 null 触发 NRE 静默吞 → 黑屏
+Warning | BP_OUTPUT_PORT_UNBOUND | IncrementalComputeFeature | OutputPort | Output 端口未在 OutputBindings 中焊接 → 运行时下游 Watch 拿到 null 触发 NRE 静默吞 → 黑屏
+Warning | BP_OUTPUT_PORT_UNBOUND | PlotFeature | HitStatePort | Output 端口未在 OutputBindings 中焊接 → 运行时下游 Watch 拿到 null 触发 NRE 静默吞 → 黑屏
+## dashboard:main
+## dashboard:volume
+## dashboard:strategy

@@ -18,10 +18,15 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
         // (类型, 属性名) → 端口注释覆盖
         private static readonly Dictionary<(Type, string), string> _description = new();
 
+        /// <summary>方向登记每变一次 +1。按类型缓存了方向的调用方(BlueprintLauncher.DryRun)据此判断缓存是否过期。</summary>
+        public static int DirectionVersion => _directionVersion;
+        private static int _directionVersion;
+
         /// <summary>批量登记某类型的某些属性为 Output 端口。</summary>
         public static void RegisterOutputs(Type type, params string[] propertyNames)
         {
             foreach (var n in propertyNames) _direction[(type, n)] = PortDirection.Output;
+            Interlocked.Increment(ref _directionVersion);
         }
 
         /// <summary>泛型快捷:<c>RegisterOutputs&lt;UniversalAutoScaleFeature&gt;("YRangePort", ...)</c>。</summary>

@@ -199,12 +199,20 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                 }
             }
 
-            // Feature 逐个校验
-            foreach (var f in blueprint.Features)
+            // 每个 Feature 的类型只 Resolve 一次,主循环和 CheckOutputAutoScaleCoverage 共用(未登记的为 null)
+            var featureTypes = new Type?[blueprint.Features.Count];
+            for (int i = 0; i < featureTypes.Length; i++)
             {
-                Type? featureType = null;
-                try { featureType = ComponentRegistry.Resolve(f.TypeName); }
-                catch
+                try { featureTypes[i] = ComponentRegistry.Resolve(blueprint.Features[i].TypeName); }
+                catch { featureTypes[i] = null; }
+            }
+
+            // Feature 逐个校验
+            for (int fi = 0; fi < blueprint.Features.Count; fi++)
+            {
+                var f = blueprint.Features[fi];
+                Type? featureType = featureTypes[fi];
+                if (featureType == null)
                 {
                     diagnostics.Add(new BlueprintDiagnostic
                     {
@@ -218,12 +226,12 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
 
                 // Output 端口必须有 binding(参考 低代码.md §8.1 "GraphSerializer 漏写 OUTPUT 端口绑定"坑)
                 // nested dict Output(如 SeriesOutputs)用 StartsWith 前缀覆盖检查。
-                foreach (var pi in featureType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                var typeInfo = DryRunTypeInfo.Get(featureType);
+                foreach (var port in typeInfo.DataPorts)
                 {
-                    if (!IsDataPortProperty(pi, out var portValueType, out _)) continue;
-                    if (PortMetadataRegistry.ResolveDirection(featureType, pi) != PortDirection.Output) continue;
-                    if (!f.OutputBindings.ContainsKey(pi.Name)
-                        && !f.OutputBindings.Keys.Any(k => k.StartsWith(pi.Name + ".", StringComparison.Ordinal)))
+                    if (port.Direction != PortDirection.Output) continue;
+                    var pi = port.Property;
+                    if (!f.OutputBindings.ContainsKey(pi.Name) && !HasNestedKey(f.OutputBindings, pi.Name))
                     {
                         diagnostics.Add(new BlueprintDiagnostic
                         {
@@ -239,43 +247,8 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                 // 类型一致性 —— 用 binding 标注的 globalId,反向校验跟已注册端口类型是否吻合。
                 // §D2.X 多输入指标 nested key 形如 "Inputs.high":拆 ParentField + ChildKey,
                 // 反查 Feature 上 Dictionary<string, DataPort<T>> 字段,取 value type 校验。
-                foreach (var b in f.InputBindings.Concat(f.OutputBindings))
-                {
-                    int dotIdx = b.Key.IndexOf('.');
-                    if (dotIdx > 0)
-                    {
-                        var parent = b.Key.Substring(0, dotIdx);
-                        var child  = b.Key.Substring(dotIdx + 1);
-                        var pp = featureType.GetProperty(parent,
-                            BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
-                        if (pp == null) continue;
-                        var pt = pp.PropertyType;
-                        if (!pt.IsGenericType || pt.GetGenericTypeDefinition() != typeof(Dictionary<,>)) continue;
-                        var dictArgs = pt.GetGenericArguments();
-                        if (dictArgs[0] != typeof(string)) continue;
-                        if (!dictArgs[1].IsGenericType || dictArgs[1].GetGenericTypeDefinition() != typeof(DataPort<>)) continue;
-                        var nestedExpected = dictArgs[1].GetGenericArguments()[0];
-                        var id = PortBindingValue.ExtractSingle(b.Value);
-                        if (!string.IsNullOrEmpty(id))
-                            RegisterPortType(portTypes, id, nestedExpected, $"{f.TypeName}.{b.Key}", diagnostics);
-                        continue;
-                    }
-
-                    var pi = featureType.GetProperty(b.Key,
-                        BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
-                    if (pi == null) continue;
-                    if (!IsDataPortProperty(pi, out var expected, out var isArray)) continue;
-
-                    // PortBindingValue 统一识别 string / list / JSON array / CSV。
-                    var ids = isArray
-                        ? PortBindingValue.ExtractList(b.Value)
-                        : (IReadOnlyList<string>)new[] { PortBindingValue.ExtractSingle(b.Value) };
-                    foreach (var id in ids)
-                    {
-                        if (string.IsNullOrEmpty(id)) continue;
-                        RegisterPortType(portTypes, id, expected, $"{f.TypeName}.{b.Key}", diagnostics);
-                    }
-                }
+                CheckBindingTypes(f, featureType, f.InputBindings, portTypes, diagnostics);
+                CheckBindingTypes(f, featureType, f.OutputBindings, portTypes, diagnostics);
 
                 // §D2.X InputOrder 一致性校验 —— 多输入路径下,Feature 上有 Dictionary<string, DataPort<T>>
                 // 字段且 PortBindings 含 nested key,InputOrder 数组里每个名字必须有对应 PortBindings。
@@ -289,32 +262,14 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
 
                 // Delegate 属性的 handler 名引用 —— Properties 里 string 值指向 Delegate 类型属性时,
                 // 必须有同名 handler 注册过,否则运行时 ResolveHandlerReferences 会 silent skip → 黑屏。
-                foreach (var p in f.Properties)
-                {
-                    if (p.Value is not string handlerName || string.IsNullOrEmpty(handlerName)) continue;
-                    var pi = featureType.GetProperty(p.Key,
-                        BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
-                    if (pi == null) continue;
-                    if (!typeof(Delegate).IsAssignableFrom(pi.PropertyType)) continue;
-                    if (handlers == null || !handlers.Contains(handlerName))
-                    {
-                        diagnostics.Add(new BlueprintDiagnostic
-                        {
-                            Severity = BlueprintDiagnosticSeverity.Warning,
-                            Code = "BP_HANDLER_NOT_REGISTERED",
-                            FeatureTypeName = f.TypeName,
-                            PortName = p.Key,
-                            Message = $"Delegate 属性引用 handler '{handlerName}' 但 BlueprintHandlerRegistry 未注册,运行时该字段会被 skip",
-                        });
-                    }
-                }
+                CheckDelegateHandlers(f, featureType, handlers, diagnostics);
             }
 
             // §D2.5.E2E PyCompute / 任何"中间计算节点"的 ROM<double> 输出 → 必须连到 AutoScale.ValuePorts,
             // 否则 Y 范围只看其他 series,该指标输出可能完全在画布外被裁掉。
             // 检测:对每个 ROM<double> 输出端口,如果它的 globalId 被某 LineSeries.DataPort/BarSeries.DataPort
             // 消费,但 *没* 被任何 UniversalAutoScale.ValuePorts 消费 → 警告 BP_OUTPUT_NOT_SCALED。
-            CheckOutputAutoScaleCoverage(blueprint, diagnostics);
+            CheckOutputAutoScaleCoverage(blueprint, featureTypes, diagnostics);
 
             // Triggers 的 handler 引用校验 —— 协议扩展 §K
             foreach (var trig in blueprint.Triggers)
@@ -354,6 +309,132 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
             }
 
             return new BlueprintLaunchResult { Error = null, Diagnostics = diagnostics };
+        }
+
+        // 类型一致性 —— 用 binding 标注的 globalId,反向校验跟已注册端口类型是否吻合。
+        // §D2.X 多输入指标 nested key 形如 "Inputs.high":拆 ParentField + ChildKey,
+        // 反查 Feature 上 Dictionary<string, DataPort<T>> 字段,取 value type 校验。
+        private static void CheckBindingTypes(
+            FeatureModel f, Type featureType, Dictionary<string, object?> bindings,
+            Dictionary<string, (Type Type, string Source)> portTypes, List<BlueprintDiagnostic> diagnostics)
+        {
+            foreach (var b in bindings)
+            {
+                int dotIdx = b.Key.IndexOf('.');
+                if (dotIdx > 0)
+                {
+                    var parent = b.Key.Substring(0, dotIdx);
+                    var child  = b.Key.Substring(dotIdx + 1);
+                    var pp = featureType.GetProperty(parent,
+                        BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+                    if (pp == null) continue;
+                    var pt = pp.PropertyType;
+                    if (!pt.IsGenericType || pt.GetGenericTypeDefinition() != typeof(Dictionary<,>)) continue;
+                    var dictArgs = pt.GetGenericArguments();
+                    if (dictArgs[0] != typeof(string)) continue;
+                    if (!dictArgs[1].IsGenericType || dictArgs[1].GetGenericTypeDefinition() != typeof(DataPort<>)) continue;
+                    var nestedExpected = dictArgs[1].GetGenericArguments()[0];
+                    var id = PortBindingValue.ExtractSingle(b.Value);
+                    if (!string.IsNullOrEmpty(id))
+                        RegisterPortType(portTypes, id, nestedExpected, $"{f.TypeName}.{b.Key}", diagnostics);
+                    continue;
+                }
+
+                var pi = featureType.GetProperty(b.Key,
+                    BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+                if (pi == null) continue;
+                if (!IsDataPortProperty(pi, out var expected, out var isArray)) continue;
+
+                // PortBindingValue 统一识别 string / list / JSON array / CSV。
+                var ids = isArray
+                    ? PortBindingValue.ExtractList(b.Value)
+                    : (IReadOnlyList<string>)new[] { PortBindingValue.ExtractSingle(b.Value) };
+                foreach (var id in ids)
+                {
+                    if (string.IsNullOrEmpty(id)) continue;
+                    RegisterPortType(portTypes, id, expected, $"{f.TypeName}.{b.Key}", diagnostics);
+                }
+            }
+        }
+
+        private static void CheckDelegateHandlers(
+            FeatureModel f, Type featureType, BlueprintHandlerRegistry? handlers, List<BlueprintDiagnostic> diagnostics)
+        {
+            foreach (var p in f.Properties)
+            {
+                if (p.Value is not string handlerName || string.IsNullOrEmpty(handlerName)) continue;
+                var pi = featureType.GetProperty(p.Key,
+                    BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+                if (pi == null) continue;
+                if (!typeof(Delegate).IsAssignableFrom(pi.PropertyType)) continue;
+                if (handlers == null || !handlers.Contains(handlerName))
+                {
+                    diagnostics.Add(new BlueprintDiagnostic
+                    {
+                        Severity = BlueprintDiagnosticSeverity.Warning,
+                        Code = "BP_HANDLER_NOT_REGISTERED",
+                        FeatureTypeName = f.TypeName,
+                        PortName = p.Key,
+                        Message = $"Delegate 属性引用 handler '{handlerName}' 但 BlueprintHandlerRegistry 未注册,运行时该字段会被 skip",
+                    });
+                }
+            }
+        }
+
+        // OutputBindings 里有没有 "{name}.xxx" 形态的 nested key(nested dict Output 如 SeriesOutputs 用前缀覆盖)
+        private static bool HasNestedKey(Dictionary<string, object?> bindings, string name)
+        {
+            foreach (var k in bindings.Keys)
+                if (k.Length > name.Length && k[name.Length] == '.' && k.StartsWith(name, StringComparison.Ordinal)) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// DryRun 按 Feature 类型缓存的端口元数据:DataPort 属性(按 GetProperties 顺序,含值类型 / 是否数组 / 方向)
+        /// 和 Dictionary&lt;string, DataPort&lt;T&gt;&gt; 输入字段。三处校验共用,免得每个 Feature 反复 GetProperties
+        /// (每次都返回新数组)和 GetCustomAttribute。方向依赖 PortMetadataRegistry,登记变化时整表失效重建。
+        /// </summary>
+        private sealed class DryRunTypeInfo
+        {
+            public readonly record struct Port(PropertyInfo Property, Type ValueType, bool IsArray, PortDirection Direction);
+
+            public Port[] DataPorts { get; private init; } = Array.Empty<Port>();
+            public PropertyInfo[] InputDictPorts { get; private init; } = Array.Empty<PropertyInfo>();
+
+            private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, DryRunTypeInfo> s_cache = new();
+            private static int s_version = -1;
+
+            public static DryRunTypeInfo Get(Type featureType)
+            {
+                int v = PortMetadataRegistry.DirectionVersion;
+                if (v != Volatile.Read(ref s_version))
+                {
+                    s_cache.Clear();
+                    Volatile.Write(ref s_version, v);
+                }
+                return s_cache.GetOrAdd(featureType, Build);
+            }
+
+            private static DryRunTypeInfo Build(Type featureType)
+            {
+                var ports = new List<Port>();
+                var dicts = new List<PropertyInfo>();
+                foreach (var pi in featureType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    if (IsDataPortProperty(pi, out var valueType, out var isArray))
+                    {
+                        ports.Add(new Port(pi, valueType, isArray, PortMetadataRegistry.ResolveDirection(featureType, pi)));
+                        continue;
+                    }
+                    var pt = pi.PropertyType;
+                    if (!pt.IsGenericType || pt.GetGenericTypeDefinition() != typeof(Dictionary<,>)) continue;
+                    var args = pt.GetGenericArguments();
+                    if (args[0] != typeof(string)) continue;
+                    if (!args[1].IsGenericType || args[1].GetGenericTypeDefinition() != typeof(DataPort<>)) continue;
+                    if (PortMetadataRegistry.ResolveDirection(featureType, pi) != PortDirection.Output) dicts.Add(pi);
+                }
+                return new DryRunTypeInfo { DataPorts = ports.ToArray(), InputDictPorts = dicts.ToArray() };
+            }
         }
 
         private static bool IsDataPortProperty(PropertyInfo pi, out Type valueType, out bool isArray)
@@ -408,17 +489,18 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
         // §D2.5.E2E "Output 没接 AutoScale" 警告 ——  PyComputeFeature / ComputeNodeFeature 等
         // 中间节点的 ROM<double> 输出如果只接到 LineSeries.DataPort 而不接 UniversalAutoScale.ValuePorts,
         // Y 范围只看其他 series,该指标在画布外被裁掉(典型坑见低代码.md §8 + 用户反馈)。
-        private static void CheckOutputAutoScaleCoverage(ChartBlueprint blueprint, List<BlueprintDiagnostic> diagnostics)
+        private static void CheckOutputAutoScaleCoverage(ChartBlueprint blueprint, Type?[] featureTypes, List<BlueprintDiagnostic> diagnostics)
         {
             // 1. 收集所有 UniversalAutoScale.ValuePorts 引用的 globalId 集合
-            var autoScaleValueIds = new HashSet<string>(StringComparer.Ordinal);
             // 2. 收集所有"消费 ROM<double> 的 series 节点"(LineSeries / BarSeries 等)的 DataPort 引用 id
-            var seriesConsumeIds = new HashSet<string>(StringComparer.Ordinal);
+            // 两个集合按需创建:没有 series 消费者时第 3 步不可能报警,直接返回。
+            HashSet<string>? autoScaleValueIds = null;
+            HashSet<string>? seriesConsumeIds = null;
 
-            foreach (var f in blueprint.Features)
+            for (int fi = 0; fi < blueprint.Features.Count; fi++)
             {
-                Type? ft;
-                try { ft = ComponentRegistry.Resolve(f.TypeName); } catch { continue; }
+                var f = blueprint.Features[fi];
+                var ft = featureTypes[fi];
                 if (ft == null) continue;
 
                 bool isAutoScale = ft.Name == "UniversalAutoScaleFeature"
@@ -431,34 +513,35 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
                 if (isAutoScale && f.InputBindings.TryGetValue("ValuePorts", out var vpBinding))
                 {
                     foreach (var id in PortBindingValue.ExtractList(vpBinding))
-                        if (!string.IsNullOrEmpty(id)) autoScaleValueIds.Add(id);
+                        if (!string.IsNullOrEmpty(id)) (autoScaleValueIds ??= new HashSet<string>(StringComparer.Ordinal)).Add(id);
                 }
                 if (isSeriesConsumer && f.InputBindings.TryGetValue("DataPort", out var dpBinding))
                 {
                     var id = PortBindingValue.ExtractSingle(dpBinding);
-                    if (!string.IsNullOrEmpty(id)) seriesConsumeIds.Add(id);
+                    if (!string.IsNullOrEmpty(id)) (seriesConsumeIds ??= new HashSet<string>(StringComparer.Ordinal)).Add(id);
                 }
             }
+            if (seriesConsumeIds == null) return;
 
             // 3. 遍历每个 Feature 的输出端口(ROM<double>),如果 binding 的 globalId 在 series 消费里
             //    但不在 AutoScale ValuePorts 里 → 警告
-            foreach (var f in blueprint.Features)
+            for (int fi = 0; fi < blueprint.Features.Count; fi++)
             {
-                Type? ft;
-                try { ft = ComponentRegistry.Resolve(f.TypeName); } catch { continue; }
+                var f = blueprint.Features[fi];
+                var ft = featureTypes[fi];
                 if (ft == null) continue;
 
-                foreach (var pi in ft.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                foreach (var port in DryRunTypeInfo.Get(ft).DataPorts)
                 {
-                    if (!IsDataPortProperty(pi, out var valueType, out _)) continue;
-                    if (PortMetadataRegistry.ResolveDirection(ft, pi) != PortDirection.Output) continue;
-                    if (valueType != typeof(ReadOnlyMemory<double>)) continue;
+                    if (port.Direction != PortDirection.Output) continue;
+                    if (port.ValueType != typeof(ReadOnlyMemory<double>)) continue;
+                    var pi = port.Property;
                     if (!f.OutputBindings.TryGetValue(pi.Name, out var bindingValue)) continue;
 
                     var id = PortBindingValue.ExtractSingle(bindingValue);
                     if (string.IsNullOrEmpty(id)) continue;
 
-                    if (seriesConsumeIds.Contains(id) && !autoScaleValueIds.Contains(id))
+                    if (seriesConsumeIds.Contains(id) && (autoScaleValueIds == null || !autoScaleValueIds.Contains(id)))
                     {
                         diagnostics.Add(new BlueprintDiagnostic
                         {
@@ -485,16 +568,7 @@ namespace Hevo.Charting.LowCode.Designer.GraphViewer
         {
             // 找所有 Dictionary<string, DataPort<T>> 输入字段。Output 方向的 dict(如 PlotFeature.SeriesOutputs)
             // 不参与 multi-input 校验 —— 它走的是 fan-out 输出语义,跟 InputOrder 形参列表无关。
-            var dictFields = featureType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(pi =>
-                {
-                    var pt = pi.PropertyType;
-                    if (!pt.IsGenericType || pt.GetGenericTypeDefinition() != typeof(Dictionary<,>)) return false;
-                    var args = pt.GetGenericArguments();
-                    if (args[0] != typeof(string)) return false;
-                    if (!args[1].IsGenericType || args[1].GetGenericTypeDefinition() != typeof(DataPort<>)) return false;
-                    return PortMetadataRegistry.ResolveDirection(featureType, pi) != PortDirection.Output;
-                }).ToArray();
+            var dictFields = DryRunTypeInfo.Get(featureType).InputDictPorts;
             if (dictFields.Length == 0) return;
 
             // 收集 InputBindings 里的 nested keys(多输入),按 parent 分组
