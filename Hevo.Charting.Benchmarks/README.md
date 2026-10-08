@@ -197,13 +197,18 @@ dotnet run -c Release -- --render-probe --scenarios=Hover,Zoom --rounds=10 --out
 | `--bars=` | 2000 | K 线根数,逗号分隔可扫多个 |
 | `--charts=` | 1 | 同一窗口里的图数(UniformGrid 排布,各自独立 schema / 黑板),逗号分隔可扫多个 |
 | `--steps=` / `--warmup=` / `--rounds=` | 300 / 100 / 5 | 每轮每组合的测量帧数 / 预热帧数 / 轮数 |
-| `--scenarios=` | 全部 + Startup | `Hover,Pan,Zoom,Tick,Append,Resize,Startup`,`all` = 全部 |
+| `--scenarios=` | 六个基础场景 + Startup | 逐帧:`Hover,Pan,Zoom,Tick,Append,Resize`,扩展逐帧:`HoverNoTip,DashHover,DashPan,DashTick,Zoom@150,Zoom@200`;套件:`Feed,PyFeed,Blueprint,Soak`;`Startup`;`all` = 除 `Soak` 外全部(见下文"扩展场景") |
 | `--modes=` | 全部 | `inc,nobag,layerfull,featfull,full,inc-par,full-par` |
 | `--window=` | 1280x720 | 图表区域尺寸(定在内容上,窗口 SizeToContent) |
 | `--out=` | render-probe.csv | 逐帧明细;同名 `.md` 汇总表、`.json` 汇总数据 |
 | `--baseline=` / `--write-baseline=` / `--tolerance=` | - / - / 0.02 | 计数回归门槛(见下面 CI 一节) |
-| `--ci` | | CI 预设:只跑 `inc`,120 帧 × 1 轮,图表区 960x540,无 Startup |
+| `--ci` | | CI 预设:只跑 `inc`,全部逐帧场景(含扩展)120 帧 × 1 轮,图表区 960x540,无 Startup / 套件 |
 | `--alloc-types` | | 进程内订阅 GCAllocationTick,按类型 + SOH/LOH 汇总每帧分配(UI 线程,含脚本输入),追加到 `.md`。用来查"分配/帧"的大头 |
+| `--heavy-layers=` / `--heavy-ms=` | 0 / 1 | 每张图额外挂 N 个人为加重的图层(每层录制忙等 X ms,纯 CPU),测 `PlotMode.Parallel` 用 |
+| `--feed-rates=` / `--feed-seconds=` | 100,500,1000 / 5 | `Feed` 套件的推送频率(tick/s)与每档测量秒数 |
+| `--py-indicators=` / `--py-rate=` | 1,4,8 / 100 | `PyFeed` 套件同时挂的 Python 指标数、推送频率 |
+| `--blueprint-runs=` | 5 | `Blueprint` 套件冷启动之后的热启动次数 |
+| `--soak-minutes=` / `--soak-rate=` | 10 / 100 | `Soak` 长跑分钟数、推送频率(CI 不跑) |
 
 **图表**:跟 LowCodeDemo `KLineMainSchema` 同款装配(蜡烛 + SMA20 + 时间轴 + 价格轴 + 联动头 + 标准交互),
 数据是固定种子的随机游走,黑板由脚本直接写。
@@ -301,6 +306,104 @@ Tick / Pan 跟数据量无关(只碰最后一根 / 可见窗口固定 ~120 根)�
 **多图**(`--charts=1,4,9`,Hover,3 轮,增量 / 全量,帧耗时 ms):1 图 0.067 / 0.326,4 图 0.083 / 0.245,9 图 0.192 / 0.504。
 
 完整表(含 P95/P99、GC、置信区间)见 `--out=` 输出的 `.md`。
+
+### 扩展场景与套件
+
+> 环境同上:远程桌面 + RenderTier 0 软件渲染,本机直显 + GPU 下待补测。所有测量窗口都设了 `IsHitTestVisible=false`
+> (窗口在屏幕正中,真实鼠标停在上面时 WPF 合成的 MouseMove 会让十字光标 / tooltip / 标题栏跟着重算,计数随鼠标位置漂移)。
+
+**逐帧扩展场景**(`--scenarios=Hover,HoverNoTip,DashHover,DashPan,DashTick,Zoom,Zoom@150,Zoom@200 --modes=inc,full --rounds=3`,
+2000 根,1280x720,增量 / 全量;帧耗时中位 ms,计数 = Feature 重算 / 图层重录 每帧):
+
+| 场景 | 窗口 | 增量 帧耗时 | 全量 帧耗时 | 增量 计数 | 全量 计数 | 增量 分配/帧 |
+|---|---|---:|---:|---:|---:|---:|
+| Hover | 标准主图(含 Tooltip) | 0.067 | 0.328 | 3 / 2 | 12 / 10 | 15.0 KB |
+| HoverNoTip | 同上,摘掉 TooltipWidgetFeature | **0.017** | 0.084 | 2 / 1 | 11 / 9 | 11.9 KB |
+| DashHover | 联动 dashboard:主图 + scatter/arrow/text 标记 + 成交量副图 | 0.039 | 0.127 | 5 / 3 | 22 / 17 | 21.7 KB |
+| DashPan | 同上 | 0.078 | 0.139 | 4.1 / 9.1 | 22 / 17 | 85.5 KB |
+| DashTick | 同上(主图收盘价 + 副图成交量跳动) | 0.043 | 0.134 | 2 / 3 | 22 / 17 | 55.2 KB |
+| Zoom | 标准主图 | 0.355 | 0.353 | 3.3 / 5.5 | 12 / 10 | 190 KB |
+| Zoom@150 | 模拟 150% DPI | 0.082 | 0.094 | 3.3 / 5.5 | 12 / 10 | 183 KB |
+| Zoom@200 | 模拟 200% DPI | 0.063 | 0.075 | 3.3 / 5.5 | 12 / 10 | 178 KB |
+
+- **Tooltip**:Hover 时 tooltip 确实上屏(帧末 TooltipWidgetLayer 的 widget 指令非空的帧占比:Hover / DashHover 100%,HoverNoTip 0%)。
+  它是 WPF 控件(Border + TextBlock,每帧改文本 + Measure),一张图 Hover 帧 0.067 ms 里约 0.05 ms 花在它身上,
+  去掉后 Hover 帧降到 0.017 ms。
+- **dashboard**:副图十字光标通过 linkedHit 联动(DashHover 3 层 = 主图十字光标 + tooltip + 副图十字光标);
+  DashPan 主图时间轴 + 三类标记层 + 副图柱状图跟着重录。这个场景发现了"联动主图时间轴不跟随平移"的 bug,已单独修复(见 git log)。
+- **高 DPI 模拟**:内容按 1/scale 的 DIP 尺寸布局、`LayoutTransform` 放大回原像素,再走 ChartCell 自己的 `OnDpiChanged`
+  把 PixelsPerDip 设成 scale(跟真实换屏同一条路径)。局限:WPF 仍按系统 DPI 光栅化,文字 hinting 跟真 150% / 200% 屏不同;
+  测的是"DIP 布局变小 + 按物理像素做 LOD"的 CPU 管线。150% / 200% 下 Zoom 的绘制命令 / 分配随可见物理列数一致变化,LOD 分支按物理像素生效。
+  (标准 Zoom 0.355 ms 是该窗口第一个测的 Zoom 组合,轮间置信区间 ±0.40 ms 很宽,量级看 Zoom@150 / @200 即可。)
+
+**Feed:实时数据源链路**(`--scenarios=Feed`):`ReactiveDataSource` 先灌 2000 根历史,后台线程按固定频率 `UpdateBuffer`
+(加锁改 buffer → Publish → pipe 的 Ingestor 写黑板 → `ChartCell.RequestUpdate`)→ `ComputeFeature` 后台算 SMA20 → 上屏。
+每 50 个 tick 收一根新 K 线。窗口用真 `CompositionTarget` 节奏(不手动跑帧)。延迟 = tick 推入 → 含该 tick 的那一帧 UI 线程做完。
+
+| 推送频率 | 帧/s | tick/帧 | 延迟中位 / P95 / P99(ms) | 分配(MB/s) | GC 0/1/2 每秒 | CPU(全核 %) |
+|---:|---:|---:|---:|---:|---:|---:|
+| 100/s | 76 | 1.3 | 0.4 / 0.8 / 1.0 | 5.4 | 0 / 0 / 0 | 3.7 |
+| 500/s | 499 | 1.0 | 0.2 / 0.3 / 0.7 | 32.4 | 0.8 / 0 / 0 | 7.0 |
+| 1000/s | 1000 | 1.0 | 0.2 / 0.3 / 0.5 | 65.6 | 2.4 / 0.8 / 0.8 | 7.0 |
+
+⚠️ 远程桌面 + 软件渲染下 `CompositionTarget.Rendering` 不按显示刷新率节流:1000 tick/s 时 UI 线程真的跑了 ~1000 帧/s,
+所以延迟只有亚毫秒。本机 GPU 直显时 WPF 按 vsync(60Hz)出帧,同样负载会变成"每帧合并十几个 tick、延迟 0–16 ms",
+这组数**不能**当本机体验看,只说明 UI 线程管线本身扛得住每秒上千次更新。
+
+**PyFeed:Python 指标**(`--scenarios=PyFeed`):同上链路,再挂 N 个 Python 指标(RSI14 / EMA20 交替,纯 Python 循环跑 2000+ 根),
+各自一个 `ComputeFeature`,后台并发调用,抢同一把 GIL。100 tick/s:
+
+| 指标数 | 单次调用 中位 / P95(ms) | 指标完成次数 / (tick × 指标数) | 延迟中位(ms) | 分配(MB/s) | CPU(全核 %) |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 1.53 / 2.97 | 100% | 0.3 | 7.7 | 5.3 |
+| 4 | 2.62 / 6.37 | 100% | 0.4 | 14.3 | 3.2 |
+| 8 | 4.71 / 12.65 | 100% | 0.3 | 23.4 | 5.6 |
+
+- 单次调用随并发指标数上涨(1 → 8 个:1.5 → 4.7 ms,P95 3 → 12.7 ms),是 GIL 排队;CPU 始终 ~2 个核,不随指标数增加。
+- 100 tick/s 下 8 个指标仍 100% 跟得上(Python 总耗时 ≈ 8 × 1.5 ms ≈ 12 ms/tick,已逼近 10 ms 的 tick 间隔),
+  再加指标或提频率就会开始合并(WatchAsync 只算最新一份),指标线滞后于 K 线。
+- tick → 帧延迟不受影响:指标在后台算,K 线不等它上屏;指标线比 K 线晚 ≈ 单次调用耗时。
+
+**Blueprint:蓝图端到端**(`--scenarios=Blueprint`):`default_kline_dashboard.json`(主图 + 成交量 + 策略三张联动图)
+→ `DashboardLauncher.LaunchEx`(DryRun + 实例化数据源 / Feature + 装配)→ 放进窗口 → 每张图在自己的数据到达后出第一帧。
+数据源用 `ProbeFeedSource` 以别名 `MockKLineDataSource` 顶替;strategy 图的 `bb_breakout` 是 LowCodeDemo/PyIndicators 里的真 Python handler。
+
+| | LaunchEx(ms) | 显示 + 布局(ms) | 数据 → 全部首帧(ms) | 合计(ms) |
+|---|---:|---:|---:|---:|
+| 冷启动(进程内第 1 次,含 JIT) | 20.5 | 113.9 | 25.7 | 160.1 |
+| 热启动中位(5 次) | 2.2 | 35.1 | 29.4 | 67.5 |
+
+3 张图共 31 个图层,DryRun 0 警告。热启动大头是窗口显示 + 布局(WPF 自身);LaunchEx 本身 ~2 ms。
+
+**Soak:长跑**(`--scenarios=Soak --soak-minutes=10`,100 tick/s,每分钟强制 GC 后采样;CI 不跑):
+
+| 分钟 | 1 | 2 | 4 | 6 | 8 | 10 |
+|---|---:|---:|---:|---:|---:|---:|
+| 存活托管堆(MB) | 4.79 | 4.85 | 4.87 | 4.90 | 4.92 | 4.94 |
+| 工作集(MB) | 158 | 158 | 158 | 158 | 158 | 159 |
+| 延迟 P95(ms) | 0.8 | 0.8 | 0.8 | 0.7 | 0.8 | 0.8 |
+
+第 2 分钟起斜率:存活堆 +0.01 MB/分钟,工作集 +0.1 MB/分钟 → 平稳,无泄漏迹象(10 分钟内)。
+Gen2 每分钟 4–5 次,其中 1 次是采样本身的强制 GC;其余推测来自 `BufferedDataSource.Publish` 的读快照扩容
+(`_readSnapshot = new TItem[_buffer.Count]` 按精确长度重分配,2000 根 × 56 B ≈ 110 KB 进 LOH,每收一根新 K 线一次),
+未逐类型验证;改成按倍数扩容能免掉,需要先确认没有下游依赖数组长度 == 有效长度。
+
+### PlotMode.Parallel 什么时候值得开
+
+`--heavy-layers` 人为加重图层后对照(全量模式,3 轮,帧耗时中位 ms;本机 32 逻辑核,`Parallel.ForEach` 空调度 3 / 10 / 30 项约 1.0 / 2.0 / 5.7 μs):
+
+| 负载 | Sync | Parallel |
+|---|---:|---:|
+| 常规 K 线图 Hover / Tick / Pan(每层录制几十 μs,脏层 2–6 个) | — | ±10%,有的略慢 |
+| 2000 根 Zoom(增量) | 0.36 | 0.26(P95 1.61 → 0.84) |
+| 10 万根 Zoom(全量) | 0.74 | 0.52(P95 2.43 → 1.12) |
+| 1 图 + 3 个 1 ms 图层 | 3.22 | 1.18 |
+| 1 图 + 8 个 1 ms 图层 | 8.11 | 1.13 |
+| 4 图 × 8 个 1 ms 图层 | 32.5 | 4.50 |
+
+默认用 `PlotMode.Sync`。同一帧里 ≥3 个脏图层、每层录制到亚毫秒级以上(复杂指标、大量标记、多指标叠加)时手动开 `PlotMode.Parallel`;
+直接改 WPF 控件的图层(`RequiresUiThread`,如 TooltipWidgetLayer)仍留在 UI 线程录制。
+阈值跟机器核数、后台负载有关,没有做自动切换。
 
 ## 输入到画面的端到端延迟 (`--latency-probe`, [LatencyProbe](LatencyProbe.cs))
 
