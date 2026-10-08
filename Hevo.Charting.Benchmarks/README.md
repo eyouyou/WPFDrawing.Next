@@ -152,37 +152,111 @@ Hevo.Charting.Benchmarks.BlueprintEndToEndBenchmarks-report-github.md
 
 ## 增量渲染前后对比 (`--render-probe`, [RenderProbe](RenderProbe.cs))
 
-不是 BenchmarkDotNet:要真窗口和完整 WPF 管线,所以单独一个入口。
+不是 BenchmarkDotNet:要真窗口和完整 WPF 管线,所以单独一个入口。只测 **UI 线程的 CPU 管线**;
+渲染线程合成上屏和输入延迟见下一节 `--latency-probe`。
 
 ```bash
 cd Hevo.Charting.Benchmarks
-dotnet run -c Release -- --render-probe                       # 默认 2000 根 K 线,每场景 600 步
-dotnet run -c Release -- --render-probe --bars=5000 --steps=1000 --out=probe.csv
+dotnet run -c Release -- --render-probe                                  # 2000 根 × 1 张图,全部场景和模式,5 轮
+dotnet run -c Release -- --render-probe --bars=2000,20000,100000          # 数据量伸缩曲线
+dotnet run -c Release -- --render-probe --charts=1,4,9 --modes=inc,full,inc-par,full-par   # 多图并行 + PlotMode.Parallel
+dotnet run -c Release -- --render-probe --scenarios=Hover,Zoom --rounds=10 --out=out/probe.csv
 ```
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `--bars=` | 2000 | K 线根数,逗号分隔可扫多个 |
+| `--charts=` | 1 | 同一窗口里的图数(UniformGrid 排布,各自独立 schema / 黑板),逗号分隔可扫多个 |
+| `--steps=` / `--warmup=` / `--rounds=` | 300 / 100 / 5 | 每轮每组合的测量帧数 / 预热帧数 / 轮数 |
+| `--scenarios=` | 全部 + Startup | `Hover,Pan,Zoom,Tick,Append,Resize,Startup`,`all` = 全部 |
+| `--modes=` | 全部 | `inc,nobag,layerfull,featfull,full,inc-par,full-par` |
+| `--window=` | 1280x720 | 图表区域尺寸(定在内容上,窗口 SizeToContent) |
+| `--out=` | render-probe.csv | 逐帧明细;同名 `.md` 汇总表、`.json` 汇总数据 |
+| `--baseline=` / `--write-baseline=` / `--tolerance=` | - / - / 0.02 | 计数回归门槛(见下面 CI 一节) |
+| `--ci` | | CI 预设:只跑 `inc`,120 帧 × 1 轮,图表区 960x540,无 Startup |
 
 **图表**:跟 LowCodeDemo `KLineMainSchema` 同款装配(蜡烛 + SMA20 + 时间轴 + 价格轴 + 联动头 + 标准交互),
 数据是固定种子的随机游走,黑板由脚本直接写。
 
-**场景**(每步改一次黑板,再手动跑一帧 `ExecutePipeline + Invalidate`,跟 `CompositionTarget` 回调里那一帧是同一段代码,不受 VSync 节奏影响):
+**场景**(每步改一次黑板,再手动跑一帧 `ChartCell.RunFrameNow`,跟 `CompositionTarget` 回调里那一帧是同一段代码,
+含 `RequestUpdate` 排队的事务,不受 VSync 节奏影响):
 
 | 场景 | 每步做什么 |
 |---|---|
 | Hover | 十字光标在绘图区横扫,每步 3px,写 `PointerHitPort`(命中计算复刻 `ChartInteractionFeature`) |
 | Pan | 平移 1 根 K 线,写 `Viewport.UserRange`,每 100 步换方向 |
+| Zoom | 滚轮缩放:右缘锚定,可见跨度每步 ×1.1,在 60 根和 min(数据量, 20000) 根之间来回 |
 | Tick | 最后一根 K 线收盘价跳动,`ForceWrite` High/Low/Close |
+| Append | 实时追加:每步新收一根 K 线,所有序列长度 +1,视口跟随最新一根 |
+| Resize | 图表宽度每步变 8px(走真实 WPF 布局 → `SizeChanged` → 环境纪元 → FullPass) |
+| Startup | 单独成表:新建窗口 → 模板装配(ComposeAll)→ 写数据 → 首帧出图,冷启动(首次,含 JIT)和热启动分开报 |
 
 **模式**(`DevTools/IncrementalRenderProbe` 的静态开关,默认全关,关着时行为跟原来一致):
 
-| 模式 | 含义 |
-|---|---|
-| 增量(默认) | 现状 |
-| 去掉Bag短路 | 关掉 `RenderContext.SubmitSync` 的 Bag 级短路,图层仍做引用比对。验证短路只是省 CPU,不改变重绘集合 |
-| 图层侧全重绘 | 已发现的图层每帧都重录(关掉 `VisualDependencyTracker` 判脏) |
-| Feature侧全量 | 每帧都当作环境纪元变化,所有 Feature 重投影、`UsePort` 全部视为变脏 |
-| 全量(两侧都关) | 上面两项同时打开,相当于没有增量机制 |
+| key | 模式 | 含义 |
+|---|---|---|
+| inc | 增量(默认) | 现状 |
+| nobag | 去掉Bag短路 | 关掉 `RenderContext.SubmitSync` 的 Bag 级短路,图层仍做引用比对。验证短路只是省 CPU,不改变重绘集合 |
+| layerfull | 图层侧全重绘 | 已发现的图层每帧都重录(关掉 `VisualDependencyTracker` 判脏) |
+| featfull | Feature侧全量 | 每帧都当作环境纪元变化,所有 Feature 重投影、`UsePort` 全部视为变脏 |
+| full | 全量(两侧都关) | 上面两项同时打开,相当于没有增量机制 |
+| inc-par / full-par | +Parallel | 同 inc / full,但图层录制走 `PlotMode.Parallel`(脏图层 ≥3 时 `Parallel.ForEach`) |
 
-**输出**:控制台打印 Markdown 汇总表(帧耗时中位/P95、输入耗时、每帧 Feature 重算数、图层重录数、绘制命令数、每帧分配),
-逐帧明细写 CSV。"帧耗时"只算 `ExecutePipeline + Invalidate`(Feature 投影 + 判脏 + 图层录制 + 上屏指令派发),
-不含 WPF 合成线程的 GPU 时间;"输入耗时"是写黑板本身,含同步 `Watch` 副作用(视口钳位、自动量程),不受模式开关影响。
+**统计与标准化**:
+- 进程 High 优先级、UI 线程 Highest;每个组合先预热一遍,再歇 300ms 让后台 Tier1 编译落地。
+- 每个组合跑 `--rounds` 轮,轮与轮之间穿插(第 1 轮的所有组合 → 第 2 轮 ...),机器状态漂移对各组合影响一致。
+- 帧耗时报"各轮中位数的均值 ± 95% 置信区间"(t 分布),另报全部样本的 P95 / P99;每千帧 Gen0/1/2 GC 次数。
+- 计数(Feature 重算/帧、图层重录/帧、绘制命令/帧)各轮应完全一致,不一致的会标 ⚠。
+- 开头打印测量环境:CPU、GPU、WPF RenderTier、是否远程桌面、刷新率、DPI。**远程桌面下 WPF 走软件渲染**,
+  CPU 管线数字仍可比,但不代表本机显示器 + GPU 的体验,正式数据请在本机直接显示时跑。
+
+"帧耗时"只算 UI 线程这一帧(排队事务 + Feature 投影 + 判脏 + 图层录制 + 上屏指令派发),
+不含 WPF 渲染线程合成和 GPU 时间;"输入耗时"是写黑板 / 改尺寸本身,含同步 `Watch` 副作用(视口钳位、自动量程)和布局。
 
 > ⚠️ 必须 Release。DEBUG 下每个 schema 都挂拓扑追踪器,每次读写都有记录开销。
+
+## 输入到画面的端到端延迟 (`--latency-probe`, [LatencyProbe](LatencyProbe.cs))
+
+```bash
+dotnet run -c Release -- --latency-probe [--samples=150] [--bars=2000] [--out=latency-probe.csv]
+```
+
+置顶窗口里放一张 K 线图,后台线程用 `SendInput` 注入**真实的系统鼠标输入**(移动 → 十字光标,滚轮 → 缩放),
+然后不停用 GDI `BitBlt` 抓屏幕上绘图区里的两行像素直到像素变化。屏幕抓到的是 DWM 合成后的桌面,
+所以这是"输入进系统 → 画面真的变了"的时间。两个 UI 线程钩子把总时长切成三段:
+
+| 阶段 | 起点 → 终点 | 包含 |
+|---|---|---|
+| ① | `SendInput` → `Window.PreviewMouseMove/Wheel` | 系统输入队列 + Dispatcher 调度 |
+| ② | UI 线程收到 → 这一帧 UI 线程做完(`IncrementalRenderProbe.FrameRendered`) | 写黑板 → 等下一个 `CompositionTarget.Rendering` → 管线 |
+| ③ | 帧做完 → 屏幕像素变化 | **WPF 渲染线程合成 + Present + DWM 合成**,外加抓屏轮询粒度(报告单列) |
+
+每次输入前随机等 80–96ms,让输入时刻跟 VSync 相位错开,得到的是分布而不是固定相位。
+
+> ⚠️ 必须本机直接显示(不要远程桌面),测量约 30 秒,期间不要碰鼠标、不要切窗口。
+
+## 增量核心路径微基准 ([IncrementalCoreBenchmarks](IncrementalCoreBenchmarks.cs))
+
+```bash
+dotnet run -c Release -- --filter "*SubmitSync*" "*ProjectAll*" "*FrameScaling*" "*BlackboardTransaction*"
+```
+
+| 基准 | 参数 | 场景 |
+|---|---|---|
+| `SubmitSyncBenchmarks` | 图层数 8 / 32 / 128 | Idle(Bag 短路)/ OneLocal(1 层换数据)/ GlobalRepublish(全局有提交但引用不变,满负荷判脏)/ GlobalChanged(全部判脏) |
+| `ProjectAllBenchmarks` | Feature 数 8 / 32 / 128 | Idle / OnePort / AllPorts / FullPass |
+| `FrameScalingBenchmarks` | 图层数 8 / 32 / 128(每层 1 个 Feature) | 整帧 `RunFrameNow`:Idle / OneDirty / AllDirty |
+| `BlackboardTransactionBenchmarks` | 每事务端口数 1 / 8 / 32 | Unchanged(值防抖命中)/ Changed(真实写入 + 订阅标脏 + 弹脏名单);另有锁内读 |
+
+## CI 回归门槛 ([.github/workflows/perf-regression.yml](../.github/workflows/perf-regression.yml))
+
+每次 push main / PR:构建 → 单测 → `--render-probe --ci --baseline=render-probe-baseline.json` → 微基准 Dry 冒烟。
+
+门槛**只看确定性计数**(Feature 重算/帧、图层重录/帧、绘制命令/帧),超过基线 ×(1+2%) 即失败;**不看耗时**,
+托管 runner 是共享机器 + 软件渲染,耗时噪声太大。计数有意变化时(改了渲染路径):
+
+```bash
+dotnet run -c Release -- --render-probe --ci --write-baseline=render-probe-baseline.json
+```
+
+或者从 CI 产物 `perf-artifacts/render-probe/render-probe.json` 里取数更新 [render-probe-baseline.json](render-probe-baseline.json)。

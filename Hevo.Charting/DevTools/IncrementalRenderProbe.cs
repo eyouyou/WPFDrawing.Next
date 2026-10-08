@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Generic;
 using Hevo.Charting.Abstractions;
+using Hevo.Charting.Core;
 
 namespace Hevo.Charting.DevTools
 {
@@ -30,6 +32,12 @@ namespace Hevo.Charting.DevTools
         /// <summary>键:"图层名(类型) Trait类型: 上次看到的对象 → 当前对象";值:次数。</summary>
         public static readonly Dictionary<string, long> ShortCircuitMissDetail = new();
 
+        /// <summary>
+        /// 每帧 ChartCell 跑完管线并把指令交给 WPF(Invalidate 之后)时回调,UI 线程。
+        /// 给端到端延迟测量(--latency-probe)打"UI 线程这一帧做完了"的时间戳。默认 null,生产路径只多一次空判断。
+        /// </summary>
+        public static Action<ChartCell>? FrameRendered;
+
         internal static void RecordShortCircuitMiss(ChartLayer layer, VisualDataBag liveLocal, VisualDataBag liveGlobal)
         {
             ShortCircuitMisses++;
@@ -55,6 +63,7 @@ namespace Hevo.Charting.DevTools
             FeatureProjections = 0;
             ShortCircuitMisses = 0;
             ShortCircuitMissDetail.Clear();
+            FrameRendered = null;
         }
     }
 }

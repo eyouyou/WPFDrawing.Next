@@ -5,8 +5,10 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Windows;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Hevo.Charting.Abstractions;
@@ -22,52 +24,70 @@ namespace Hevo.Charting.Benchmarks
     /// <summary>
     /// 增量渲染前后对比测量(不是 BenchmarkDotNet,需要真窗口 + WPF 渲染管线)。
     /// <para>
-    /// 用法(Windows,Release):
-    /// <c>dotnet run -c Release --project Hevo.Charting.Benchmarks -- --render-probe [--bars=2000] [--steps=600] [--out=render-probe.csv]</c>
+    /// 用法(Windows,Release),参数见 <see cref="ProbeOptions"/> 和 README:
+    /// <c>dotnet run -c Release --project Hevo.Charting.Benchmarks -- --render-probe [--bars=2000,100000] [--charts=1,4] [--rounds=5]</c>
     /// </para>
     /// <para>
-    /// 做法:开一个 1280x720 窗口,里面是一张手写 K 线图(蜡烛 + SMA + 双轴 + 联动头 + 十字光标交互,
+    /// 做法:开一个窗口,里面是 1 张或 N 张手写 K 线图(蜡烛 + SMA + 双轴 + 联动头 + 十字光标交互,
     /// 跟 LowCodeDemo 的 KLineMainSchema 同款装配)。每个场景按固定脚本逐步改黑板,每步手动跑一帧
-    /// (ChartCell.ExecutePipeline + Invalidate,跟 CompositionTarget 回调里那一帧是同一段代码),
-    /// 不依赖 VSync 节奏,结果可复现。
+    /// (<see cref="ChartCell.RunFrameNow"/>,跟 CompositionTarget 回调里那一帧是同一段代码),
+    /// 不依赖 VSync 节奏,结果可复现。这里只测 UI 线程的 CPU 管线;合成上屏和输入延迟见 <see cref="LatencyProbe"/>。
     /// </para>
     /// <para>
-    /// 场景:Hover(十字光标横扫,写 PointerHitPort)/ Pan(每步平移 1 根,写 Viewport.UserRange)/
-    /// Tick(行情心跳,改最后一根 K 线)。
-    /// 对照组:用 <see cref="IncrementalRenderProbe"/> 人为关掉某一层增量机制,同一脚本再跑一遍。
+    /// 场景:Hover(十字光标横扫)/ Pan(平移)/ Zoom(滚轮缩放,可见根数在 60 和上限之间来回)/
+    /// Tick(行情心跳,改最后一根)/ Append(实时追加新 K 线并跟随)/ Resize(窗口宽度逐步变化,走 SizeChanged 全量)。
+    /// 另有 Startup:新建窗口 → 装配 → 首帧出图的耗时,单独成表。
+    /// 对照组:用 <see cref="IncrementalRenderProbe"/> 人为关掉某一层增量机制,同一脚本再跑一遍;
+    /// 另有两组用 <see cref="PlotMode.Parallel"/> 跑图层录制。
+    /// </para>
+    /// <para>
+    /// 统计:每个组合跑 <c>--rounds</c> 轮,各轮轮流穿插(轮 1 的所有组合 → 轮 2 ...),漂移对各组合影响一致;
+    /// 帧耗时报"各轮中位数的均值 ± 95% 置信区间",同时报全部样本的 P95/P99、每千帧 GC 次数。
+    /// 计数类指标(Feature 重算/帧、图层重录/帧、绘制命令/帧)是确定的,可用 <c>--baseline</c> 做回归门槛。
     /// </para>
     /// </summary>
     internal static class RenderProbe
     {
-        private sealed record Mode(string Name, bool FullPass, bool BypassShortCircuit, bool LayerRedraw);
+        internal sealed record Mode(string Key, string Name, bool FullPass, bool BypassShortCircuit, bool LayerRedraw, PlotMode Plot);
 
-        private static readonly Mode[] Modes =
+        internal static readonly Mode[] AllModes =
         {
-            new("增量(默认)",       false, false, false),
-            new("去掉Bag短路",       false, true,  false),
-            new("图层侧全重绘",      false, false, true),
-            new("Feature侧全量",     true,  false, false),
-            new("全量(两侧都关)",   true,  false, true),
+            new("inc",       "增量(默认)",        false, false, false, PlotMode.Sync),
+            new("nobag",     "去掉Bag短路",        false, true,  false, PlotMode.Sync),
+            new("layerfull", "图层侧全重绘",       false, false, true,  PlotMode.Sync),
+            new("featfull",  "Feature侧全量",      true,  false, false, PlotMode.Sync),
+            new("full",      "全量(两侧都关)",    true,  false, true,  PlotMode.Sync),
+            new("inc-par",   "增量+Parallel",      false, false, false, PlotMode.Parallel),
+            new("full-par",  "全量+Parallel",      true,  false, true,  PlotMode.Parallel),
         };
 
-        private sealed record Sample(double PipelineMs, double InputMs, long Features, int Layers, long DrawCmds, long AllocBytes);
+        internal static readonly string[] AllScenarios = { "Hover", "Pan", "Zoom", "Tick", "Append", "Resize" };
 
-        private sealed record Result(string Scenario, string Mode, List<Sample> Samples,
-                                     long ShortCircuitMisses, Dictionary<string, long> MissDetail);
+        private readonly record struct Sample(double PipelineMs, double InputMs, long Features, int Layers, long DrawCmds, long AllocBytes);
+
+        private sealed class Combo
+        {
+            public required int Bars;
+            public required int Charts;
+            public required string Scenario;
+            public required Mode Mode;
+            public readonly List<List<Sample>> Rounds = new();
+            public readonly List<(int Gen0, int Gen1, int Gen2)> RoundGc = new();
+            public long ShortCircuitMisses;
+            public readonly Dictionary<string, long> MissDetail = new();
+            public string? Error;
+            public string Key => $"bars={Bars}|charts={Charts}|{Scenario}|{Mode.Key}";
+        }
+
+        private sealed record StartupResult(int Bars, List<double> ComposeMs, List<double> FirstFrameMs, List<long> AllocBytes, int Layers);
 
         public static int Run(string[] args)
         {
-            int bars = int.Parse(ExtractArg(args, "--bars=") ?? "2000", CultureInfo.InvariantCulture);
-            int steps = int.Parse(ExtractArg(args, "--steps=") ?? "600", CultureInfo.InvariantCulture);
-            string outPath = ExtractArg(args, "--out=") ?? "render-probe.csv";
-
-#if DEBUG
-            Console.WriteLine("⚠ 当前是 Debug 构建:DEBUG 下有拓扑追踪和锁校验开销,数字偏大。正式取数请用 -c Release。");
-#endif
+            var opt = ProbeOptions.Parse(args);
             int exit = 0;
             var thread = new Thread(() =>
             {
-                try { exit = RunOnUiThread(bars, steps, outPath); }
+                try { exit = RunOnUiThread(opt); }
                 catch (Exception ex) { Console.Error.WriteLine(ex); exit = 99; }
             });
             thread.SetApartmentState(ApartmentState.STA);
@@ -76,91 +96,124 @@ namespace Hevo.Charting.Benchmarks
             return exit;
         }
 
-        private static int RunOnUiThread(int bars, int steps, string outPath)
+        private static int RunOnUiThread(ProbeOptions opt)
         {
-            var schema = new ProbeKLineSchema();
-            var cell = new ChartCell { Template = schema };
-            var window = new Window
-            {
-                Title = "Hevo render probe",
-                Width = 1280,
-                Height = 720,
-                Content = cell,
-                WindowStartupLocation = WindowStartupLocation.CenterScreen,
-            };
-            window.Show();
-            Pump(300); // 等 OnApplyTemplate → ComposeAll + SizeChanged
+            ProbeEnvironment.Standardize();
+            var env = ProbeEnvironment.Capture();
+            Console.WriteLine(env.Describe());
+            Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                $"[render-probe] bars={string.Join(',', opt.Bars)} charts={string.Join(',', opt.Charts)} steps={opt.Steps} " +
+                $"warmup={opt.Warmup} rounds={opt.Rounds} size={opt.WindowWidth}x{opt.WindowHeight} " +
+                $"scenarios={string.Join(',', opt.Scenarios)} modes={string.Join(',', opt.Modes.Select(m => m.Key))}"));
 
-            var data = ProbeData.Generate(bars);
-            var board = new DataBlackboard();
-            using (board.BeginTransaction())
-            {
-                board.WriteIfChanged(schema.Ports.Time, (ReadOnlyMemory<DateTime>)data.Time);
-                board.WriteIfChanged(schema.Ports.Open, (ReadOnlyMemory<double>)data.Open);
-                board.WriteIfChanged(schema.Ports.High, (ReadOnlyMemory<double>)data.High);
-                board.WriteIfChanged(schema.Ports.Low, (ReadOnlyMemory<double>)data.Low);
-                board.WriteIfChanged(schema.Ports.Close, (ReadOnlyMemory<double>)data.Close);
-                board.WriteIfChanged(schema.SmaPort, (ReadOnlyMemory<double>)data.Sma);
-                board.WriteIfChanged(schema.Viewport.LogicalLength, bars);
-            }
-            schema.Trigger.Push(board);
-            schema.InvalidateEnvironment();
-            Pump(500);
+            var combos = new List<Combo>();
+            var startups = new List<StartupResult>();
 
-            using (var ctx = cell.CreateContext())
+            foreach (int bars in opt.Bars)
             {
-                if (ctx.GetPlotArea().IsEmpty || cell.ActiveLayers.Count == 0)
+                if (opt.Startup) startups.Add(MeasureStartup(opt, bars));
+
+                foreach (int charts in opt.Charts)
                 {
-                    Console.Error.WriteLine("[render-probe] 图表没有完成装配(PlotArea 为空或没有图层),放弃测量。");
-                    return 99;
-                }
-            }
+                    using var rig = ProbeRig.Create(opt, bars, charts, extraCapacity: Math.Max(opt.Steps, opt.Warmup) + 1);
+                    if (rig == null) return 99;
+                    Console.WriteLine($"[render-probe] bars={bars} charts={charts} layers/图={rig.Charts[0].Cell.ActiveLayers.Count} " +
+                                      $"features/图={rig.Charts[0].Schema.ListFeatures().Count}");
 
-            var scenarios = new (string Name, Action<int> Step)[]
-            {
-                ("Hover", i => HoverStep(cell, schema, board, bars, i)),
-                ("Pan",   i => PanStep(schema, board, i)),
-                ("Tick",  i => TickStep(schema, board, data, i)),
-            };
+                    var local = new List<Combo>();
+                    foreach (var sc in opt.Scenarios)
+                        foreach (var m in opt.Modes)
+                            local.Add(new Combo { Bars = bars, Charts = charts, Scenario = sc, Mode = m });
 
-            Console.WriteLine($"[render-probe] bars={bars} steps={steps} layers={cell.ActiveLayers.Count} " +
-                              $"features={schema.ListFeatures().Count}");
+                    // 轮 0 之前:每个组合都先跑一遍预热(JIT 分层编译 + 缓存),再歇一下让后台 Tier1 编译落地
+                    foreach (var c in local) RunSegment(rig, c, opt.Warmup, record: false);
+                    Pump(300);
 
-            var results = new List<Result>();
-            foreach (var (name, step) in scenarios)
-            {
-                foreach (var mode in Modes)
-                {
-                    Apply(mode);
-                    try
+                    for (int round = 0; round < opt.Rounds; round++)
                     {
-                        // 预热(JIT + 缓存),再归位到同一起点
-                        for (int i = 0; i < Math.Min(100, steps); i++) RunStep(cell, step, i);
-                        ResetView(schema, board, bars);
-                        RunFrame(cell);
-                        GC.Collect();
-                        GC.WaitForPendingFinalizers();
-                        GC.Collect();
-
-                        IncrementalRenderProbe.ShortCircuitMisses = 0; // 只统计测量段,不含预热
-                        IncrementalRenderProbe.ShortCircuitMissDetail.Clear();
-
-                        var samples = new List<Sample>(steps);
-                        for (int i = 0; i < steps; i++) samples.Add(RunStep(cell, step, i));
-                        results.Add(new Result(name, mode.Name, samples, IncrementalRenderProbe.ShortCircuitMisses,
-                            new Dictionary<string, long>(IncrementalRenderProbe.ShortCircuitMissDetail)));
+                        foreach (var c in local)
+                        {
+                            if (c.Error != null) continue;
+                            RunSegment(rig, c, opt.Steps, record: true);
+                        }
+                        Console.WriteLine($"[render-probe] bars={bars} charts={charts} 第 {round + 1}/{opt.Rounds} 轮完成");
                     }
-                    finally { IncrementalRenderProbe.Reset(); }
-
-                    ResetView(schema, board, bars);
-                    RunFrame(cell);
-                    Pump(50); // 清掉测量期间排进 RequestUpdate 队列的空回调
+                    combos.AddRange(local);
                 }
             }
 
-            window.Close();
-            Report(results, outPath);
-            return 0;
+            var report = BuildReport(env, opt, combos, startups);
+            Console.WriteLine(report.Markdown);
+
+            foreach (var f in new[] { opt.OutCsv, opt.OutMd, opt.OutJson })
+                if (Path.GetDirectoryName(Path.GetFullPath(f)) is { } dir) Directory.CreateDirectory(dir);
+            File.WriteAllText(opt.OutCsv, report.Csv, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+            File.WriteAllText(opt.OutMd, report.Markdown, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+            File.WriteAllText(opt.OutJson, report.Json, new UTF8Encoding(false));
+            Console.WriteLine($"[render-probe] 逐帧明细 {Path.GetFullPath(opt.OutCsv)}");
+            Console.WriteLine($"[render-probe] 汇总表 {Path.GetFullPath(opt.OutMd)} / {Path.GetFullPath(opt.OutJson)}");
+
+            if (opt.WriteBaseline != null)
+            {
+                File.WriteAllText(opt.WriteBaseline, ProbeBaseline.FromEntries(report.Entries).ToJson(), new UTF8Encoding(false));
+                Console.WriteLine($"[render-probe] 计数基线已写入 {Path.GetFullPath(opt.WriteBaseline)}");
+            }
+
+            int exit = combos.Any(c => c.Error != null) ? 98 : 0;
+            if (opt.Baseline != null)
+            {
+                var baseline = ProbeBaseline.Load(opt.Baseline);
+                var check = baseline.Check(report.Entries, opt.Tolerance);
+                Console.WriteLine(check.Text);
+                if (opt.SummaryFile != null) File.AppendAllText(opt.SummaryFile, check.Text + Environment.NewLine);
+                if (check.Regressed) exit = 3;
+            }
+            if (opt.SummaryFile != null) File.AppendAllText(opt.SummaryFile, report.Markdown + Environment.NewLine);
+            return exit;
+        }
+
+        // ── 一段测量:设模式 → 归位 → 跑 steps 帧 ───────────────────────────────
+
+        private static void RunSegment(ProbeRig rig, Combo c, int steps, bool record)
+        {
+            var step = ScenarioStep(rig, c.Scenario);
+            Apply(c.Mode);
+            try
+            {
+                rig.ResetAll();
+                RunFrame(rig, c.Mode.Plot);
+                if (record)
+                {
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                    GC.Collect();
+                }
+                IncrementalRenderProbe.ShortCircuitMisses = 0; // 只统计测量段
+                IncrementalRenderProbe.ShortCircuitMissDetail.Clear();
+
+                var samples = new List<Sample>(steps);
+                int g0 = GC.CollectionCount(0), g1 = GC.CollectionCount(1), g2 = GC.CollectionCount(2);
+                for (int i = 0; i < steps; i++) samples.Add(RunStep(rig, step, i, c.Mode.Plot));
+                if (!record) return;
+
+                c.Rounds.Add(samples);
+                c.RoundGc.Add((GC.CollectionCount(0) - g0, GC.CollectionCount(1) - g1, GC.CollectionCount(2) - g2));
+                c.ShortCircuitMisses += IncrementalRenderProbe.ShortCircuitMisses;
+                foreach (var kv in IncrementalRenderProbe.ShortCircuitMissDetail)
+                    c.MissDetail[kv.Key] = c.MissDetail.GetValueOrDefault(kv.Key) + kv.Value;
+            }
+            catch (Exception ex)
+            {
+                // 对照组(尤其 Parallel)出错不拖垮整轮测量,记下来进报告
+                c.Error = $"{ex.GetType().Name}: {ex.Message}";
+                Console.Error.WriteLine($"[render-probe] {c.Key} 失败:{ex}");
+            }
+            finally
+            {
+                IncrementalRenderProbe.Reset();
+                rig.ResetAll();
+                RunFrame(rig, PlotMode.Sync);
+            }
         }
 
         private static void Apply(Mode m)
@@ -171,15 +224,15 @@ namespace Hevo.Charting.Benchmarks
             IncrementalRenderProbe.ForceLayerRedraw = m.LayerRedraw;
         }
 
-        private static Sample RunStep(ChartCell cell, Action<int> step, int i)
+        private static Sample RunStep(ProbeRig rig, Action<int> step, int i, PlotMode plot)
         {
             long t0 = Stopwatch.GetTimestamp();
-            step(i); // 写黑板(含 Watch 副作用:视口钳位、自动量程等)
+            step(i); // 写黑板 / 改窗口尺寸(含 Watch 副作用:视口钳位、自动量程、布局)
             long t1 = Stopwatch.GetTimestamp();
             long alloc0 = GC.GetAllocatedBytesForCurrentThread(); // 只统计帧本身的分配,不含脚本输入
 
             long features0 = IncrementalRenderProbe.FeatureProjections;
-            int layers = RunFrame(cell);
+            var (layers, drawCmds) = RunFrame(rig, plot);
             long t2 = Stopwatch.GetTimestamp();
             long alloc1 = GC.GetAllocatedBytesForCurrentThread();
 
@@ -188,32 +241,43 @@ namespace Hevo.Charting.Benchmarks
                 InputMs: (t1 - t0) * 1000.0 / Stopwatch.Frequency,
                 Features: IncrementalRenderProbe.FeatureProjections - features0,
                 Layers: layers,
-                DrawCmds: cell.GetDiagnostics().LastFrameDrawCmds,
+                DrawCmds: drawCmds,
                 AllocBytes: alloc1 - alloc0);
         }
 
-        // 一帧 = OnCompositionTargetRendering 里的 ExecutePipeline + Invalidate。返回本帧重录的图层数。
-        private static int RunFrame(ChartCell cell)
+        // 一帧 = 每张图各跑一次 CompositionTarget 回调里的那段(排队事务 → ExecutePipeline → Invalidate)。
+        private static (int Layers, long DrawCmds) RunFrame(ProbeRig rig, PlotMode plot)
         {
-            using var ctx = cell.CreateContext();
-            cell.ExecutePipeline(ctx, PlotMode.Sync);
-            int dirty = 0;
-            var layers = cell.ActiveLayers;
-            for (int i = 0; i < layers.Count; i++)
-                if (layers[i] is ChartLayer cl && cl.IsDirty) dirty++;
-            cell.Invalidate();
-            return dirty;
+            int layers = 0;
+            long cmds = 0;
+            foreach (var ch in rig.Charts)
+            {
+                layers += ch.Cell.RunFrameNow(plot);
+                cmds += ch.Cell.GetDiagnostics().LastFrameDrawCmds;
+            }
+            return (layers, cmds);
         }
 
         // ── 场景脚本 ───────────────────────────────────────────────────────────
 
+        private static Action<int> ScenarioStep(ProbeRig rig, string scenario) => scenario switch
+        {
+            "Hover" => i => { foreach (var ch in rig.Charts) HoverStep(ch, i); },
+            "Pan" => i => { foreach (var ch in rig.Charts) PanStep(ch, i); },
+            "Zoom" => i => { foreach (var ch in rig.Charts) ZoomStep(ch, i); },
+            "Tick" => i => { foreach (var ch in rig.Charts) TickStep(ch, i); },
+            "Append" => i => { foreach (var ch in rig.Charts) AppendStep(ch, i); },
+            "Resize" => i => rig.ResizeStep(i),
+            _ => throw new ArgumentException($"未知场景 {scenario}"),
+        };
+
         // 十字光标在绘图区内来回横扫,每步 3px;Y 同步小幅摆动(真实鼠标移动 Y 也会变)。
         // 命中计算复刻 ChartInteractionFeature.UpdatePointerStateFromMouse(吸附到可见 K 线中心)。
-        private static void HoverStep(ChartCell cell, ProbeKLineSchema schema, DataBlackboard board, int bars, int i)
+        private static void HoverStep(ProbeChart ch, int i)
         {
             HevoRect plot;
             ScaleStrategyTrait? scale;
-            using (var ctx = cell.CreateContext())
+            using (var ctx = ch.Cell.CreateContext())
             {
                 plot = ctx.GetPlotArea();
                 scale = ctx.Shared().Read<ScaleStrategyTrait>();
@@ -225,6 +289,8 @@ namespace Hevo.Charting.Benchmarks
             double x = plot.Left + 3.0 * (k < span ? k : 2 * span - k);
             float y = plot.Y + plot.Height * (0.3f + 0.4f * (i % 50) / 50f);
 
+            var board = ch.Board;
+            var schema = ch.Schema;
             using (board.AcquireUpgradeableReadLock())
             {
                 var active = board.Read(schema.Viewport.ActiveRange);
@@ -233,8 +299,8 @@ namespace Hevo.Charting.Benchmarks
                 double rel = Math.Clamp((x - plot.Left) / plot.Width, 0.0, 1.0);
                 int idx = (int)Math.Round(ds.Denormalize(rel, active));
                 int lo = Math.Max(0, (int)Math.Ceiling(ds.Denormalize(0.0, active)));
-                int hi = Math.Min(bars - 1, (int)Math.Floor(ds.Denormalize(1.0, active)));
-                if (hi < lo) { lo = 0; hi = bars - 1; }
+                int hi = Math.Min(ch.Length - 1, (int)Math.Floor(ds.Denormalize(1.0, active)));
+                if (hi < lo) { lo = 0; hi = ch.Length - 1; }
                 idx = Math.Clamp(idx, lo, hi);
                 double cRel = ds.Normalize(idx, active);
                 double cx = plot.Left + plot.Width * cRel;
@@ -246,93 +312,249 @@ namespace Hevo.Charting.Benchmarks
         }
 
         // 每步平移 1 根 K 线,每 100 步换方向,始终停留在数据范围内。
-        private static void PanStep(ProbeKLineSchema schema, DataBlackboard board, int i)
+        private static void PanStep(ProbeChart ch, int i)
         {
             double delta = (i / 100) % 2 == 0 ? -1 : 1;
+            var board = ch.Board;
             using (board.AcquireUpgradeableReadLock())
             {
-                var active = board.Read(schema.Viewport.ActiveRange);
+                var active = board.Read(ch.Schema.Viewport.ActiveRange);
                 if (!active.IsValid) return;
                 using (board.AcquireWriteLock())
-                    board.WriteIfChanged(schema.Viewport.UserRange, new RealRange(active.Min + delta, active.Max + delta));
+                    board.WriteIfChanged(ch.Schema.Viewport.UserRange, new RealRange(active.Min + delta, active.Max + delta));
             }
+        }
+
+        // 滚轮缩放:右缘锚定,可见跨度每步 ×1.1(一格滚轮),在 60 根和上限(min(数据量, 20000))之间来回。
+        // 数据量 10 万时上限 2 万根,用来看"可见根数增长"下的伸缩曲线。
+        private static void ZoomStep(ProbeChart ch, int i)
+        {
+            const double minSpan = 60, factor = 1.1;
+            double maxSpan = Math.Min(ch.Length - 1, 20000);
+            int k = Math.Max(1, (int)Math.Ceiling(Math.Log(maxSpan / minSpan) / Math.Log(factor)));
+            int e = i % (2 * k);
+            if (e > k) e = 2 * k - e;
+            double span = Math.Min(maxSpan, minSpan * Math.Pow(factor, e));
+            double max = ch.Length - 1;
+            using (ch.Board.AcquireWriteLock())
+                ch.Board.WriteIfChanged(ch.Schema.Viewport.UserRange, new RealRange(Math.Round(max - span), max));
         }
 
         // 行情心跳:最后一根 K 线收盘价跳动。数组原地改 + ForceWrite(ROM 同底层数组同长度,WriteIfChanged 判不出变化,
         // 真实数据管线也是这样推送的)。
-        private static void TickStep(ProbeKLineSchema schema, DataBlackboard board, ProbeData data, int i)
+        private static void TickStep(ProbeChart ch, int i)
         {
-            int last = data.Close.Length - 1;
+            var data = ch.Data;
+            int last = ch.Length - 1;
             double c = data.Open[last] + Math.Sin(i * 0.37) * 2.0;
             data.Close[last] = c;
             data.High[last] = Math.Max(data.High[last], c);
             data.Low[last] = Math.Min(data.Low[last], c);
+            var board = ch.Board;
+            var p = ch.Schema.Ports;
             using (board.BeginTransaction())
             {
-                board.ForceWrite(schema.Ports.High, (ReadOnlyMemory<double>)data.High);
-                board.ForceWrite(schema.Ports.Low, (ReadOnlyMemory<double>)data.Low);
-                board.ForceWrite(schema.Ports.Close, (ReadOnlyMemory<double>)data.Close);
+                board.ForceWrite(p.High, ch.Slice(data.High));
+                board.ForceWrite(p.Low, ch.Slice(data.Low));
+                board.ForceWrite(p.Close, ch.Slice(data.Close));
             }
         }
 
-        private static void ResetView(ProbeKLineSchema schema, DataBlackboard board, int bars)
+        // 实时追加:每步新收一根 K 线(数据预生成在数组尾部),所有序列长度 +1,视口跟随最新一根。
+        private static void AppendStep(ProbeChart ch, int i)
         {
-            using (board.AcquireWriteLock())
+            if (ch.Length >= ch.Data.Close.Length) return; // 预留容量用完(steps > 容量时)就停在末尾
+            ch.Length++;
+            ch.WriteSeries(follow: true);
+        }
+
+        // ── Startup:新建窗口 → 装配 → 首帧出图 ─────────────────────────────────
+
+        private static StartupResult MeasureStartup(ProbeOptions opt, int bars)
+        {
+            var compose = new List<double>();
+            var first = new List<double>();
+            var alloc = new List<long>();
+            int layers = 0;
+            int runs = 1 + opt.Rounds * 3; // 第 0 次是冷启动(含 JIT),单独报
+            for (int r = 0; r < runs; r++)
             {
-                board.WriteIfChanged(schema.HitPortForProbe, null);
-                board.WriteIfChanged(schema.Viewport.UserRange, new RealRange(bars - 120, bars - 1));
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+                long a0 = GC.GetAllocatedBytesForCurrentThread();
+                long t0 = Stopwatch.GetTimestamp();
+
+                var ch = ProbeChart.Create(bars, 0);
+                ch.Cell.Width = opt.WindowWidth;
+                ch.Cell.Height = opt.WindowHeight;
+                var window = new Window
+                {
+                    Title = "Hevo render probe (startup)",
+                    SizeToContent = SizeToContent.WidthAndHeight,
+                    Content = ch.Cell,
+                    WindowStartupLocation = WindowStartupLocation.CenterScreen,
+                    ShowActivated = false,
+                };
+                window.Show();
+                window.UpdateLayout(); // OnApplyTemplate → ComposeAll + SizeChanged 排队
+                long t1 = Stopwatch.GetTimestamp();
+
+                ch.LoadData();
+                ch.Cell.RunFrameNow(PlotMode.Sync);
+                long t2 = Stopwatch.GetTimestamp();
+                long a1 = GC.GetAllocatedBytesForCurrentThread();
+                layers = ch.Cell.ActiveLayers.Count;
+
+                compose.Add((t1 - t0) * 1000.0 / Stopwatch.Frequency);
+                first.Add((t2 - t1) * 1000.0 / Stopwatch.Frequency);
+                alloc.Add(a1 - a0);
+                window.Close();
+                Pump(30);
             }
+            Console.WriteLine($"[render-probe] Startup bars={bars} 完成 {runs} 次");
+            return new StartupResult(bars, compose, first, alloc, layers);
         }
 
         // ── 报告 ─────────────────────────────────────────────────────────────
 
-        private static void Report(List<Result> results, string outPath)
+        internal sealed record Entry(
+            int Bars, int Charts, string Scenario, string ModeKey, string ModeName, int Rounds, int Frames,
+            double MedianMs, double CiMs, double P95Ms, double P99Ms, double InputMedianMs,
+            double FeaturesPerFrame, double LayersPerFrame, double DrawCmdsPerFrame, double AllocPerFrame,
+            double Gen0Per1k, double Gen1Per1k, double Gen2Per1k, bool CountersDeterministic, string? Error)
         {
-            var md = new StringBuilder();
-            md.AppendLine();
-            md.AppendLine("| 场景 | 模式 | 帧耗时中位(ms) | 帧耗时P95(ms) | 输入耗时中位(ms) | Feature重算/帧 | 图层重录/帧 | 绘制命令/帧 | 分配/帧(B) |");
-            md.AppendLine("|---|---|---:|---:|---:|---:|---:|---:|---:|");
-            var csv = new StringBuilder("scenario,mode,step,pipeline_ms,input_ms,features,layers,draw_cmds,alloc_bytes\n");
+            public string Key => $"bars={Bars}|charts={Charts}|{Scenario}|{ModeKey}";
+        }
 
-            foreach (var r in results)
+        private sealed record Report(string Markdown, string Csv, string Json, List<Entry> Entries);
+
+        private static Report BuildReport(ProbeEnvironment env, ProbeOptions opt, List<Combo> combos, List<StartupResult> startups)
+        {
+            var entries = new List<Entry>();
+            foreach (var c in combos)
             {
-                var s = r.Samples;
-                md.AppendLine(string.Create(CultureInfo.InvariantCulture,
-                    $"| {r.Scenario} | {r.Mode} | {Pct(s.Select(x => x.PipelineMs), 0.5):F3} | {Pct(s.Select(x => x.PipelineMs), 0.95):F3} | " +
-                    $"{Pct(s.Select(x => x.InputMs), 0.5):F3} | {s.Average(x => x.Features):F1} | {s.Average(x => x.Layers):F1} | " +
-                    $"{s.Average(x => x.DrawCmds):F0} | {s.Average(x => x.AllocBytes):F0} |"));
-                for (int i = 0; i < s.Count; i++)
+                if (c.Rounds.Count == 0)
                 {
-                    var x = s[i];
-                    csv.Append(string.Create(CultureInfo.InvariantCulture,
-                        $"{r.Scenario},{r.Mode},{i},{x.PipelineMs:F4},{x.InputMs:F4},{x.Features},{x.Layers},{x.DrawCmds},{x.AllocBytes}\n"));
+                    entries.Add(new Entry(c.Bars, c.Charts, c.Scenario, c.Mode.Key, c.Mode.Name, 0, 0,
+                        double.NaN, double.NaN, double.NaN, double.NaN, double.NaN, double.NaN, double.NaN, double.NaN, double.NaN,
+                        double.NaN, double.NaN, double.NaN, false, c.Error ?? "无数据"));
+                    continue;
+                }
+                var all = c.Rounds.SelectMany(r => r).ToList();
+                var roundMedians = c.Rounds.Select(r => Stats.Percentile(r.Select(s => s.PipelineMs), 0.5)).ToList();
+                var (mean, ci) = Stats.MeanCi95(roundMedians);
+                var featuresPerRound = c.Rounds.Select(r => r.Average(s => (double)s.Features)).ToList();
+                var layersPerRound = c.Rounds.Select(r => r.Average(s => (double)s.Layers)).ToList();
+                var cmdsPerRound = c.Rounds.Select(r => r.Average(s => (double)s.DrawCmds)).ToList();
+                bool deterministic = Spread(featuresPerRound) < 1e-9 && Spread(layersPerRound) < 1e-9 && Spread(cmdsPerRound) < 1e-9;
+                double perK = 1000.0 / all.Count;
+                entries.Add(new Entry(c.Bars, c.Charts, c.Scenario, c.Mode.Key, c.Mode.Name, c.Rounds.Count, all.Count,
+                    mean, ci,
+                    Stats.Percentile(all.Select(s => s.PipelineMs), 0.95),
+                    Stats.Percentile(all.Select(s => s.PipelineMs), 0.99),
+                    Stats.Percentile(all.Select(s => s.InputMs), 0.5),
+                    featuresPerRound.Average(), layersPerRound.Average(), cmdsPerRound.Average(),
+                    all.Average(s => (double)s.AllocBytes),
+                    c.RoundGc.Sum(g => g.Gen0) * perK, c.RoundGc.Sum(g => g.Gen1) * perK, c.RoundGc.Sum(g => g.Gen2) * perK,
+                    deterministic, c.Error));
+            }
+
+            var md = new StringBuilder();
+            md.AppendLine("## render-probe 结果");
+            md.AppendLine();
+            md.AppendLine("```");
+            md.AppendLine(env.Describe());
+            md.AppendLine(string.Create(CultureInfo.InvariantCulture,
+                $"steps={opt.Steps} warmup={opt.Warmup} rounds={opt.Rounds} size={opt.WindowWidth}x{opt.WindowHeight}"));
+            md.AppendLine("```");
+
+            foreach (var g in entries.GroupBy(e => (e.Bars, e.Charts)))
+            {
+                md.AppendLine();
+                md.AppendLine($"### {g.Key.Bars} 根 K 线 × {g.Key.Charts} 张图");
+                md.AppendLine();
+                md.AppendLine("| 场景 | 模式 | 帧耗时中位(ms) 均值±95%CI | P95(ms) | P99(ms) | 输入中位(ms) | Feature重算/帧 | 图层重录/帧 | 绘制命令/帧 | 分配/帧(B) | GC 0/1/2 每千帧 |");
+                md.AppendLine("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+                foreach (var e in g)
+                {
+                    if (e.Error != null && e.Frames == 0)
+                    {
+                        md.AppendLine($"| {e.Scenario} | {e.ModeName} | 失败:{e.Error} | | | | | | | | |");
+                        continue;
+                    }
+                    string mark = e.CountersDeterministic ? "" : " ⚠";
+                    md.AppendLine(string.Create(CultureInfo.InvariantCulture,
+                        $"| {e.Scenario} | {e.ModeName} | {e.MedianMs:F3} ± {e.CiMs:F3} | {e.P95Ms:F3} | {e.P99Ms:F3} | {e.InputMedianMs:F3} | " +
+                        $"{e.FeaturesPerFrame:F1}{mark} | {e.LayersPerFrame:F1}{mark} | {e.DrawCmdsPerFrame:F0}{mark} | {e.AllocPerFrame:F0} | " +
+                        $"{e.Gen0Per1k:F1}/{e.Gen1Per1k:F1}/{e.Gen2Per1k:F1} |"));
+                }
+            }
+            if (entries.Any(e => !e.CountersDeterministic && e.Frames > 0))
+                md.AppendLine().AppendLine("⚠ = 计数在各轮之间不一致(脚本或引擎里有不确定因素),不能作回归门槛。");
+
+            if (startups.Count > 0)
+            {
+                md.AppendLine();
+                md.AppendLine("### Startup(新建窗口 → 装配 → 首帧)");
+                md.AppendLine();
+                md.AppendLine("| K 线根数 | 冷启动 装配/首帧(ms) | 热启动 装配(ms) 中位±95%CI | 热启动 首帧(ms) 中位±95%CI | 分配/次(KB) | 图层数 |");
+                md.AppendLine("|---:|---:|---:|---:|---:|---:|");
+                foreach (var s in startups)
+                {
+                    var warmCompose = s.ComposeMs.Skip(1).ToList();
+                    var warmFirst = s.FirstFrameMs.Skip(1).ToList();
+                    var (cm, cci) = Stats.MedianCi95(warmCompose);
+                    var (fm, fci) = Stats.MedianCi95(warmFirst);
+                    md.AppendLine(string.Create(CultureInfo.InvariantCulture,
+                        $"| {s.Bars} | {s.ComposeMs[0]:F1} / {s.FirstFrameMs[0]:F1} | {cm:F2} ± {cci:F2} | {fm:F2} ± {fci:F2} | " +
+                        $"{s.AllocBytes.Skip(1).DefaultIfEmpty(s.AllocBytes[0]).Average() / 1024:F0} | {s.Layers} |"));
                 }
             }
 
-            // 去掉短路的对照组里,引用比对判脏、而短路本会跳过的图层:不为空说明两者结论不一致,需要看是谁
-            foreach (var r in results.Where(r => r.ShortCircuitMisses > 0))
+            foreach (var c in combos.Where(c => c.ShortCircuitMisses > 0))
             {
                 md.AppendLine();
                 md.AppendLine(string.Create(CultureInfo.InvariantCulture,
-                    $"[render-probe] {r.Scenario}/{r.Mode}: 短路本会跳过、引用比对却判脏 {r.ShortCircuitMisses} 次(共 {r.Samples.Count} 帧)"));
-                foreach (var kv in r.MissDetail.OrderByDescending(kv => kv.Value))
+                    $"[render-probe] {c.Key}: 短路本会跳过、引用比对却判脏 {c.ShortCircuitMisses} 次(共 {c.Rounds.Sum(r => r.Count)} 帧)"));
+                foreach (var kv in c.MissDetail.OrderByDescending(kv => kv.Value))
                     md.AppendLine(string.Create(CultureInfo.InvariantCulture, $"  {kv.Value,6}  {kv.Key}"));
             }
 
-            Console.WriteLine(md.ToString());
-            File.WriteAllText(outPath, csv.ToString(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
-            Console.WriteLine($"[render-probe] 逐帧明细已写入 {Path.GetFullPath(outPath)}");
+            var csv = new StringBuilder("bars,charts,scenario,mode,round,step,pipeline_ms,input_ms,features,layers,draw_cmds,alloc_bytes\n");
+            foreach (var c in combos)
+                for (int r = 0; r < c.Rounds.Count; r++)
+                    for (int i = 0; i < c.Rounds[r].Count; i++)
+                    {
+                        var x = c.Rounds[r][i];
+                        csv.Append(string.Create(CultureInfo.InvariantCulture,
+                            $"{c.Bars},{c.Charts},{c.Scenario},{c.Mode.Key},{r},{i},{x.PipelineMs:F4},{x.InputMs:F4},{x.Features},{x.Layers},{x.DrawCmds},{x.AllocBytes}\n"));
+                    }
+
+            var json = JsonSerializer.Serialize(new
+            {
+                environment = env,
+                options = new { opt.Steps, opt.Warmup, opt.Rounds, opt.WindowWidth, opt.WindowHeight },
+                entries = entries.Select(e => new
+                {
+                    e.Key, e.Bars, e.Charts, e.Scenario, mode = e.ModeKey, e.Rounds, e.Frames,
+                    medianMs = Num(e.MedianMs), ci95Ms = Num(e.CiMs), p95Ms = Num(e.P95Ms), p99Ms = Num(e.P99Ms),
+                    inputMedianMs = Num(e.InputMedianMs),
+                    featuresPerFrame = Num(e.FeaturesPerFrame), layersPerFrame = Num(e.LayersPerFrame),
+                    drawCmdsPerFrame = Num(e.DrawCmdsPerFrame), allocBytesPerFrame = Num(e.AllocPerFrame),
+                    gen0Per1kFrames = Num(e.Gen0Per1k), gen1Per1kFrames = Num(e.Gen1Per1k), gen2Per1kFrames = Num(e.Gen2Per1k),
+                    countersDeterministic = e.CountersDeterministic, error = e.Error,
+                }),
+                startup = startups.Select(s => new { s.Bars, composeMs = s.ComposeMs, firstFrameMs = s.FirstFrameMs, s.Layers }),
+            }, new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+
+            return new Report(md.ToString(), csv.ToString(), json, entries);
         }
 
-        private static double Pct(IEnumerable<double> values, double p)
-        {
-            var sorted = values.OrderBy(v => v).ToArray();
-            if (sorted.Length == 0) return double.NaN;
-            int idx = (int)Math.Ceiling(p * sorted.Length) - 1;
-            return sorted[Math.Clamp(idx, 0, sorted.Length - 1)];
-        }
+        private static double? Num(double v) => double.IsFinite(v) ? Math.Round(v, 4) : null;
+        private static double Spread(List<double> v) => v.Count == 0 ? 0 : v.Max() - v.Min();
 
-        private static void Pump(int ms)
+        internal static void Pump(int ms)
         {
             var frame = new DispatcherFrame();
             var timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(ms) };
@@ -340,12 +562,247 @@ namespace Hevo.Charting.Benchmarks
             timer.Start();
             Dispatcher.PushFrame(frame);
         }
+    }
 
-        private static string? ExtractArg(string[] args, string prefix)
+    /// <summary>命令行参数。</summary>
+    internal sealed class ProbeOptions
+    {
+        public int[] Bars = { 2000 };
+        public int[] Charts = { 1 };
+        public int Steps = 300;
+        public int Warmup = 100;
+        public int Rounds = 5;
+        public int WindowWidth = 1280, WindowHeight = 720;
+        public string[] Scenarios = RenderProbe.AllScenarios;
+        public RenderProbe.Mode[] Modes = RenderProbe.AllModes;
+        public bool Startup = true;
+        public string OutCsv = "render-probe.csv";
+        public string OutMd = "render-probe.md";
+        public string OutJson = "render-probe.json";
+        public string? Baseline;
+        public string? WriteBaseline;
+        public double Tolerance = 0.02;
+        public string? SummaryFile;
+
+        public static ProbeOptions Parse(string[] args)
+        {
+            var o = new ProbeOptions();
+            if (Has(args, "--ci"))
+            {
+                // CI:只测增量(默认)模式的计数,窗口缩小到 960x540(托管 runner 屏幕 1024x768,窗口过大会被系统截掉,计数就跟本机对不上)
+                o.Steps = 120; o.Warmup = 20; o.Rounds = 1; o.Startup = false;
+                o.WindowWidth = 960; o.WindowHeight = 540;
+                o.Modes = RenderProbe.AllModes.Where(m => m.Key == "inc").ToArray();
+                o.SummaryFile = Environment.GetEnvironmentVariable("GITHUB_STEP_SUMMARY");
+            }
+            if (Get(args, "--bars=") is { } bars) o.Bars = Ints(bars);
+            if (Get(args, "--charts=") is { } charts) o.Charts = Ints(charts);
+            if (Get(args, "--steps=") is { } steps) o.Steps = int.Parse(steps, CultureInfo.InvariantCulture);
+            if (Get(args, "--warmup=") is { } warm) o.Warmup = int.Parse(warm, CultureInfo.InvariantCulture);
+            if (Get(args, "--rounds=") is { } rounds) o.Rounds = Math.Max(1, int.Parse(rounds, CultureInfo.InvariantCulture));
+            if (Get(args, "--window=") is { } win)
+            {
+                var wh = win.Split('x', 'X');
+                o.WindowWidth = int.Parse(wh[0], CultureInfo.InvariantCulture);
+                o.WindowHeight = int.Parse(wh[1], CultureInfo.InvariantCulture);
+            }
+            if (Get(args, "--scenarios=") is { } sc)
+            {
+                var want = sc.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                o.Scenarios = RenderProbe.AllScenarios.Where(s => want.Contains(s, StringComparer.OrdinalIgnoreCase)).ToArray();
+                if (want.Contains("Startup", StringComparer.OrdinalIgnoreCase)) o.Startup = true;
+                else if (!want.Contains("all", StringComparer.OrdinalIgnoreCase)) o.Startup = false;
+                if (want.Contains("all", StringComparer.OrdinalIgnoreCase)) o.Scenarios = RenderProbe.AllScenarios;
+            }
+            if (Get(args, "--modes=") is { } modes && modes != "all")
+            {
+                var want = modes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                o.Modes = RenderProbe.AllModes.Where(m => want.Contains(m.Key, StringComparer.OrdinalIgnoreCase)).ToArray();
+            }
+            if (Has(args, "--no-startup")) o.Startup = false;
+            if (Get(args, "--out=") is { } outCsv)
+            {
+                o.OutCsv = outCsv;
+                var stem = Path.Combine(Path.GetDirectoryName(outCsv) ?? "", Path.GetFileNameWithoutExtension(outCsv));
+                o.OutMd = stem + ".md";
+                o.OutJson = stem + ".json";
+            }
+            o.Baseline = Get(args, "--baseline=");
+            o.WriteBaseline = Get(args, "--write-baseline=");
+            if (Get(args, "--tolerance=") is { } tol) o.Tolerance = double.Parse(tol, CultureInfo.InvariantCulture);
+            return o;
+        }
+
+        private static int[] Ints(string s) => s.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(x => int.Parse(x.Trim(), CultureInfo.InvariantCulture)).ToArray();
+
+        internal static bool Has(string[] args, string flag) => args.Contains(flag, StringComparer.Ordinal);
+
+        internal static string? Get(string[] args, string prefix)
         {
             foreach (var a in args)
                 if (a.StartsWith(prefix, StringComparison.Ordinal)) return a.Substring(prefix.Length);
             return null;
+        }
+    }
+
+    /// <summary>
+    /// 一个测量窗口:1 张或 N 张图(UniformGrid 排布),每张图有自己的 schema / 黑板 / 数据。
+    /// 尺寸定在内容上(窗口 SizeToContent),不定在窗口上 —— 不同 Windows 版本的标题栏 / 边框宽度不同,
+    /// 定窗口尺寸会让绘图区差几个像素,计数类指标就跟基线对不上。
+    /// </summary>
+    internal sealed class ProbeRig : IDisposable
+    {
+        public Window Window { get; }
+        public List<ProbeChart> Charts { get; }
+        private readonly FrameworkElement _content;
+        private readonly double _baseWidth;
+
+        private ProbeRig(Window window, FrameworkElement content, List<ProbeChart> charts)
+        {
+            Window = window;
+            _content = content;
+            Charts = charts;
+            _baseWidth = content.Width;
+        }
+
+        public static ProbeRig? Create(ProbeOptions opt, int bars, int charts, int extraCapacity)
+        {
+            var list = Enumerable.Range(0, charts).Select(_ => ProbeChart.Create(bars, extraCapacity)).ToList();
+            FrameworkElement content;
+            if (charts == 1) content = list[0].Cell;
+            else
+            {
+                int cols = (int)Math.Ceiling(Math.Sqrt(charts));
+                var grid = new UniformGrid { Columns = cols, Rows = (int)Math.Ceiling(charts / (double)cols) };
+                foreach (var ch in list) grid.Children.Add(ch.Cell);
+                content = grid;
+            }
+            content.Width = opt.WindowWidth;
+            content.Height = opt.WindowHeight;
+
+            var window = new Window
+            {
+                Title = "Hevo render probe",
+                SizeToContent = SizeToContent.WidthAndHeight,
+                ResizeMode = ResizeMode.NoResize,
+                Content = content,
+                WindowStartupLocation = WindowStartupLocation.CenterScreen,
+            };
+            window.Show();
+            RenderProbe.Pump(300); // 等 OnApplyTemplate → ComposeAll + SizeChanged
+
+            foreach (var ch in list) ch.LoadData();
+            RenderProbe.Pump(300);
+            foreach (var ch in list) ch.Cell.RunFrameNow(PlotMode.Sync);
+
+            foreach (var ch in list)
+            {
+                using var ctx = ch.Cell.CreateContext();
+                if (ctx.GetPlotArea().IsEmpty || ch.Cell.ActiveLayers.Count == 0)
+                {
+                    Console.Error.WriteLine("[render-probe] 图表没有完成装配(PlotArea 为空或没有图层),放弃测量。");
+                    window.Close();
+                    return null;
+                }
+            }
+            return new ProbeRig(window, content, list);
+        }
+
+        /// <summary>归位:数据长度回到初始、视口回到最右 120 根、清掉 hover、尺寸回到原宽。</summary>
+        public void ResetAll()
+        {
+            if (Math.Abs(_content.Width - _baseWidth) > 0.5)
+            {
+                _content.Width = _baseWidth;
+                Window.UpdateLayout();
+            }
+            foreach (var ch in Charts) ch.Reset();
+        }
+
+        // 宽度三角波:每步 8px,在原宽和原宽 -168px 之间来回。走真实的 WPF 布局 → SizeChanged → 环境纪元 → FullPass。
+        public void ResizeStep(int i)
+        {
+            int e = i % 40;
+            if (e > 20) e = 40 - e;
+            _content.Width = _baseWidth - 8 * (e + 1);
+            Window.UpdateLayout();
+        }
+
+        public void Dispose()
+        {
+            Window.Close();
+            RenderProbe.Pump(50);
+        }
+    }
+
+    /// <summary>一张图:schema + cell + 黑板 + 数据(数组预留了追加用的容量)。</summary>
+    internal sealed class ProbeChart
+    {
+        public required ProbeKLineSchema Schema { get; init; }
+        public required ChartCell Cell { get; init; }
+        public required DataBlackboard Board { get; init; }
+        public required ProbeData Data { get; init; }
+        public required int InitialLength { get; init; }
+        /// <summary>当前对外可见的 K 线根数(Append 场景会增长)。</summary>
+        public int Length { get; set; }
+
+        public static ProbeChart Create(int bars, int extraCapacity)
+        {
+            var schema = new ProbeKLineSchema();
+            return new ProbeChart
+            {
+                Schema = schema,
+                Cell = new ChartCell { Template = schema },
+                Board = new DataBlackboard(),
+                Data = ProbeData.Generate(bars + extraCapacity),
+                InitialLength = bars,
+                Length = bars,
+            };
+        }
+
+        public ReadOnlyMemory<T> Slice<T>(T[] array) => new(array, 0, Length);
+
+        public void LoadData()
+        {
+            WriteSeries(follow: false);
+            Schema.Trigger.Push(Board);
+            Schema.InvalidateEnvironment();
+        }
+
+        public void WriteSeries(bool follow)
+        {
+            var p = Schema.Ports;
+            using (Board.BeginTransaction())
+            {
+                Board.WriteIfChanged(p.Time, Slice(Data.Time));
+                Board.WriteIfChanged(p.Open, Slice(Data.Open));
+                Board.WriteIfChanged(p.High, Slice(Data.High));
+                Board.WriteIfChanged(p.Low, Slice(Data.Low));
+                Board.WriteIfChanged(p.Close, Slice(Data.Close));
+                Board.WriteIfChanged(Schema.SmaPort, Slice(Data.Sma));
+                Board.WriteIfChanged(Schema.Viewport.LogicalLength, Length);
+                if (follow)
+                {
+                    var active = Board.Read(Schema.Viewport.ActiveRange);
+                    double span = active.IsValid ? active.Max - active.Min : 119;
+                    Board.WriteIfChanged(Schema.Viewport.UserRange, new RealRange(Length - 1 - span, Length - 1));
+                }
+            }
+        }
+
+        public void Reset()
+        {
+            if (Length != InitialLength)
+            {
+                Length = InitialLength;
+                WriteSeries(follow: false);
+            }
+            using (Board.AcquireWriteLock())
+            {
+                Board.WriteIfChanged(Schema.HitPortForProbe, null);
+                Board.WriteIfChanged(Schema.Viewport.UserRange, new RealRange(Length - 120, Length - 1));
+            }
         }
     }
 

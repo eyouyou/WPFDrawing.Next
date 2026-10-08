@@ -1,0 +1,69 @@
+# 构建 + 单测 + 渲染计数回归门槛 + 微基准冒烟。
+#
+# 回归门槛只看确定性计数(Feature 重算/帧、图层重录/帧、绘制命令/帧),不看耗时:
+# 托管 runner 是共享机器、软件渲染,耗时噪声太大,拿来设阈值只会误报。耗时数据在本机跑
+# render-probe / latency-probe / BenchmarkDotNet,见 Hevo.Charting.Benchmarks/README.md。
+#
+# 改了渲染路径、计数有意变化时:下载本次的 render-probe 产物,用里面的数字更新
+# Hevo.Charting.Benchmarks/render-probe-baseline.json(或本机跑 --render-probe --ci --write-baseline=...)。
+name: perf-regression
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: perf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-probe:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # 嵌入式 Python(PythonNet 测试和沙箱探针要用),首次 build 由 scripts/setup-python.ps1 下载
+      - name: 缓存嵌入式 Python
+        uses: actions/cache@v4
+        with:
+          path: Python312
+          key: python312-${{ runner.os }}-${{ hashFiles('scripts/setup-python.ps1') }}
+
+      - name: 构建
+        run: |
+          dotnet build Hevo.Charting.Tests -c Release
+          dotnet build Hevo.Charting.Benchmarks -c Release
+
+      - name: 单元测试
+        run: dotnet test Hevo.Charting.Tests -c Release --no-build --logger "trx;LogFileName=tests.trx" --results-directory artifacts/tests
+
+      - name: render-probe 计数回归门槛
+        run: >
+          dotnet run -c Release --no-build --project Hevo.Charting.Benchmarks --
+          --render-probe --ci
+          --baseline=Hevo.Charting.Benchmarks/render-probe-baseline.json
+          --out=artifacts/render-probe/render-probe.csv
+
+      - name: 微基准冒烟(Dry job,只验证能跑,不出耗时)
+        run: >
+          dotnet run -c Release --no-build --project Hevo.Charting.Benchmarks --
+          --filter "*SubmitSync*" "*ProjectAll*" "*FrameScaling*" "*BlackboardTransaction*"
+          --job Dry --artifacts artifacts/bdn
+
+      - name: 上传产物
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-artifacts
+          path: artifacts/
+          if-no-files-found: ignore

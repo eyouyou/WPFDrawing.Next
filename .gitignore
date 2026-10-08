@@ -271,3 +271,10 @@ healthchecksdb
 BenchmarkDotNet.Artifacts/
 
 /DataAnalysis
+
+# render-probe / latency-probe 本地输出(基线 render-probe-baseline.json 要入库,不在此列)
+render-probe.csv
+render-probe.md
+render-probe.json
+latency-probe.csv
+latency-probe.md

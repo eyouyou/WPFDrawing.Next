@@ -27,10 +27,15 @@ namespace Hevo.Charting.Benchmarks
             if (args.Length > 0 && args[0] == "--sandbox-probe")
                 return SandboxProbeMain(args);
 
-            // 增量渲染前后对比(真窗口,非 BenchmarkDotNet):
-            //   `dotnet run -c Release -- --render-probe [--bars=2000] [--steps=600] [--out=render-probe.csv]`
+            // 增量渲染前后对比(真窗口,非 BenchmarkDotNet,UI 线程 CPU 管线):
+            //   `dotnet run -c Release -- --render-probe [--bars=2000,100000] [--charts=1,4] [--rounds=5] [--baseline=...]`
             if (args.Length > 0 && args[0] == "--render-probe")
                 return RenderProbe.Run(args);
+
+            // 输入到画面的端到端延迟(SendInput + 抓屏,含 WPF 渲染线程合成上屏):
+            //   `dotnet run -c Release -- --latency-probe [--samples=150]`
+            if (args.Length > 0 && args[0] == "--latency-probe")
+                return LatencyProbe.Run(args);
 
             BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
             return 0;
