@@ -76,6 +76,9 @@ namespace Hevo.Charting.Benchmarks
             public long ShortCircuitMisses;
             public readonly Dictionary<string, long> MissDetail = new();
             public string? Error;
+            // --alloc-types:各轮 GCAllocationTick 采样按 (类型, LOH) 累加
+            public readonly Dictionary<(string Type, bool Large), (long Ticks, long Bytes, long MaxObj)> AllocTypes = new();
+            public int AllocFrames;
             public string Key => $"bars={Bars}|charts={Charts}|{Scenario}|{Mode.Key}";
         }
 
@@ -84,6 +87,7 @@ namespace Hevo.Charting.Benchmarks
         public static int Run(string[] args)
         {
             var opt = ProbeOptions.Parse(args);
+            if (opt.AllocTypes) s_allocSampler = new AllocTypeSampler();
             int exit = 0;
             var thread = new Thread(() =>
             {
@@ -143,6 +147,7 @@ namespace Hevo.Charting.Benchmarks
             }
 
             var report = BuildReport(env, opt, combos, startups);
+            if (s_allocSampler != null) report = report with { Markdown = report.Markdown + AllocTypesMarkdown(combos) };
             Console.WriteLine(report.Markdown);
 
             foreach (var f in new[] { opt.OutCsv, opt.OutMd, opt.OutJson })
@@ -192,8 +197,21 @@ namespace Hevo.Charting.Benchmarks
                 IncrementalRenderProbe.ShortCircuitMissDetail.Clear();
 
                 var samples = new List<Sample>(steps);
+                var sampler = record ? s_allocSampler : null;
+                sampler?.Begin();
                 int g0 = GC.CollectionCount(0), g1 = GC.CollectionCount(1), g2 = GC.CollectionCount(2);
                 for (int i = 0; i < steps; i++) samples.Add(RunStep(rig, step, i, c.Mode.Plot));
+                if (sampler != null)
+                {
+                    Pump(500); // EventPipe 异步派发,等缓冲里的采样事件到齐
+                    foreach (var r in sampler.End())
+                    {
+                        var k = (r.Type, r.Large);
+                        var old = c.AllocTypes.GetValueOrDefault(k);
+                        c.AllocTypes[k] = (old.Ticks + r.Ticks, old.Bytes + r.SampledBytes, Math.Max(old.MaxObj, r.MaxObjectSize));
+                    }
+                    c.AllocFrames += steps;
+                }
                 if (!record) return;
 
                 c.Rounds.Add(samples);
@@ -214,6 +232,24 @@ namespace Hevo.Charting.Benchmarks
                 rig.ResetAll();
                 RunFrame(rig, PlotMode.Sync);
             }
+        }
+
+        private static AllocTypeSampler? s_allocSampler;
+
+        private static string AllocTypesMarkdown(List<Combo> combos)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine();
+            sb.AppendLine("### 分配类型采样(--alloc-types,GCAllocationTick,UI 线程,含脚本输入)");
+            sb.AppendLine();
+            foreach (var c in combos.Where(c => c.AllocFrames > 0))
+            {
+                var rows = c.AllocTypes
+                    .Select(kv => new AllocTypeSampler.Row(kv.Key.Type, kv.Key.Large, kv.Value.Ticks, kv.Value.Bytes, kv.Value.MaxObj))
+                    .OrderByDescending(r => r.SampledBytes).ToList();
+                sb.AppendLine(AllocTypeSampler.Format($"{c.Key}", rows, c.AllocFrames));
+            }
+            return sb.ToString();
         }
 
         private static void Apply(Mode m)
@@ -583,6 +619,7 @@ namespace Hevo.Charting.Benchmarks
         public string? WriteBaseline;
         public double Tolerance = 0.02;
         public string? SummaryFile;
+        public bool AllocTypes;
 
         public static ProbeOptions Parse(string[] args)
         {
@@ -620,6 +657,7 @@ namespace Hevo.Charting.Benchmarks
                 o.Modes = RenderProbe.AllModes.Where(m => want.Contains(m.Key, StringComparer.OrdinalIgnoreCase)).ToArray();
             }
             if (Has(args, "--no-startup")) o.Startup = false;
+            if (Has(args, "--alloc-types")) o.AllocTypes = true;
             if (Get(args, "--out=") is { } outCsv)
             {
                 o.OutCsv = outCsv;
