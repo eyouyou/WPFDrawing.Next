@@ -15,7 +15,7 @@ namespace Hevo.Charting.Buildin
         private readonly int _period;
 
         private VersionToken _lastVersion;
-        private double[]? _rentedArray;
+        private readonly ColumnBufferRing<double> _ring = new();
 
         public WindowMapIngestor(
             DataPort<ReadOnlyMemory<double>> targetPort,
@@ -45,13 +45,9 @@ namespace Hevo.Charting.Buildin
             int len = _lengthProvider();
             if (len <= 0) return;
 
-            if (_rentedArray == null || _rentedArray.Length < len)
-            {
-                if (_rentedArray != null) ArrayPool<double>.Shared.Return(_rentedArray);
-                _rentedArray = ArrayPool<double>.Shared.Rent(len);
-            }
-
-            Span<double> span = _rentedArray.AsSpan(0, len);
+            // 每次发布写进一块没有读者的缓冲,见 ColumnBufferRing(raw 是本方法内的临时数组,照旧走 ArrayPool)
+            var target = _ring.Rent(len);
+            Span<double> span = target.AsSpan(0, len);
 
             // 💥 内存降维：直接基于 Span 提取，并将大管家透传给业务层！
             double[] raw = ArrayPool<double>.Shared.Rent(len);
@@ -67,13 +63,11 @@ namespace Hevo.Charting.Buildin
             }
 
             ArrayPool<double>.Shared.Return(raw);
-            board.ForceWrite(_targetPort, new ReadOnlyMemory<double>(_rentedArray, 0, len));
+            board.ForceWrite(_targetPort, new ReadOnlyMemory<double>(target, 0, len));
+            _ring.Published(target);
         }
 
-        public void Dispose()
-        {
-            if (_rentedArray != null) { ArrayPool<double>.Shared.Return(_rentedArray); _rentedArray = null; }
-        }
+        public void Dispose() { }
     }
 
     // ==========================================

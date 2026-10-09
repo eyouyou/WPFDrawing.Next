@@ -52,6 +52,9 @@ namespace Hevo.Charting.WorkFlow
             object[] listenPorts,
             Action<DataBlackboard> sideEffect)
         {
+            // 同步回调同样可能锁内取列、锁外读(多个数据源从不同线程写同一块黑板时会并发):登记为列读者
+            var inner = sideEffect;
+            sideEffect = b => { using (LowCode.ColumnReaders.Enter()) inner(b); };
 #if DEBUG
             // 拓扑追踪闭环:跟 WatchAsync 对称,把 sideEffect 包在 EnterScope(owner) 里。
             // 否则 sync Watch 回调里的 board.Read(...) 因为 _currentCaller.Value == null
@@ -89,6 +92,9 @@ namespace Hevo.Charting.WorkFlow
 #if DEBUG
                     using (DevTools.TopologyTracer.EnterScope(owner))
 #endif
+                    // 回调里读锁内取列引用、锁外读元素(ComputeFeature 的三段式):登记为列读者,
+                    // 摄入器在本回调结束前不会改写它可能拿到的缓冲
+                    using (LowCode.ColumnReaders.Enter())
                     {
                         sideEffect(b);
                     }

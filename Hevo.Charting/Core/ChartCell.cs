@@ -623,6 +623,9 @@ namespace Hevo.Charting.Core
         // 一帧的完整工作:排队事务 → 管线 → 上屏。_processingBuffer 由 SwapPendingUpdates 换出。
         private void RunSwappedFrame(PlotMode mode)
         {
+            // 整帧(ProjectAll → 图层录制 → 上屏)登记为列读者:trait 里的列在锁外读,
+            // 摄入器在本帧结束前不会改写它可能拿到的缓冲(见 LowCode.ColumnReaders)
+            using var readers = LowCode.ColumnReaders.Enter();
             using var ctx = new RenderContext(_sharedData, _localData);
 
             // 直接 for 索引迭代,跳过 List<T>.Enumerator 的 IDisposable 调用链。

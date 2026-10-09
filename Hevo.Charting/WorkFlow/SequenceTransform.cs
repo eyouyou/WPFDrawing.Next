@@ -22,7 +22,7 @@ namespace Hevo.Charting.WorkFlow
         private readonly ISequenceTransform _transform;
 
         private VersionToken _lastVersion; // 💥 查脏哨兵
-        private double[]? _rentedArray;
+        private readonly ColumnBufferRing<double> _ring = new();
 
         public AoSSequenceTransformIngestor(
             DataPort<ReadOnlyMemory<double>> targetPort,
@@ -44,28 +44,22 @@ namespace Hevo.Charting.WorkFlow
             int len = _lengthProvider();
             if (len <= 0) return;
 
-            // 1. 目标内存智能扩容
-            if (_rentedArray == null || _rentedArray.Length < len)
-            {
-                if (_rentedArray != null) ArrayPool<double>.Shared.Return(_rentedArray);
-                _rentedArray = ArrayPool<double>.Shared.Rent(len);
-            }
+            // 1. 目标缓冲:每次发布写进一块没有读者的缓冲,见 ColumnBufferRing
+            var target = _ring.Rent(len);
 
             // 2. 榨取降维：将 Span 投喂给自定义委托，并透传 _sourceRef 消除闭包！
             double[] rawSource = _sourceExtractor(snapshot.AsSpan(), _sourceRef);
 
             // 3. 💥 跨界调用：将 Span 投喂给纯数学变换层
-            _transform.Transform(rawSource.AsSpan(0, len), _rentedArray.AsSpan(0, len));
+            _transform.Transform(rawSource.AsSpan(0, len), target.AsSpan(0, len));
 
             // 4. 打扫战场并上板
             ArrayPool<double>.Shared.Return(rawSource);
-            board.ForceWrite(_targetPort, new ReadOnlyMemory<double>(_rentedArray, 0, len));
+            board.ForceWrite(_targetPort, new ReadOnlyMemory<double>(target, 0, len));
+            _ring.Published(target);
         }
 
-        public void Dispose()
-        {
-            if (_rentedArray != null) { ArrayPool<double>.Shared.Return(_rentedArray); _rentedArray = null; }
-        }
+        public void Dispose() { }
     }
 
     // ==========================================

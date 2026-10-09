@@ -26,6 +26,7 @@ namespace Hevo.Charting.WorkFlow
 
         // 跨帧复用的合并输出缓冲（只增不减）
         private DateTime[] _mergedTimes = Array.Empty<DateTime>();
+        private readonly ColumnBufferRing<DateTime> _timeRing = new();
         private int _mergedCount;
         private SourceEntryBase[] _snapshotBuf = Array.Empty<SourceEntryBase>();
 
@@ -186,8 +187,8 @@ namespace Hevo.Charting.WorkFlow
                 e.Cursor = 0;
             }
 
-            // 2. 按需扩容合并缓冲（只增不减，稳态 0 分配）
-            if (_mergedTimes.Length < maxTotal) _mergedTimes = new DateTime[maxTotal];
+            // 2. 输出缓冲:每次合并写进一块没有读者的缓冲(锁外读者可能还拿着上一次发布的列),见 ColumnBufferRing
+            _mergedTimes = _timeRing.Rent(maxTotal);
             for (int i = 0; i < n; i++) _snapshotBuf[i].EnsureBuffers(maxTotal);
 
             // 3. N-arity 多路归并：每步扫 N 个游标找最小 Time，对齐 NaN 填空
@@ -229,6 +230,7 @@ namespace Hevo.Charting.WorkFlow
 
             // 4. 写黑板（board 已在 UniversalDataPipe.Process 的 BeginTransaction 内）
             board.ForceWrite(_timePort, new ReadOnlyMemory<DateTime>(_mergedTimes, 0, merged));
+            _timeRing.Published(_mergedTimes);
             for (int i = 0; i < n; i++) _snapshotBuf[i].WriteOutputs(board, merged);
 
             if (_vp != null)
@@ -300,10 +302,7 @@ namespace Hevo.Charting.WorkFlow
             public override void EnsureBuffers(int capacity)
             {
                 for (int k = 0; k < _emitters.Length; k++)
-                {
-                    if (_emitters[k].Buffer.Length < capacity)
-                        _emitters[k].Buffer = new double[capacity];
-                }
+                    _emitters[k].Buffer = _emitters[k].Ring.Rent(capacity);
             }
 
             public override void EmitAt(int merged, int snapIndex, bool missing)
@@ -323,7 +322,10 @@ namespace Hevo.Charting.WorkFlow
             public override void WriteOutputs(DataBlackboard board, int length)
             {
                 for (int k = 0; k < _emitters.Length; k++)
+                {
                     board.ForceWrite(_emitters[k].Port, new ReadOnlyMemory<double>(_emitters[k].Buffer, 0, length));
+                    _emitters[k].Ring.Published(_emitters[k].Buffer);
+                }
             }
         }
 
@@ -332,6 +334,7 @@ namespace Hevo.Charting.WorkFlow
             public readonly Func<TItem, TSource, double> Selector;
             public readonly DataPort<ReadOnlyMemory<double>> Port;
             public double[] Buffer = Array.Empty<double>();
+            public readonly ColumnBufferRing<double> Ring = new();
 
             public EmitterSlot(Func<TItem, TSource, double> selector, DataPort<ReadOnlyMemory<double>> port)
             {

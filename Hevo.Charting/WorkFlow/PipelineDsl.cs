@@ -258,7 +258,8 @@ namespace Hevo.Charting.WorkFlow
         private readonly Func<TItem, TSource, TValue> _selector;
 
         private VersionToken _lastVersion; // 💥 显式查脏哨兵
-        private TValue[] _buffer = Array.Empty<TValue>();
+        // 每次发布写进一块没有读者的缓冲,见 ColumnBufferRing
+        private readonly ColumnBufferRing<TValue> _ring = new();
 
         public FastSourceMapIngestor(DataPort<ReadOnlyMemory<TValue>> port, Func<int> lenProv, TSource source, Func<TItem, TSource, TValue> selector)
         {
@@ -275,14 +276,16 @@ namespace Hevo.Charting.WorkFlow
             int len = _lengthProvider();
             if (len <= 0) return;
 
-            if (_buffer.Length < len) Array.Resize(ref _buffer, len);
-
+            var target = _ring.Rent(Math.Max(len, items.Length));
             for (int i = 0; i < items.Length; i++)
             {
-                _buffer[i] = _selector(items[i], _source);
+                target[i] = _selector(items[i], _source);
             }
 
-            board.WriteIfChanged(_port, _buffer.AsMemory(0, items.Length));
+            // 以前原地覆盖同一块数组再 WriteIfChanged:长度不变时 ROM 判等,不发通知,下游拿不到更新
+            // (而旧 ROM 指向的数据已经被改了)。现在每次都是新缓冲,直接 ForceWrite。
+            board.ForceWrite(_port, target.AsMemory(0, items.Length));
+            _ring.Published(target);
         }
     }
 
@@ -298,7 +301,7 @@ namespace Hevo.Charting.WorkFlow
         private readonly Func<TItem, TSource, TState, TValue> _selector;
 
         private VersionToken _lastVersion; // 💥 显式查脏哨兵
-        private TValue[] _buffer = Array.Empty<TValue>();
+        private readonly ColumnBufferRing<TValue> _ring = new();
 
         public FastStateMapIngestor(DataPort<ReadOnlyMemory<TValue>> port, Func<int> lenProv, TSource source, TState state, Func<TItem, TSource, TState, TValue> selector)
         {
@@ -314,14 +317,14 @@ namespace Hevo.Charting.WorkFlow
             int len = _lengthProvider();
             if (len <= 0) return;
 
-            if (_buffer.Length < len) Array.Resize(ref _buffer, len);
-
+            var target = _ring.Rent(Math.Max(len, items.Length));
             for (int i = 0; i < items.Length; i++)
             {
-                _buffer[i] = _selector(items[i], _source, _state);
+                target[i] = _selector(items[i], _source, _state);
             }
 
-            board.WriteIfChanged(_port, _buffer.AsMemory(0, items.Length));
+            board.ForceWrite(_port, target.AsMemory(0, items.Length)); // 同 FastSourceMapIngestor
+            _ring.Published(target);
         }
     }
 

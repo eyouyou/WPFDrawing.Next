@@ -41,7 +41,8 @@ namespace Hevo.Charting.LowCode
         private readonly Func<TItem, TValue> _valueSelector;
 
         private VersionToken _lastVersion;
-        private TValue[]? _rentedArray;
+        // 每次发布写进一块没有读者的缓冲(锁外读者可能还拿着上一块),见 ColumnBufferRing
+        private readonly ColumnBufferRing<TValue> _ring = new();
 
         public ScatterIngestor(DataPort<ReadOnlyMemory<TValue>> targetPort, Func<int> lengthProvider, TValue defaultValue, Func<TItem, int>? indexSelector, Func<TItem, TValue> valueSelector)
         {
@@ -60,13 +61,8 @@ namespace Hevo.Charting.LowCode
             int exactLength = _lengthProvider();
             if (exactLength <= 0) return;
 
-            if (_rentedArray == null || _rentedArray.Length < exactLength)
-            {
-                if (_rentedArray != null) ArrayPool<TValue>.Shared.Return(_rentedArray, clearArray: false);
-                _rentedArray = ArrayPool<TValue>.Shared.Rent(exactLength);
-            }
-
-            Span<TValue> span = _rentedArray.AsSpan(0, exactLength);
+            var target = _ring.Rent(exactLength);
+            Span<TValue> span = target.AsSpan(0, exactLength);
             span.Fill(_defaultValue);
 
             // 💥 极速离散映射，直接操作 Span
@@ -76,13 +72,12 @@ namespace Hevo.Charting.LowCode
                 if ((uint)idx < (uint)exactLength) span[idx] = _valueSelector(sourceSpan[i]);
             }
 
-            board.ForceWrite(_targetPort, new ReadOnlyMemory<TValue>(_rentedArray, 0, exactLength));
+            board.ForceWrite(_targetPort, new ReadOnlyMemory<TValue>(target, 0, exactLength));
+            _ring.Published(target);
         }
 
-        public void Dispose()
-        {
-            if (_rentedArray != null) { ArrayPool<TValue>.Shared.Return(_rentedArray, clearArray: false); _rentedArray = null; }
-        }
+        // 缓冲不再来自 ArrayPool(还回去会被别人租走改写,而读者可能还拿着),交给 GC
+        public void Dispose() { }
     }
 
     /// <summary>
