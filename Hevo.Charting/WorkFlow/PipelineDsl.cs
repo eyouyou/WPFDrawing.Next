@@ -266,6 +266,28 @@ namespace Hevo.Charting.WorkFlow
             _port = port; _lengthProvider = lenProv; _source = source; _selector = selector;
         }
 
+        /// <summary>
+        /// 内容跟上一次发布的一样就不发布(缓冲还回轮换环),不一样才 ForceWrite。
+        /// 以前原地覆盖同一块数组再 WriteIfChanged:比的是 ROM(同数组同长度即相等),长度不变时内容变了也不通知(漏通知),
+        /// 长度一变就通知;现在按内容比:变了才通知、没变不通知 —— AutoMap 生成的就是这类 Map,
+        /// tick 时 Time / 历史 OHLC 列不变,不能每次推送都把依赖它们的 Feature / 图层叫醒。
+        /// </summary>
+        internal static void PublishIfContentChanged(DataBlackboard board, DataPort<ReadOnlyMemory<TValue>> port,
+            ColumnBufferRing<TValue> ring, TValue[] target, int length)
+        {
+            var current = ring.Current;
+            var fresh = new ReadOnlySpan<TValue>(target, 0, length);
+            if (current != null && board.Read(port) is var published
+                && published.Length == length && published.Span == new ReadOnlySpan<TValue>(current, 0, length)
+                && fresh.SequenceEqual(published.Span, null))
+            {
+                ring.Unused(target);
+                return;
+            }
+            board.ForceWrite(port, new ReadOnlyMemory<TValue>(target, 0, length));
+            ring.Published(target);
+        }
+
         public void Process(DataSnapshot<TItem> snapshot, DataBlackboard board)
         {
             // 💥 极速查脏：宁愿重复这行代码，也要保持类的扁平和直观！
@@ -282,10 +304,7 @@ namespace Hevo.Charting.WorkFlow
                 target[i] = _selector(items[i], _source);
             }
 
-            // 以前原地覆盖同一块数组再 WriteIfChanged:长度不变时 ROM 判等,不发通知,下游拿不到更新
-            // (而旧 ROM 指向的数据已经被改了)。现在每次都是新缓冲,直接 ForceWrite。
-            board.ForceWrite(_port, target.AsMemory(0, items.Length));
-            _ring.Published(target);
+            PublishIfContentChanged(board, _port, _ring, target, items.Length);
         }
     }
 
@@ -323,8 +342,7 @@ namespace Hevo.Charting.WorkFlow
                 target[i] = _selector(items[i], _source, _state);
             }
 
-            board.ForceWrite(_port, target.AsMemory(0, items.Length)); // 同 FastSourceMapIngestor
-            _ring.Published(target);
+            FastSourceMapIngestor<TSource, TItem, TValue>.PublishIfContentChanged(board, _port, _ring, target, items.Length);
         }
     }
 

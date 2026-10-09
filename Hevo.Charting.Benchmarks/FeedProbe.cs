@@ -154,18 +154,32 @@ namespace Hevo.Charting.Benchmarks
             SeqFeature = new SeqProbeFeature { SeqPort = SeqPort };
         }
 
+        /// <summary>
+        /// --feed-map=scatter(默认):<c>Map(port, b =&gt; b.X)</c> → ScatterIngestor(每次推送都 ForceWrite);
+        /// source:<c>Map(port, (b, _) =&gt; b.X)</c> → FastSourceMapIngestor,跟 AutoMap 生成的代码同一条路径。
+        /// </summary>
+        public static bool SourceMap;
+
         protected override void DefineDataFlow(ChartCell chart)
         {
-            _ds.Pipe()
-                .LinkStream(cfg => cfg
+            var pipe = _ds.Pipe();
+            if (SourceMap)
+                pipe.LinkStream(cfg => cfg
+                    .Map(TimePort, static (b, _) => b.Time)
+                    .Map(OpenPort, static (b, _) => b.Open)
+                    .Map(HighPort, static (b, _) => b.High)
+                    .Map(LowPort, static (b, _) => b.Low)
+                    .Map(ClosePort, static (b, _) => b.Close)
+                    .Map(SeqPort, static (b, _) => b.Seq));
+            else
+                pipe.LinkStream(cfg => cfg
                     .Map(TimePort, b => b.Time)
                     .Map(OpenPort, b => b.Open)
                     .Map(HighPort, b => b.High)
                     .Map(LowPort, b => b.Low)
                     .Map(ClosePort, b => b.Close)
-                    .Map(SeqPort, b => b.Seq))
-                .ProjectExtent(ViewportPorts.RequireAttached(Chart))
-                .BindTo(chart);
+                    .Map(SeqPort, b => b.Seq));
+            pipe.ProjectExtent(ViewportPorts.RequireAttached(Chart)).BindTo(chart);
         }
 
         protected override void DefineFeatures(IFeatureContext canvas)
@@ -235,7 +249,8 @@ namespace Hevo.Charting.Benchmarks
         internal sealed record FeedRun(
             string Label, int TargetRate, double Seconds, long Pushed, double PushRate, long Delivered, int Frames,
             double FrameRate, List<double> LatencyMs, double AllocMBps, double Gen0ps, double Gen1ps, double Gen2ps,
-            double CpuPct, List<double>? ComputeMs, int Indicators = 0, double GcPauseMsPerSec = 0, double WorkingSetMB = 0);
+            double CpuPct, List<double>? ComputeMs, int Indicators = 0, double GcPauseMsPerSec = 0, double WorkingSetMB = 0,
+            double FeaturesPerFrame = 0, double LayersPerFrame = 0);
 
         private sealed class Rig : IDisposable
         {
@@ -282,6 +297,7 @@ namespace Hevo.Charting.Benchmarks
             var latencies = new List<double>((int)Math.Min(int.MaxValue, total));
             long prevSeen = seqBase - 1;
             int frames = 0;
+            long featureSum = 0, layerSum = 0, featureMark = IncrementalRenderProbe.FeatureProjections;
             long measureStartTicks = 0;
             bool measuring = false;
 
@@ -289,6 +305,9 @@ namespace Hevo.Charting.Benchmarks
             {
                 if (!ReferenceEquals(cell, rig.Cell)) return;
                 long now = Stopwatch.GetTimestamp();
+                long fp = IncrementalRenderProbe.FeatureProjections;
+                if (measuring) { featureSum += fp - featureMark; layerSum += cell.LastFrameDirtyLayers; }
+                featureMark = fp;
                 long seen = rig.Schema.SeqFeature.LastSeq;
                 if (seen <= prevSeen) return;
                 for (long s = Math.Max(prevSeen + 1, seqBase); s <= seen; s++)
@@ -362,7 +381,8 @@ namespace Hevo.Charting.Benchmarks
 
             return new FeedRun(label, rate, elapsed, pushedDuring, pushedDuring / elapsed, latencies.Count - latCountAtStart, frames,
                 frames / elapsed, latencies, alloc / elapsed / (1024 * 1024), d0 / elapsed, d1 / elapsed, d2 / elapsed, cpu,
-                computeSnapshot, 0, pauseMs / elapsed, wsMB);
+                computeSnapshot, 0, pauseMs / elapsed, wsMB,
+                frames > 0 ? (double)featureSum / frames : 0, frames > 0 ? (double)layerSum / frames : 0);
         }
 
         // ── Feed:C# SMA,100 / 500 / 1000 tick/s ───────────────────────────────
@@ -370,6 +390,7 @@ namespace Hevo.Charting.Benchmarks
         public static SuiteResult RunFeed(ProbeOptions opt)
         {
             ProbeFeedSource.SeedBars = opt.FeedBars;
+            ProbeFeedSchema.SourceMap = opt.FeedSourceMap;
             var runs = new List<FeedRun>();
             using (var rig = CreateRig(opt))
             {
@@ -383,7 +404,8 @@ namespace Hevo.Charting.Benchmarks
                 }
             }
             string loh = Environment.GetEnvironmentVariable("DOTNET_GCLOHThreshold") is { Length: > 0 } t ? t : "默认(85000)";
-            return Report("Feed", $"数据源链路(DataSource → pipe Ingestor → RequestUpdate → ComputeFeature SMA → 上屏),{opt.FeedBars} 根,LOH 阈值 {loh}", runs);
+            string map = ProbeFeedSchema.SourceMap ? "FastSourceMap(AutoMap 同路径)" : "ScatterIngestor";
+            return Report("Feed", $"数据源链路(DataSource → pipe Ingestor → RequestUpdate → ComputeFeature SMA → 上屏),{opt.FeedBars} 根,摄入器 {map},LOH 阈值 {loh}", runs);
         }
 
         // ── PyFeed:N 个 Python 指标同时挂在 Close 上 ──────────────────────────
@@ -538,8 +560,8 @@ namespace Hevo.Charting.Benchmarks
             md.AppendLine();
             md.AppendLine("真窗口 + CompositionTarget 渲染节奏(不手动跑帧);延迟 = tick 推入 → 含该 tick 的那一帧 UI 线程做完,不含渲染线程合成。");
             md.AppendLine();
-            md.AppendLine("| 负载 | 实际推送(tick/s) | 交付 tick | 帧/s | tick/帧 | 延迟中位(ms) | P95 | P99 | 最大 | 分配(MB/s) | GC 0/1/2 每秒 | GC 暂停(ms/s) | 工作集(MB) | CPU(%,全核) | 指标单次调用 中位/P95(ms) | 指标完成次数 / (tick×指标数) |");
-            md.AppendLine("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+            md.AppendLine("| 负载 | 实际推送(tick/s) | 交付 tick | 帧/s | tick/帧 | Feature重算/帧 | 图层重录/帧 | 延迟中位(ms) | P95 | P99 | 最大 | 分配(MB/s) | GC 0/1/2 每秒 | GC 暂停(ms/s) | 工作集(MB) | CPU(%,全核) | 指标单次调用 中位/P95(ms) | 指标完成次数 / (tick×指标数) |");
+            md.AppendLine("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
             foreach (var r in runs)
             {
                 string compute = r.ComputeMs is { Count: > 0 } c
@@ -550,7 +572,7 @@ namespace Hevo.Charting.Benchmarks
                     ? string.Create(CultureInfo.InvariantCulture, $"{(double)c2.Count / (r.Pushed * r.Indicators):P0}")
                     : "-";
                 md.AppendLine(string.Create(CultureInfo.InvariantCulture,
-                    $"| {r.Label} | {r.PushRate:F0} | {r.Delivered} | {r.FrameRate:F1} | {(r.Frames > 0 ? (double)r.Delivered / r.Frames : 0):F1} | " +
+                    $"| {r.Label} | {r.PushRate:F0} | {r.Delivered} | {r.FrameRate:F1} | {(r.Frames > 0 ? (double)r.Delivered / r.Frames : 0):F1} | {r.FeaturesPerFrame:F2} | {r.LayersPerFrame:F2} | " +
                     $"{Stats.Percentile(r.LatencyMs, 0.5):F1} | {Stats.Percentile(r.LatencyMs, 0.95):F1} | {Stats.Percentile(r.LatencyMs, 0.99):F1} | " +
                     $"{(r.LatencyMs.Count > 0 ? r.LatencyMs.Max() : double.NaN):F1} | {r.AllocMBps:F1} | {r.Gen0ps:F2}/{r.Gen1ps:F2}/{r.Gen2ps:F2} | {r.GcPauseMsPerSec:F2} | {r.WorkingSetMB:F0} | {r.CpuPct:F1} | {compute} | {keepUp} |"));
             }
@@ -562,6 +584,7 @@ namespace Hevo.Charting.Benchmarks
             {
                 r.Label, r.TargetRate, seconds = Math.Round(r.Seconds, 2), pushRate = Math.Round(r.PushRate, 1), r.Delivered, r.Frames,
                 frameRate = Math.Round(r.FrameRate, 2),
+                featuresPerFrame = Math.Round(r.FeaturesPerFrame, 3), layersPerFrame = Math.Round(r.LayersPerFrame, 3),
                 latencyMs = new
                 {
                     p50 = Math.Round(Stats.Percentile(r.LatencyMs, 0.5), 3), p95 = Math.Round(Stats.Percentile(r.LatencyMs, 0.95), 3),

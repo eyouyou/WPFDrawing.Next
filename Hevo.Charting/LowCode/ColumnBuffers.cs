@@ -105,6 +105,18 @@ namespace Hevo.Charting.LowCode
             return new T[minLength + (minLength >> 2) + 16];
         }
 
+        /// <summary>最近一次发布的缓冲(写者自己读它是安全的:已发布的缓冲不会再被改写)。</summary>
+        public T[]? Current => _published;
+
+        /// <summary>租到但没发布(内容跟当前发布的一样、不必发布)的缓冲还回来:没人见过它,可以立刻再用。</summary>
+        public void Unused(T[] array)
+        {
+            if (_retiredCount == MaxRetired) RemoveAt(0);
+            _retired[_retiredCount] = array;
+            _retiredAt[_retiredCount] = 0; // 纪元 0:任何读者都比它新,IsReclaimable 恒为真
+            _retiredCount++;
+        }
+
         public void Published(T[] array)
         {
             if (_published != null && !ReferenceEquals(_published, array))

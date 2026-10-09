@@ -751,6 +751,7 @@ namespace Hevo.Charting.Benchmarks
         public int[] FeedRates = { 100, 500, 1000 };
         public double FeedSeconds = 5;
         public int FeedBars = 2000;
+        public bool FeedSourceMap;
         public int[] PyIndicators = { 1, 4, 8 };
         public int PyRate = 100;
         public int SoakMinutes = 10;
@@ -802,6 +803,7 @@ namespace Hevo.Charting.Benchmarks
             if (Get(args, "--feed-rates=") is { } fr) o.FeedRates = Ints(fr);
             if (Get(args, "--feed-seconds=") is { } fs) o.FeedSeconds = double.Parse(fs, CultureInfo.InvariantCulture);
             if (Get(args, "--feed-bars=") is { } fb) o.FeedBars = int.Parse(fb, CultureInfo.InvariantCulture);
+            if (Get(args, "--feed-map=") is { } fm) o.FeedSourceMap = fm.Equals("source", StringComparison.OrdinalIgnoreCase);
             if (Get(args, "--py-indicators=") is { } pi) o.PyIndicators = Ints(pi);
             if (Get(args, "--py-rate=") is { } pr) o.PyRate = int.Parse(pr, CultureInfo.InvariantCulture);
             if (Get(args, "--soak-minutes=") is { } sm) o.SoakMinutes = int.Parse(sm, CultureInfo.InvariantCulture);
