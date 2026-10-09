@@ -409,9 +409,26 @@ namespace Hevo.Charting.PythonNet
         // 回调声明了可让出时,先把入参里的列(ReadOnlyMemory<double>)拷成池化的私有副本,再让出登记跑 Python,
         // 回来重新登记。PythonMarshaller 当前是 Marshal.Copy 进 numpy(不保留对入参内存的引用),所以调用结束就能把副本还池;
         // 将来改 zero-copy 时,副本要等 numpy 释放后才能还。
+        //
+        // 调用点缓冲(ComputeFeature / PlotFeature 调用时 ColumnCallBuffers.Current 不为空,且是真 Python 模块):
+        // 入参列拷进调用点固定在 POH 上的缓冲,传给 Python 的是缓存的 ndarray 切片视图(不再 ArrayPool 副本 + np.empty + memcpy);
+        // float64 结果拷进调用点租来的输出缓冲(不再每次 new,2 万根一块 160 KB 进 LOH)。输入 ndarray 只在本次调用内有效。
         private static object? Call(IPythonModule module, string functionName, object?[] args)
         {
-            if (!Hevo.Charting.LowCode.ColumnReaders.CanReleaseForLongCall || !OnlyDoubleColumns(args))
+            bool release = Hevo.Charting.LowCode.ColumnReaders.CanReleaseForLongCall && OnlyDoubleColumns(args);
+            if (Hevo.Charting.LowCode.ColumnCallBuffers.Current is { IsAbandoned: false } buffers && module is PythonNetModule pm)
+            {
+                if (!release) return pm.InvokePooled(functionName, args, buffers, null);
+                var inputs = buffers.HostCache as PythonPinnedInputs;
+                if (inputs == null) buffers.HostCache = inputs = new PythonPinnedInputs();
+                for (int i = 0; i < args.Length; i++)
+                    if (args[i] is ReadOnlyMemory<double> col && col.Length > 0)
+                        args[i] = inputs.Stage(i, col.Span);
+                using (Hevo.Charting.LowCode.ColumnReaders.ReleaseForLongCall())
+                    return pm.InvokePooled(functionName, args, buffers, inputs);
+            }
+
+            if (!release)
                 return module.Invoke(functionName, args);   // may throw PythonDiagnosticsException
 
             double[]?[] copies = new double[]?[args.Length];

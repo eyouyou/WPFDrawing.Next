@@ -63,7 +63,29 @@ namespace Hevo.Charting.PythonNet
             return PerCallTimeoutWatchdog.RunWithTimeout(_perCallTimeoutMs, () => InvokeCore(functionName, args));
         }
 
-        private object? InvokeCore(string functionName, object?[] args)
+        /// <summary>
+        /// 调用点版本(PythonInvokerShim 在 ColumnCallBuffers.Current 不为空时走这里):
+        /// float64 ndarray 结果拷进 <paramref name="outputs"/> 租来的缓冲(不再每次 new);
+        /// 入参里的 <see cref="PinnedArg"/> 换成 <paramref name="inputs"/> 的固定缓冲视图(不再 np.empty + memcpy)。
+        /// 超时(Python 线程变成孤儿、可能还在用这两样)时把调用点标记弃用,调用点下次换新的。
+        /// </summary>
+        internal object? InvokePooled(string functionName, object?[] args, Hevo.Charting.LowCode.ColumnCallBuffers outputs, PythonPinnedInputs? inputs)
+        {
+            if (string.IsNullOrEmpty(functionName))
+                throw new ArgumentNullException(nameof(functionName));
+            try
+            {
+                return PerCallTimeoutWatchdog.RunWithTimeout(_perCallTimeoutMs, () => InvokeCore(functionName, args, outputs, inputs));
+            }
+            catch (TimeoutException)
+            {
+                outputs.Abandon();
+                throw;
+            }
+        }
+
+        private object? InvokeCore(string functionName, object?[] args,
+            Hevo.Charting.LowCode.ColumnCallBuffers? outputs = null, PythonPinnedInputs? inputs = null)
         {
             using (Py.GIL())
             {
@@ -84,7 +106,9 @@ namespace Hevo.Charting.PythonNet
                 try
                 {
                     for (int i = 0; i < args.Length; i++)
-                        pyArgs[i] = PythonMarshaller.Box(args[i]);
+                        pyArgs[i] = args[i] is PinnedArg pinned && inputs != null
+                            ? inputs.View(pinned.Index, pinned.Length)
+                            : PythonMarshaller.Box(args[i]);
 
                     PyObject result;
                     try
@@ -101,7 +125,7 @@ namespace Hevo.Charting.PythonNet
                         // 返回 PyObject 让调用方决定怎么 unbox —— 这里走最常见 case 直接 ToManagedValue。
                         // 调用方(PythonInvokerShim.Call → Expression.Convert)期望的是裸 object 然后强 cast,
                         // 所以这里把 ndarray / 标量都 unbox 到对应 .NET 类型再返回。
-                        return UnboxBestEffort(result);
+                        return UnboxBestEffort(result, outputs);
                     }
                 }
                 finally
@@ -135,7 +159,7 @@ namespace Hevo.Charting.PythonNet
         //   - dict → Dictionary&lt;string, object?&gt;(递归 unbox 每个 value)
         //   - 标量 → As&lt;T&gt;()
         //   - 兜底:返 null,调用方按缺省值兜底
-        private static object? UnboxBestEffort(PyObject py)
+        private static object? UnboxBestEffort(PyObject py, Hevo.Charting.LowCode.ColumnCallBuffers? outputs = null)
         {
             if (py == null || py.IsNone()) return null;
 
@@ -153,7 +177,7 @@ namespace Hevo.Charting.PythonNet
 
                 switch (dtName)
                 {
-                    case "float64": return ReadOnlyMemoryFromNumpy<double>(py);
+                    case "float64": return outputs != null ? ReadOnlyMemoryFromNumpyInto(py, outputs) : ReadOnlyMemoryFromNumpy<double>(py);
                     case "float32": return ReadOnlyMemoryFromNumpy<float>(py);
                     case "int32":   return ReadOnlyMemoryFromNumpy<int>(py);
                     case "int64":   return ReadOnlyMemoryFromNumpy<long>(py);
@@ -184,7 +208,7 @@ namespace Hevo.Charting.PythonNet
                         for (int i = 0; i < n; i++)
                         {
                             using var item = py.GetItem(i);
-                            arr[i] = UnboxBestEffort(item);
+                            arr[i] = UnboxBestEffort(item, outputs);
                         }
                         return arr;
                     }
@@ -214,7 +238,7 @@ namespace Hevo.Charting.PythonNet
                         catch { /* 非字符串 key 跳过 */ }
                         if (keyStr == null) { keyObj.Dispose(); continue; }
                         using var val = py.GetItem(keyObj);
-                        dict[keyStr] = UnboxBestEffort(val);   // 递归(ndarray → ROM、嵌套 dict 等)
+                        dict[keyStr] = UnboxBestEffort(val, outputs);   // 递归(ndarray → ROM、嵌套 dict 等)
                         keyObj.Dispose();
                     }
                     return dict;
@@ -240,6 +264,28 @@ namespace Hevo.Charting.PythonNet
             // 兜底:不识别的类型(自定义 class 实例 / Decimal 等)—— 静默返 null,调用方按缺省值处理。
             // 绝不裸返 PyObject(已知会被 caller 的 using 块 dispose)。
             return null;
+        }
+
+        // float64 结果拷进调用点租来的缓冲(只用前 n 个),发布 / 退役由调用点按列读者纪元管理。
+        private static unsafe ReadOnlyMemory<double> ReadOnlyMemoryFromNumpyInto(PyObject ndarray, Hevo.Charting.LowCode.ColumnCallBuffers outputs)
+        {
+            using var np = Py.Import("numpy");
+            using var contig = np.InvokeMethod("ascontiguousarray", new PyObject[] { ndarray });
+            using var sizeAttr = contig.GetAttr("size");
+            int n = sizeAttr.As<int>();
+            if (n == 0) return ReadOnlyMemory<double>.Empty;
+
+            var arr = outputs.Rent(n);
+            using var ctypes = contig.GetAttr("ctypes");
+            using var dataAttr = ctypes.GetAttr("data");
+            long src = dataAttr.As<long>();
+
+            int byteCount = sizeof(double) * n;
+            fixed (double* dst = arr)
+            {
+                Buffer.MemoryCopy((void*)(IntPtr)src, dst, byteCount, byteCount);
+            }
+            return new ReadOnlyMemory<double>(arr, 0, n);
         }
 
         private static unsafe ReadOnlyMemory<T> ReadOnlyMemoryFromNumpy<T>(PyObject ndarray) where T : unmanaged
