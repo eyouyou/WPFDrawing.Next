@@ -145,6 +145,9 @@ namespace Hevo.Charting.Features
     /// </summary>
     public sealed class PlotFeature : ChartFeature
     {
+        // line / bar 输出的缓冲池:Python handler 的结果拷进这里租来的缓冲,不再每次 new。见 ColumnCallBuffers
+        private Hevo.Charting.LowCode.ColumnCallBuffers _outBuffers = new();
+
         public override FeaturePhase Phase => FeaturePhase.Series;
 
         /// <summary>
@@ -434,69 +437,75 @@ namespace Hevo.Charting.Features
             // 共享 buffer 会撞写。每帧 new 一个小 object[] 开销可忽略。
             flow.WatchAsync(watchKeys, board =>
             {
-                if (Indicator == null) return;
-
-                // ① 读锁捞 inputs (拷贝出 ReadOnlyMemory<double> 句柄,锁外可继续读底层 array)
-                object? raw;
+                var buffers = _outBuffers;
+                using var call = buffers.BeginCall();
                 try
                 {
-                    if (orderedPorts != null)
+                    if (Indicator == null) return;
+
+                    // ① 读锁捞 inputs (拷贝出 ReadOnlyMemory<double> 句柄,锁外可继续读底层 array)
+                    object? raw;
+                    try
                     {
-                        var argsBuf = new object?[orderedPorts.Length];
-                        using (board.AcquireReadLock())
+                        if (orderedPorts != null)
                         {
-                            for (int i = 0; i < orderedPorts.Length; i++)
+                            var argsBuf = new object?[orderedPorts.Length];
+                            using (board.AcquireReadLock())
                             {
-                                var v = board.Read(orderedPorts[i]);
-                                if (v.Length == 0) return;
-                                argsBuf[i] = v;
+                                for (int i = 0; i < orderedPorts.Length; i++)
+                                {
+                                    var v = board.Read(orderedPorts[i]);
+                                    if (v.Length == 0) return;
+                                    argsBuf[i] = v;
+                                }
                             }
+                            // ② 锁外算 Indicator (Python handler 100-300ms 也不锁 board)
+                            raw = Indicator is Func<object?[], object?> typedMulti
+                                ? typedMulti(argsBuf)
+                                : Indicator.DynamicInvoke(argsBuf);
                         }
-                        // ② 锁外算 Indicator (Python handler 100-300ms 也不锁 board)
-                        raw = Indicator is Func<object?[], object?> typedMulti
-                            ? typedMulti(argsBuf)
-                            : Indicator.DynamicInvoke(argsBuf);
-                    }
-                    else
-                    {
-                        ReadOnlyMemory<double> input;
-                        using (board.AcquireReadLock())
+                        else
                         {
-                            input = board.Read(InputPort);
-                            if (input.Length == 0) return;
+                            ReadOnlyMemory<double> input;
+                            using (board.AcquireReadLock())
+                            {
+                                input = board.Read(InputPort);
+                                if (input.Length == 0) return;
+                            }
+                            raw = Indicator is Func<ReadOnlyMemory<double>, object?> typed ? typed(input) : Indicator.DynamicInvoke(input);
                         }
-                        raw = Indicator is Func<ReadOnlyMemory<double>, object?> typed ? typed(input) : Indicator.DynamicInvoke(input);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[PlotFeature] handler 调用异常: {(ex.InnerException ?? ex).Message}");
+                        return;
+                    }
+                    if (raw == null) return;
+
+                    // 解包 handler 输出 —— dict / list[dict] 兼容路径,纯 CPU 内存操作,锁外做。
+                    IDictionary<string, object?>? dict = raw as IDictionary<string, object?>;
+                    if (dict == null && raw is object?[] arr && _resolvedSpecs.Length == 1)
+                    {
+                        dict = new Dictionary<string, object?>(StringComparer.Ordinal)
+                        {
+                            [_resolvedSpecs[0].Name] = arr,
+                        };
+                    }
+                    if (dict == null) return;
+
+                    // ③ 写锁提交 outputs (μs 级,不影响 UI 渲染)
+                    //    每条 line/bar series 各自写到自己的 _childPorts[i] —— 如果 JSON 焊到 SeriesOutputs.{name},
+                    //    这里写的就是绑定端口本身,下游(AutoScale.ValuePorts / 其他 ComputeFeature 等)直接订阅生效。
+                    using (board.AcquireWriteLock())
+                    {
+                        for (int i = 0; i < _resolvedSpecs.Length; i++)
+                        {
+                            if (!dict.TryGetValue(_resolvedSpecs[i].Name, out var value) || value == null) continue;
+                            WriteValueByKind(board, _childPorts[i], _resolvedSpecs[i].Kind, value, call);
+                        }
                     }
                 }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[PlotFeature] handler 调用异常: {(ex.InnerException ?? ex).Message}");
-                    return;
-                }
-                if (raw == null) return;
-
-                // 解包 handler 输出 —— dict / list[dict] 兼容路径,纯 CPU 内存操作,锁外做。
-                IDictionary<string, object?>? dict = raw as IDictionary<string, object?>;
-                if (dict == null && raw is object?[] arr && _resolvedSpecs.Length == 1)
-                {
-                    dict = new Dictionary<string, object?>(StringComparer.Ordinal)
-                    {
-                        [_resolvedSpecs[0].Name] = arr,
-                    };
-                }
-                if (dict == null) return;
-
-                // ③ 写锁提交 outputs (μs 级,不影响 UI 渲染)
-                //    每条 line/bar series 各自写到自己的 _childPorts[i] —— 如果 JSON 焊到 SeriesOutputs.{name},
-                //    这里写的就是绑定端口本身,下游(AutoScale.ValuePorts / 其他 ComputeFeature 等)直接订阅生效。
-                using (board.AcquireWriteLock())
-                {
-                    for (int i = 0; i < _resolvedSpecs.Length; i++)
-                    {
-                        if (!dict.TryGetValue(_resolvedSpecs[i].Name, out var value) || value == null) continue;
-                        WriteValueByKind(board, _childPorts[i], _resolvedSpecs[i].Kind, value);
-                    }
-                }
+                finally { if (buffers.IsAbandoned) _outBuffers = new(); }
             });
         }
 
@@ -542,7 +551,8 @@ namespace Hevo.Charting.Features
         // line/bar:port = DataPort<ROM<double>>
         // scatter: port = DataPort<ROM<ScatterPoint>>,value 期望 object?[](Python list of dict)
         // arrow:   port = DataPort<ROM<ArrowMarker>>
-        private static void WriteValueByKind(DataBlackboard board, object port, string kind, object value)
+        private static void WriteValueByKind(DataBlackboard board, object port, string kind, object value,
+            Hevo.Charting.LowCode.ColumnCallBuffers.CallScope call = default)
         {
             switch ((kind ?? "line").Trim().ToLowerInvariant())
             {
@@ -556,7 +566,7 @@ namespace Hevo.Charting.Features
                         double[] a              => a,
                         _                       => ReadOnlyMemory<double>.Empty,
                     };
-                    if (rom.Length > 0) board.WriteIfChanged(p, rom);
+                    if (rom.Length > 0) { board.WriteIfChanged(p, rom); call.Written(p, rom); }
                     break;
                 }
                 case "scatter":

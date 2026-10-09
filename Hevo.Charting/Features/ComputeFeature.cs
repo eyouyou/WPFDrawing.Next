@@ -53,6 +53,9 @@ namespace Hevo.Charting.Features
     /// </summary>
     public sealed class ComputeFeature : ComputeNodeFeature
     {
+        // 输出缓冲池:Python handler 的结果拷进这里租来的缓冲,不再每次 new(2 万根一块 160 KB 进 LOH)。见 ColumnCallBuffers
+        private ColumnCallBuffers _outBuffers = new();
+
         /// <summary>
         /// 单输入端口 —— 数据源 / 上游 Compute 推过来的 ROM&lt;double&gt;。
         /// 跟 <see cref="Inputs"/> 互斥:Inputs.Count > 0 时走多输入路径,InputPort 被忽略。
@@ -151,6 +154,14 @@ namespace Hevo.Charting.Features
                 // argsBuf 从 lambda 外共享改 lambda 内 local —— WatchAsync 后台多 task 可能并发,共享会撞写。
                 flow.WatchAsync(watchKeys, board =>
                 {
+                    var buffers = _outBuffers;
+                    using var call = buffers.BeginCall();
+                    try { RunMulti(board, call); }
+                    finally { if (buffers.IsAbandoned) _outBuffers = new(); }
+                });
+
+                void RunMulti(DataBlackboard board, ColumnCallBuffers.CallScope call)
+                {
                     // ① 瞬间读锁捞 inputs
                     var argsBuf = new object?[orderedPorts.Length];
                     using (board.AcquireReadLock())
@@ -174,14 +185,22 @@ namespace Hevo.Charting.Features
                     }
 
                     // ③ WriteOutput 内部自己 AcquireWriteLock,μs 级提交
-                    WriteOutput(board, raw, multiOutput);
-                });
+                    WriteOutput(board, raw, multiOutput, call);
+                }
                 return;
             }
 
             // 单输入兼容路径
             if (InputPort == null) return;
             flow.WatchAsync(new object[] { InputPort }, board =>
+            {
+                var buffers = _outBuffers;
+                using var call = buffers.BeginCall();
+                try { RunSingle(board, call); }
+                finally { if (buffers.IsAbandoned) _outBuffers = new(); }
+            });
+
+            void RunSingle(DataBlackboard board, ColumnCallBuffers.CallScope call)
             {
                 // ① 瞬间读锁捞 input
                 ReadOnlyMemory<double> input;
@@ -207,12 +226,12 @@ namespace Hevo.Charting.Features
                 }
 
                 // ③ 写锁提交
-                WriteOutput(board, raw, multiOutput);
-            });
+                WriteOutput(board, raw, multiOutput, call);
+            }
         }
 
         // 把 handler 返回值按 Outputs 字典(多输出)或 OutputPort(单输出)路由到 board。
-        private void WriteOutput(DataBlackboard board, object? raw, bool multiOutput)
+        private void WriteOutput(DataBlackboard board, object? raw, bool multiOutput, ColumnCallBuffers.CallScope call)
         {
             if (raw == null) return;
 
@@ -234,7 +253,7 @@ namespace Hevo.Charting.Features
                             double[] a              => a,
                             _                       => ReadOnlyMemory<double>.Empty,
                         };
-                        if (rom.Length > 0) board.WriteIfChanged(kv.Value, rom);
+                        if (rom.Length > 0) { board.WriteIfChanged(kv.Value, rom); call.Written(kv.Value, rom); }
                     }
                 }
                 return;
@@ -251,7 +270,10 @@ namespace Hevo.Charting.Features
                 }
             }
             using (board.AcquireWriteLock())
+            {
                 board.WriteIfChanged(OutputPort, rom1);
+                call.Written(OutputPort, rom1);
+            }
         }
 
         protected override void OnComputeProject(FeatureContext ctx)
