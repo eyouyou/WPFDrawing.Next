@@ -97,9 +97,15 @@ namespace Hevo.Charting.LowCode
         private readonly long[] _retiredAt = new long[MaxRetired];
         private int _retiredCount;
         private T[]? _published;
+        // 刚被换下、还没打退役纪元的缓冲。纪元推迟到下一次 Rent 才打:Published 发生在写事务内,
+        // 事务提交时的通知(如 LinkedChartContext 端口镜像把旧值转写到别的黑板)还没发出,
+        // 这期间别的黑板上进场的读者仍可能拿到旧缓冲;在事务内就打戳的话,这些读者的纪元比退役纪元新,
+        // 挡不住回收。下一次 Rent 时上一个事务的通知早已发完,此时打戳才安全。
+        private T[]? _pendingRetire;
 
         public T[] Rent(int minLength)
         {
+            StampPending();
             for (int i = 0; i < _retiredCount; i++)
             {
                 if (_retired[i].Length >= minLength && ColumnReaders.IsReclaimable(_retiredAt[i]))
@@ -128,12 +134,20 @@ namespace Hevo.Charting.LowCode
         {
             if (_published != null && !ReferenceEquals(_published, array))
             {
-                if (_retiredCount == MaxRetired) RemoveAt(0);
-                _retired[_retiredCount] = _published;
-                _retiredAt[_retiredCount] = ColumnReaders.Retire();
-                _retiredCount++;
+                StampPending(); // 正常不会有(每次发布前都 Rent 过);保险起见先把更早的那块打戳入环
+                _pendingRetire = _published;
             }
             _published = array;
+        }
+
+        private void StampPending()
+        {
+            if (_pendingRetire == null) return;
+            if (_retiredCount == MaxRetired) RemoveAt(0);
+            _retired[_retiredCount] = _pendingRetire;
+            _retiredAt[_retiredCount] = ColumnReaders.Retire();
+            _retiredCount++;
+            _pendingRetire = null;
         }
 
         private void RemoveAt(int i)

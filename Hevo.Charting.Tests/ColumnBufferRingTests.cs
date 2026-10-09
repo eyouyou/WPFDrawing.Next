@@ -54,8 +54,8 @@ namespace Hevo.Charting.Tests
         {
             var ring = new ColumnBufferRing<double>();
             var held = PublishOnce(ring, 100);
-            var reader = ColumnReaders.Enter();       // 读者在 held 退役之前进场(可能已拿到 held)
-            PublishOnce(ring, 100);                   // held 退役
+            var reader = ColumnReaders.Enter();       // 读者在 held 被换下之前进场(可能已拿到 held)
+            PublishOnce(ring, 100);                   // held 被换下(退役纪元在下一次 Rent 时打)
             for (int i = 0; i < 10; i++)
             {
                 var a = ring.Rent(100);
@@ -63,6 +63,27 @@ namespace Hevo.Charting.Tests
                 ring.Published(a);
             }
             reader.Dispose();
+        }
+
+        [Fact]
+        public void ReaderEnteredAfterPublishBeforeNextRent_IsProtected()
+        {
+            // 模拟端口镜像:写者发布 B(A 被换下)后、下一次 Rent 前,另一块黑板上的读者进场并拿到了 A。
+            // 退役纪元若在 Published 时就打,读者纪元比它新,A 会被立刻回收重写。
+            var ring = new ColumnBufferRing<double>();
+            var a = PublishOnce(ring, 100);
+            PublishOnce(ring, 100);                   // A 被换下
+            var reader = ColumnReaders.Enter();       // 读者此后才进场(拿到的可能是 A)
+            try
+            {
+                for (int i = 0; i < 10; i++)
+                {
+                    var x = ring.Rent(100);
+                    Assert.NotSame(a, x);
+                    ring.Published(x);
+                }
+            }
+            finally { reader.Dispose(); }
         }
 
         [Fact]
