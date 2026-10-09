@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -250,7 +250,12 @@ namespace Hevo.Charting.Benchmarks
             string Label, int TargetRate, double Seconds, long Pushed, double PushRate, long Delivered, int Frames,
             double FrameRate, List<double> LatencyMs, double AllocMBps, double Gen0ps, double Gen1ps, double Gen2ps,
             double CpuPct, List<double>? ComputeMs, int Indicators = 0, double GcPauseMsPerSec = 0, double WorkingSetMB = 0,
-            double FeaturesPerFrame = 0, double LayersPerFrame = 0);
+            double FeaturesPerFrame = 0, double LayersPerFrame = 0,
+            List<double>? FreshMs = null, List<double>? LagTicks = null, long QueuePeak = 0, int PoolThreadsPeak = 0);
+
+        // 推送时钟:最近一次 tick 的推入时刻 / 累计推送数。PyFeed 用它算指标结果的新鲜度
+        // (调用开始时最新 tick 的推入时刻 → 结果算完,以及这期间又推了多少 tick)。
+        internal static long LastPushTs, PushCount;
 
         private sealed class Rig : IDisposable
         {
@@ -287,7 +292,8 @@ namespace Hevo.Charting.Benchmarks
         internal static AllocTypeSampler? Sampler;
         internal static readonly List<(string Label, List<AllocTypeSampler.Row> Rows, double Seconds)> SamplerResults = new();
 
-        private static FeedRun Measure(Rig rig, string label, int rate, double seconds, double warmup, ConcurrentQueue<double>? computeMs = null)
+        private static FeedRun Measure(Rig rig, string label, int rate, double seconds, double warmup, ConcurrentQueue<double>? computeMs = null,
+            ConcurrentQueue<double>? freshMs = null, ConcurrentQueue<double>? lagTicks = null)
         {
             long total = (long)Math.Ceiling(rate * (seconds + warmup)) + 1;
             var pushAt = new long[total + 1];
@@ -337,8 +343,11 @@ namespace Hevo.Charting.Benchmarks
                         if (due - now > Stopwatch.Frequency / 500) Thread.Sleep(1);
                         else Thread.SpinWait(20);
                     }
-                    Volatile.Write(ref pushAt[k], Stopwatch.GetTimestamp());
+                    long ts = Stopwatch.GetTimestamp();
+                    Volatile.Write(ref pushAt[k], ts);
                     rig.Source.PushTick(seqBase + k);
+                    Volatile.Write(ref LastPushTs, ts);
+                    Interlocked.Increment(ref PushCount);
                     Interlocked.Increment(ref pushed);
                 }
             }) { IsBackground = true, Priority = ThreadPriority.AboveNormal, Name = "probe-feed" };
@@ -346,6 +355,20 @@ namespace Hevo.Charting.Benchmarks
             pusher.Start();
             RenderProbe.Pump((int)(warmup * 1000));
             computeMs?.Clear();
+            freshMs?.Clear();
+            lagTicks?.Clear();
+            // 线程池排队长度 / 线程数峰值(每 5 ms 采样)
+            long queuePeak = 0; int threadsPeak = 0;
+            var poolStop = new ManualResetEventSlim(false);
+            var poolSampler = new Thread(() =>
+            {
+                while (!poolStop.Wait(5))
+                {
+                    queuePeak = Math.Max(queuePeak, ThreadPool.PendingWorkItemCount);
+                    threadsPeak = Math.Max(threadsPeak, ThreadPool.ThreadCount);
+                }
+            }) { IsBackground = true, Name = "probe-pool" };
+            poolSampler.Start();
             var proc = Process.GetCurrentProcess();
             int g0 = GC.CollectionCount(0), g1 = GC.CollectionCount(1), g2 = GC.CollectionCount(2);
             long alloc0 = GC.GetTotalAllocatedBytes(false);
@@ -365,6 +388,10 @@ namespace Hevo.Charting.Benchmarks
                 SamplerResults.Add((label, Sampler!.End(), seconds));
             }
             var computeSnapshot = computeMs?.ToList(); // 只算测量窗口内完成的调用
+            var freshSnapshot = freshMs?.ToList();
+            var lagSnapshot = lagTicks?.ToList();
+            poolStop.Set();
+            poolSampler.Join();
             double elapsed = (Stopwatch.GetTimestamp() - measureStartTicks) / (double)Stopwatch.Frequency;
             long pushedDuring = Interlocked.Read(ref pushed) - pushed0;
             proc.Refresh();
@@ -382,7 +409,8 @@ namespace Hevo.Charting.Benchmarks
             return new FeedRun(label, rate, elapsed, pushedDuring, pushedDuring / elapsed, latencies.Count - latCountAtStart, frames,
                 frames / elapsed, latencies, alloc / elapsed / (1024 * 1024), d0 / elapsed, d1 / elapsed, d2 / elapsed, cpu,
                 computeSnapshot, 0, pauseMs / elapsed, wsMB,
-                frames > 0 ? (double)featureSum / frames : 0, frames > 0 ? (double)layerSum / frames : 0);
+                frames > 0 ? (double)featureSum / frames : 0, frames > 0 ? (double)layerSum / frames : 0,
+                freshSnapshot, lagSnapshot, queuePeak, threadsPeak);
         }
 
         // ── Feed:C# SMA,100 / 500 / 1000 tick/s ───────────────────────────────
@@ -429,6 +457,8 @@ namespace Hevo.Charting.Benchmarks
             foreach (int n in opt.PyIndicators)
             {
                 var times = new ConcurrentQueue<double>();
+                var fresh = new ConcurrentQueue<double>();
+                var lag = new ConcurrentQueue<double>();
                 var list = Enumerable.Range(0, n).Select(k =>
                 {
                     var inner = k % 2 == 0 ? rsi : ema;
@@ -436,16 +466,20 @@ namespace Hevo.Charting.Benchmarks
                     Func<ReadOnlyMemory<double>, ReadOnlyMemory<double>> timed = close =>
                     {
                         long t0 = Stopwatch.GetTimestamp();
+                        long tickTs = Volatile.Read(ref LastPushTs), tickCount = Interlocked.Read(ref PushCount);
                         var r = inner(close);
-                        times.Enqueue((Stopwatch.GetTimestamp() - t0) * 1000.0 / Stopwatch.Frequency);
+                        long t1 = Stopwatch.GetTimestamp();
+                        times.Enqueue((t1 - t0) * 1000.0 / Stopwatch.Frequency);
+                        if (tickTs != 0) fresh.Enqueue((t1 - tickTs) * 1000.0 / Stopwatch.Frequency);
+                        lag.Enqueue(Interlocked.Read(ref PushCount) - tickCount);
                         return r;
                     };
                     return (name, timed);
                 }).ToList();
 
                 using var rig = CreateRig(opt, list);
-                Measure(rig, "warmup", opt.PyRate, 1.0, 0.5, times);
-                var r = Measure(rig, $"{n} 个 Python 指标 @{opt.PyRate}/s", opt.PyRate, opt.FeedSeconds, 1.0, times) with { Indicators = n };
+                Measure(rig, "warmup", opt.PyRate, 1.0, 0.5, times, fresh, lag);
+                var r = Measure(rig, $"{n} 个 Python 指标 @{opt.PyRate}/s", opt.PyRate, opt.FeedSeconds, 1.0, times, fresh, lag) with { Indicators = n };
                 runs.Add(r);
                 Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
                     $"[pyfeed] {n} 指标:单次调用中位 {Stats.Percentile(r.ComputeMs ?? new List<double>(), 0.5):F2} ms,延迟中位 {Stats.Percentile(r.LatencyMs, 0.5):F1} ms"));
@@ -561,21 +595,28 @@ namespace Hevo.Charting.Benchmarks
             md.AppendLine();
             md.AppendLine("真窗口 + CompositionTarget 渲染节奏(不手动跑帧);延迟 = tick 推入 → 含该 tick 的那一帧 UI 线程做完,不含渲染线程合成。");
             md.AppendLine();
-            md.AppendLine("| 负载 | 实际推送(tick/s) | 交付 tick | 帧/s | tick/帧 | Feature重算/帧 | 图层重录/帧 | 延迟中位(ms) | P95 | P99 | 最大 | 分配(MB/s) | GC 0/1/2 每秒 | GC 暂停(ms/s) | 工作集(MB) | CPU(%,全核) | 指标单次调用 中位/P95(ms) | 指标完成次数 / (tick×指标数) |");
-            md.AppendLine("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+            md.AppendLine("| 负载 | 实际推送(tick/s) | 交付 tick | 帧/s | tick/帧 | Feature重算/帧 | 图层重录/帧 | 延迟中位(ms) | P95 | P99 | 最大 | 分配(MB/s) | GC 0/1/2 每秒 | GC 暂停(ms/s) | 工作集(MB) | CPU(%,全核) | 指标单次调用 中位/P95(ms) | 指标完成次数 / (tick×指标数) | 每指标产出(次/s) | 结果新鲜度 中位/P95(ms) | 结果落后 tick 中位/P95 | 线程池排队峰值 | 线程池线程峰值 |");
+            md.AppendLine("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
             foreach (var r in runs)
             {
                 string compute = r.ComputeMs is { Count: > 0 } c
                     ? string.Create(CultureInfo.InvariantCulture, $"{Stats.Percentile(c, 0.5):F2} / {Stats.Percentile(c, 0.95):F2}")
                     : "-";
                 // 指标跟不上时 WatchAsync 会合并(只算最新一份),完成次数 < tick×指标数;比值 = 实际算了几成
+                // 合并语义下"完成率"本来就 < 100%(中间版本被跳过);更有意义的是每个指标每秒产出几次结果、结果有多新
+                string outRate = r.ComputeMs is { Count: > 0 } c3 && r.Indicators > 0
+                    ? string.Create(CultureInfo.InvariantCulture, $"{c3.Count / r.Seconds / r.Indicators:F2}") : (r.Indicators > 0 ? "0" : "-");
+                string freshTxt = r.FreshMs is { Count: > 0 } f
+                    ? string.Create(CultureInfo.InvariantCulture, $"{Stats.Percentile(f, 0.5):F0} / {Stats.Percentile(f, 0.95):F0}") : "-";
+                string lagTxt = r.LagTicks is { Count: > 0 } lg
+                    ? string.Create(CultureInfo.InvariantCulture, $"{Stats.Percentile(lg, 0.5):F0} / {Stats.Percentile(lg, 0.95):F0}") : "-";
                 string keepUp = r.ComputeMs is { Count: > 0 } c2 && r.Indicators > 0
                     ? string.Create(CultureInfo.InvariantCulture, $"{(double)c2.Count / (r.Pushed * r.Indicators):P0}")
                     : "-";
                 md.AppendLine(string.Create(CultureInfo.InvariantCulture,
                     $"| {r.Label} | {r.PushRate:F0} | {r.Delivered} | {r.FrameRate:F1} | {(r.Frames > 0 ? (double)r.Delivered / r.Frames : 0):F1} | {r.FeaturesPerFrame:F2} | {r.LayersPerFrame:F2} | " +
                     $"{Stats.Percentile(r.LatencyMs, 0.5):F1} | {Stats.Percentile(r.LatencyMs, 0.95):F1} | {Stats.Percentile(r.LatencyMs, 0.99):F1} | " +
-                    $"{(r.LatencyMs.Count > 0 ? r.LatencyMs.Max() : double.NaN):F1} | {r.AllocMBps:F1} | {r.Gen0ps:F2}/{r.Gen1ps:F2}/{r.Gen2ps:F2} | {r.GcPauseMsPerSec:F2} | {r.WorkingSetMB:F0} | {r.CpuPct:F1} | {compute} | {keepUp} |"));
+                    $"{(r.LatencyMs.Count > 0 ? r.LatencyMs.Max() : double.NaN):F1} | {r.AllocMBps:F1} | {r.Gen0ps:F2}/{r.Gen1ps:F2}/{r.Gen2ps:F2} | {r.GcPauseMsPerSec:F2} | {r.WorkingSetMB:F0} | {r.CpuPct:F1} | {compute} | {keepUp} | {outRate} | {freshTxt} | {lagTxt} | {r.QueuePeak} | {r.PoolThreadsPeak} |"));
             }
             var csv = new StringBuilder("suite,label,target_rate,latency_ms\n");
             foreach (var r in runs)
