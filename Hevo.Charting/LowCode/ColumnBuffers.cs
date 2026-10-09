@@ -36,10 +36,10 @@ namespace Hevo.Charting.LowCode
             {
                 int i = (start + k) & (SlotCount - 1);
                 if (Volatile.Read(ref s_slots[i]) == 0 && Interlocked.CompareExchange(ref s_slots[i], e, 0) == 0)
-                    return new Scope(i);
+                    return new Scope(i, true);
             }
             Interlocked.Increment(ref s_overflow);
-            return new Scope(Scope.Overflow);
+            return Scope.ForOverflow();
         }
 
         /// <summary>摄入器换下一块缓冲时调用:返回这块缓冲的退役纪元,并推进全局纪元。</summary>
@@ -57,17 +57,24 @@ namespace Hevo.Charting.LowCode
             return true;
         }
 
+        /// <summary>
+        /// 读者登记凭据。编码:0 = default(Scope),Dispose 什么都不做;正数 = 槽位 + 1;
+        /// <see cref="OverflowMarker"/> = 槽位用满时的溢出登记。三者互不重叠 —— default(Scope) 的 Dispose
+        /// 绝不能被当成溢出离场去减计数(减成负数会让 IsReclaimable 永远返回 false,全进程停止复用)。
+        /// </summary>
         public readonly struct Scope : IDisposable
         {
-            internal const int Overflow = -1;
-            private readonly int _slot;
-            internal Scope(int slot) => _slot = slot + 1; // 0 = default(Scope),Dispose 什么都不做
+            private const int OverflowMarker = int.MinValue;
+            private readonly int _raw;
+            private Scope(int raw) => _raw = raw;
+
+            internal Scope(int slot, bool _) : this(slot + 1) { }
+            internal static Scope ForOverflow() => new(OverflowMarker);
 
             public void Dispose()
             {
-                int slot = _slot - 1;
-                if (slot >= 0) Volatile.Write(ref s_slots[slot], 0);
-                else if (slot == Overflow) Interlocked.Decrement(ref s_overflow);
+                if (_raw > 0) Volatile.Write(ref s_slots[_raw - 1], 0);
+                else if (_raw == OverflowMarker) Interlocked.Decrement(ref s_overflow);
             }
         }
     }

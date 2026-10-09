@@ -66,6 +66,35 @@ namespace Hevo.Charting.Tests
         }
 
         [Fact]
+        public void DefaultScopeDispose_IsNoOp()
+        {
+            default(ColumnReaders.Scope).Dispose();
+            default(ColumnReaders.Scope).Dispose();
+            // 以前 default 跟溢出凭据编码相同,Dispose 会把溢出计数减成负数 → 全进程永远不可回收
+            Assert.True(ColumnReaders.IsReclaimable(0));
+        }
+
+        [Fact]
+        public void OverflowScope_BlocksReclaimUntilDisposed()
+        {
+            var scopes = new System.Collections.Generic.List<ColumnReaders.Scope>();
+            try
+            {
+                for (int i = 0; i < 128; i++) scopes.Add(ColumnReaders.Enter());   // 占满全部槽位
+                var overflow = ColumnReaders.Enter();
+                scopes.ForEach(x => x.Dispose());
+                scopes.Clear();
+                Assert.False(ColumnReaders.IsReclaimable(0));   // 溢出读者在场:谁都不回收
+                overflow.Dispose();
+                Assert.True(ColumnReaders.IsReclaimable(0));
+            }
+            finally
+            {
+                scopes.ForEach(x => x.Dispose());
+            }
+        }
+
+        [Fact]
         public void TooSmallRetiredBuffers_AreNotReused()
         {
             var ring = new ColumnBufferRing<double>();
