@@ -1,0 +1,22 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='960' height='222' viewBox='0 0 960 222' font-family='Segoe UI, Microsoft YaHei, sans-serif'>
+<rect width='960' height='222' fill='#ffffff'/>
+<text x='16' y='26' font-size='17' font-weight='600' fill='#1f2328'>PyFeed:GC 暂停</text>
+<text x='16' y='46' font-size='12' fill='#57606a'>2 万根,100 tick/s × 60 s(单位:ms/s)</text>
+<rect x='700' y='14' width='12' height='12' fill='#9aa3ad'/><text x='717' y='25' font-size='12' fill='#1f2328'>A origin/main 3bce488(+测量钩子)</text>
+<rect x='700' y='32' width='12' height='12' fill='#2f6fdb'/><text x='717' y='43' font-size='12' fill='#1f2328'>B b1911b9(本分支)</text>
+<text x='332' y='86' font-size='12' text-anchor='end' fill='#1f2328'>1 个 Python 指标</text>
+<rect x='340' y='70' width='530.0' height='12' rx='2' fill='#9aa3ad'/>
+<text x='874.0' y='80' font-size='10' fill='#1f2328'>3.46</text>
+<rect x='340' y='84' width='243.6' height='12' rx='2' fill='#2f6fdb'/>
+<text x='587.6' y='94' font-size='10' fill='#1f2328'>1.59</text>
+<text x='332' y='120' font-size='12' text-anchor='end' fill='#1f2328'>4 个 Python 指标</text>
+<rect x='340' y='104' width='344.7' height='12' rx='2' fill='#9aa3ad'/>
+<text x='688.7' y='114' font-size='10' fill='#1f2328'>2.25</text>
+<rect x='340' y='118' width='220.6' height='12' rx='2' fill='#2f6fdb'/>
+<text x='564.6' y='128' font-size='10' fill='#1f2328'>1.44</text>
+<text x='332' y='154' font-size='12' text-anchor='end' fill='#1f2328'>8 个 Python 指标</text>
+<rect x='340' y='138' width='292.6' height='12' rx='2' fill='#9aa3ad'/>
+<text x='636.6' y='148' font-size='10' fill='#1f2328'>1.91</text>
+<rect x='340' y='152' width='217.5' height='12' rx='2' fill='#2f6fdb'/>
+<text x='561.5' y='162' font-size='10' fill='#1f2328'>1.42</text>
+</svg>

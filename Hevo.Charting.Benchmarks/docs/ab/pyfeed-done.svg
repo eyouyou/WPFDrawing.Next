@@ -1,0 +1,23 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='960' height='240' viewBox='0 0 960 240' font-family='Segoe UI, Microsoft YaHei, sans-serif'>
+<rect width='960' height='240' fill='#ffffff'/>
+<text x='16' y='26' font-size='17' font-weight='600' fill='#1f2328'>PyFeed:指标完成率</text>
+<text x='16' y='46' font-size='12' fill='#57606a'>完成次数 / (tick × 指标数)(单位:%)</text>
+<rect x='700' y='14' width='12' height='12' fill='#9aa3ad'/><text x='717' y='25' font-size='12' fill='#1f2328'>A origin/main 3bce488(+测量钩子)</text>
+<rect x='700' y='32' width='12' height='12' fill='#2f6fdb'/><text x='717' y='43' font-size='12' fill='#1f2328'>B b1911b9(本分支)</text>
+<text x='332' y='86' font-size='12' text-anchor='end' fill='#1f2328'>1 个 Python 指标</text>
+<rect x='340' y='70' width='507.0' height='12' rx='2' fill='#9aa3ad'/>
+<text x='851.0' y='80' font-size='10' fill='#1f2328'>88.0</text>
+<rect x='340' y='84' width='530.0' height='12' rx='2' fill='#2f6fdb'/>
+<text x='874.0' y='94' font-size='10' fill='#1f2328'>92.0</text>
+<text x='332' y='120' font-size='12' text-anchor='end' fill='#1f2328'>4 个 Python 指标</text>
+<rect x='340' y='104' width='172.8' height='12' rx='2' fill='#9aa3ad'/>
+<text x='516.8' y='114' font-size='10' fill='#1f2328'>30.0</text>
+<rect x='340' y='118' width='195.9' height='12' rx='2' fill='#2f6fdb'/>
+<text x='539.9' y='128' font-size='10' fill='#1f2328'>34.0</text>
+<text x='332' y='154' font-size='12' text-anchor='end' fill='#1f2328'>8 个 Python 指标</text>
+<rect x='340' y='138' width='1.0' height='12' rx='2' fill='#9aa3ad'/>
+<text x='345.0' y='148' font-size='10' fill='#1f2328'>0.00</text>
+<rect x='340' y='152' width='1.0' height='12' rx='2' fill='#2f6fdb'/>
+<text x='345.0' y='162' font-size='10' fill='#1f2328'>0.00</text>
+<text x='16' y='226' font-size='11' fill='#57606a'>8 个指标完成率 0:已知旧问题(f98ad75 上同样复现),慢指标的 WatchAsync 调用越积越多、抢 GIL,与本轮改动无关</text>
+</svg>

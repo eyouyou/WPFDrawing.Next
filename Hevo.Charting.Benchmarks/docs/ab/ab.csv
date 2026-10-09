@@ -1,0 +1,349 @@
+suite,scenario,metric,unit,A,B
+BDN,"BlackboardTransactionBenchmarks.Transaction(PortsPerTransaction=1,Scenario=Changed)",Mean,ns,120.31,119.94
+BDN,"BlackboardTransactionBenchmarks.Transaction(PortsPerTransaction=1,Scenario=Changed)",Allocated,B,48.0,48.0
+BDN,"BlackboardTransactionBenchmarks.ReadUnderLock(PortsPerTransaction=1,Scenario=Changed)",Mean,ns,13.18,13.06
+BDN,"BlackboardTransactionBenchmarks.ReadUnderLock(PortsPerTransaction=1,Scenario=Changed)",Allocated,B,0.0,0.0
+BDN,"BlackboardTransactionBenchmarks.Transaction(PortsPerTransaction=1,Scenario=Unchanged)",Mean,ns,29.69,29.18
+BDN,"BlackboardTransactionBenchmarks.Transaction(PortsPerTransaction=1,Scenario=Unchanged)",Allocated,B,0.0,0.0
+BDN,"BlackboardTransactionBenchmarks.ReadUnderLock(PortsPerTransaction=1,Scenario=Unchanged)",Mean,ns,13.27,13.05
+BDN,"BlackboardTransactionBenchmarks.ReadUnderLock(PortsPerTransaction=1,Scenario=Unchanged)",Allocated,B,0.0,0.0
+BDN,"BlackboardTransactionBenchmarks.Transaction(PortsPerTransaction=8,Scenario=Changed)",Mean,ns,799.3,799.33
+BDN,"BlackboardTransactionBenchmarks.Transaction(PortsPerTransaction=8,Scenario=Changed)",Allocated,B,384.0,384.0
+BDN,"BlackboardTransactionBenchmarks.ReadUnderLock(PortsPerTransaction=8,Scenario=Changed)",Mean,ns,31.2,29.97
+BDN,"BlackboardTransactionBenchmarks.ReadUnderLock(PortsPerTransaction=8,Scenario=Changed)",Allocated,B,0.0,0.0
+BDN,"BlackboardTransactionBenchmarks.Transaction(PortsPerTransaction=8,Scenario=Unchanged)",Mean,ns,122.91,116.4
+BDN,"BlackboardTransactionBenchmarks.Transaction(PortsPerTransaction=8,Scenario=Unchanged)",Allocated,B,0.0,0.0
+BDN,"BlackboardTransactionBenchmarks.ReadUnderLock(PortsPerTransaction=8,Scenario=Unchanged)",Mean,ns,30.84,29.97
+BDN,"BlackboardTransactionBenchmarks.ReadUnderLock(PortsPerTransaction=8,Scenario=Unchanged)",Allocated,B,0.0,0.0
+BDN,"BlackboardTransactionBenchmarks.Transaction(PortsPerTransaction=32,Scenario=Changed)",Mean,ns,3425.63,3402.15
+BDN,"BlackboardTransactionBenchmarks.Transaction(PortsPerTransaction=32,Scenario=Changed)",Allocated,B,1536.0,1536.0
+BDN,"BlackboardTransactionBenchmarks.ReadUnderLock(PortsPerTransaction=32,Scenario=Changed)",Mean,ns,106.1,102.36
+BDN,"BlackboardTransactionBenchmarks.ReadUnderLock(PortsPerTransaction=32,Scenario=Changed)",Allocated,B,0.0,0.0
+BDN,"BlackboardTransactionBenchmarks.Transaction(PortsPerTransaction=32,Scenario=Unchanged)",Mean,ns,437.95,429.78
+BDN,"BlackboardTransactionBenchmarks.Transaction(PortsPerTransaction=32,Scenario=Unchanged)",Allocated,B,0.0,0.0
+BDN,"BlackboardTransactionBenchmarks.ReadUnderLock(PortsPerTransaction=32,Scenario=Unchanged)",Mean,ns,104.34,102.04
+BDN,"BlackboardTransactionBenchmarks.ReadUnderLock(PortsPerTransaction=32,Scenario=Unchanged)",Allocated,B,0.0,0.0
+BDN,BlueprintEndToEndBenchmarks.CreateNode_50Features,Mean,ns,3499.0,3403.0
+BDN,BlueprintEndToEndBenchmarks.CreateNode_50Features,Allocated,B,14796.8,14796.8
+BDN,BlueprintEndToEndBenchmarks.DryRun_50Features,Mean,ns,57635.0,2253.0
+BDN,BlueprintEndToEndBenchmarks.DryRun_50Features,Allocated,B,81182.72,2969.6
+BDN,CtorReflectionVsCompiledBenchmarks.'Activator.CreateInstance(type) — 反射',Mean,ns,4.272,4.055
+BDN,CtorReflectionVsCompiledBenchmarks.'Activator.CreateInstance(type) — 反射',Allocated,B,24.0,24.0
+BDN,CtorReflectionVsCompiledBenchmarks.'ComponentRegistry.CreateInstance(type) — 编译委托缓存',Mean,ns,5.25,4.973
+BDN,CtorReflectionVsCompiledBenchmarks.'ComponentRegistry.CreateInstance(type) — 编译委托缓存',Allocated,B,24.0,24.0
+BDN,"FrameScalingBenchmarks.Frame(Layers=8,Scenario=AllDirty)",Mean,ns,4561.8,4258.0
+BDN,"FrameScalingBenchmarks.Frame(Layers=8,Scenario=AllDirty)",Allocated,B,8368.0,8368.0
+BDN,"FrameScalingBenchmarks.Frame(Layers=8,Scenario=Idle)",Mean,ns,105.5,111.7
+BDN,"FrameScalingBenchmarks.Frame(Layers=8,Scenario=Idle)",Allocated,B,224.0,224.0
+BDN,"FrameScalingBenchmarks.Frame(Layers=8,Scenario=OneDirty)",Mean,ns,1003.4,966.8
+BDN,"FrameScalingBenchmarks.Frame(Layers=8,Scenario=OneDirty)",Allocated,B,1560.0,1560.0
+BDN,"FrameScalingBenchmarks.Frame(Layers=32,Scenario=AllDirty)",Mean,ns,16439.1,15986.0
+BDN,"FrameScalingBenchmarks.Frame(Layers=32,Scenario=AllDirty)",Allocated,B,30432.0,30432.0
+BDN,"FrameScalingBenchmarks.Frame(Layers=32,Scenario=Idle)",Mean,ns,315.0,317.0
+BDN,"FrameScalingBenchmarks.Frame(Layers=32,Scenario=Idle)",Allocated,B,224.0,224.0
+BDN,"FrameScalingBenchmarks.Frame(Layers=32,Scenario=OneDirty)",Mean,ns,1351.6,1330.7
+BDN,"FrameScalingBenchmarks.Frame(Layers=32,Scenario=OneDirty)",Allocated,B,1560.0,1560.0
+BDN,"FrameScalingBenchmarks.Frame(Layers=128,Scenario=AllDirty)",Mean,ns,68411.9,66980.6
+BDN,"FrameScalingBenchmarks.Frame(Layers=128,Scenario=AllDirty)",Allocated,B,122304.0,122304.0
+BDN,"FrameScalingBenchmarks.Frame(Layers=128,Scenario=Idle)",Mean,ns,1174.1,1160.0
+BDN,"FrameScalingBenchmarks.Frame(Layers=128,Scenario=Idle)",Allocated,B,224.0,224.0
+BDN,"FrameScalingBenchmarks.Frame(Layers=128,Scenario=OneDirty)",Mean,ns,2968.2,2821.2
+BDN,"FrameScalingBenchmarks.Frame(Layers=128,Scenario=OneDirty)",Allocated,B,1560.0,1560.0
+BDN,PortBindingValueBenchmarks.'ExtractList: CSV 5 ids (老格式)',Mean,ns,70.72,69.303
+BDN,PortBindingValueBenchmarks.'ExtractList: CSV 5 ids (老格式)',Allocated,B,424.0,424.0
+BDN,PortBindingValueBenchmarks.'ExtractList: List<string> 5 ids (新格式)',Mean,ns,41.603,37.78
+BDN,PortBindingValueBenchmarks.'ExtractList: List<string> 5 ids (新格式)',Allocated,B,192.0,192.0
+BDN,PortBindingValueBenchmarks.'ExtractList: single string (退化)',Mean,ns,4.459,4.341
+BDN,PortBindingValueBenchmarks.'ExtractList: single string (退化)',Allocated,B,32.0,32.0
+BDN,PortBindingValueBenchmarks.'ExtractSingle: string (单端口典型)',Mean,ns,0.187,0.006
+BDN,PortBindingValueBenchmarks.'ExtractSingle: string (单端口典型)',Allocated,B,0.0,0.0
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=8,Scenario=AllPorts)",Mean,ns,1623.3,1503.0
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=8,Scenario=AllPorts)",Allocated,B,800.0,800.0
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=8,Scenario=FullPass)",Mean,ns,707.25,567.7
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=8,Scenario=FullPass)",Allocated,B,512.0,512.0
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=8,Scenario=Idle)",Mean,ns,33.51,31.16
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=8,Scenario=Idle)",Allocated,B,224.0,224.0
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=8,Scenario=OnePort)",Mean,ns,361.2,328.71
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=8,Scenario=OnePort)",Allocated,B,464.0,464.0
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=32,Scenario=AllPorts)",Mean,ns,6467.49,6358.77
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=32,Scenario=AllPorts)",Allocated,B,1952.0,1952.0
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=32,Scenario=FullPass)",Mean,ns,1709.28,1774.05
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=32,Scenario=FullPass)",Allocated,B,512.0,512.0
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=32,Scenario=Idle)",Mean,ns,32.68,31.08
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=32,Scenario=Idle)",Allocated,B,224.0,224.0
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=32,Scenario=OnePort)",Mean,ns,432.84,421.17
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=32,Scenario=OnePort)",Allocated,B,464.0,464.0
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=128,Scenario=AllPorts)",Mean,ns,26547.53,24796.25
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=128,Scenario=AllPorts)",Allocated,B,6560.0,6560.0
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=128,Scenario=FullPass)",Mean,ns,6737.41,6504.99
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=128,Scenario=FullPass)",Allocated,B,512.0,512.0
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=128,Scenario=Idle)",Mean,ns,33.36,31.85
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=128,Scenario=Idle)",Allocated,B,224.0,224.0
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=128,Scenario=OnePort)",Mean,ns,736.56,719.4
+BDN,"ProjectAllBenchmarks.ProjectAll(Features=128,Scenario=OnePort)",Allocated,B,464.0,464.0
+BDN,PythonMarshallingBenchmarks.'ROM↔ndarray round-trip: 1 point',Mean,ns,6541.0,5858.0
+BDN,PythonMarshallingBenchmarks.'ROM↔ndarray round-trip: 1 point',Allocated,B,1628.16,1628.16
+BDN,PythonMarshallingBenchmarks.'ROM↔ndarray round-trip: 100 points',Mean,ns,6583.0,6186.0
+BDN,PythonMarshallingBenchmarks.'ROM↔ndarray round-trip: 100 points',Allocated,B,2416.64,2416.64
+BDN,PythonMarshallingBenchmarks.'ROM↔ndarray round-trip: 1000 points (time-share 典型)',Mean,ns,7250.0,6914.0
+BDN,PythonMarshallingBenchmarks.'ROM↔ndarray round-trip: 1000 points (time-share 典型)',Allocated,B,9615.36,9615.36
+BDN,PythonMarshallingBenchmarks.'ROM↔ndarray round-trip: 10000 points',Mean,ns,11368.0,9986.0
+BDN,PythonMarshallingBenchmarks.'ROM↔ndarray round-trip: 10000 points',Allocated,B,81612.8,81612.8
+BDN,SeedDispatchReflectionVsCompiledBenchmarks.'MakeGenericMethod + Invoke — 反射 (每次)',Mean,ns,117.822,112.027
+BDN,SeedDispatchReflectionVsCompiledBenchmarks.'MakeGenericMethod + Invoke — 反射 (每次)',Allocated,B,232.0,232.0
+BDN,"SeedDispatchReflectionVsCompiledBenchmarks.'缓存的编译 Action<IFeatureContext, object>'",Mean,ns,7.484,6.455
+BDN,"SeedDispatchReflectionVsCompiledBenchmarks.'缓存的编译 Action<IFeatureContext, object>'",Allocated,B,0.0,0.0
+BDN,SetterReflectionVsCompiledBenchmarks.'PropertyInfo.SetValue — 反射 (含 GetProperty 一次)',Mean,ns,19.607,19.711
+BDN,SetterReflectionVsCompiledBenchmarks.'PropertyInfo.SetValue — 反射 (含 GetProperty 一次)',Allocated,B,40.0,40.0
+BDN,SetterReflectionVsCompiledBenchmarks.'SmartActivator.InjectProperties — 编译 setter 缓存',Mean,ns,13.634,13.918
+BDN,SetterReflectionVsCompiledBenchmarks.'SmartActivator.InjectProperties — 编译 setter 缓存',Allocated,B,0.0,0.0
+BDN,"SetterReflectionVsCompiledBenchmarks.'PropertyInfo.SetValue — 反射 (无 GetProperty,直接写)'",Mean,ns,6.556,6.744
+BDN,"SetterReflectionVsCompiledBenchmarks.'PropertyInfo.SetValue — 反射 (无 GetProperty,直接写)'",Allocated,B,0.0,0.0
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=8,Scenario=GlobalChanged)",Mean,ns,117.48,106.97
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=8,Scenario=GlobalChanged)",Allocated,B,464.0,464.0
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=8,Scenario=GlobalRepublish)",Mean,ns,105.75,101.11
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=8,Scenario=GlobalRepublish)",Allocated,B,440.0,440.0
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=8,Scenario=Idle)",Mean,ns,64.23,66.15
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=8,Scenario=Idle)",Allocated,B,224.0,224.0
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=8,Scenario=OneLocal)",Mean,ns,136.99,126.97
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=8,Scenario=OneLocal)",Allocated,B,664.0,664.0
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=32,Scenario=GlobalChanged)",Mean,ns,325.17,333.67
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=32,Scenario=GlobalChanged)",Allocated,B,464.0,464.0
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=32,Scenario=GlobalRepublish)",Mean,ns,353.79,325.89
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=32,Scenario=GlobalRepublish)",Allocated,B,440.0,440.0
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=32,Scenario=Idle)",Mean,ns,208.91,206.9
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=32,Scenario=Idle)",Allocated,B,224.0,224.0
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=32,Scenario=OneLocal)",Mean,ns,316.28,315.88
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=32,Scenario=OneLocal)",Allocated,B,664.0,664.0
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=128,Scenario=GlobalChanged)",Mean,ns,1332.76,1316.32
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=128,Scenario=GlobalChanged)",Allocated,B,464.0,464.0
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=128,Scenario=GlobalRepublish)",Mean,ns,1383.02,1355.57
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=128,Scenario=GlobalRepublish)",Allocated,B,440.0,440.0
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=128,Scenario=Idle)",Mean,ns,970.63,826.66
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=128,Scenario=Idle)",Allocated,B,224.0,224.0
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=128,Scenario=OneLocal)",Mean,ns,1081.12,1079.34
+BDN,"SubmitSyncBenchmarks.SubmitSync(Layers=128,Scenario=OneLocal)",Allocated,B,664.0,664.0
+Frames,Hover,帧耗时中位,ms,0.045,0.051
+Frames,Hover,帧耗时P95,ms,0.088,0.077
+Frames,Hover,帧耗时P99,ms,0.179,0.111
+Frames,Hover,Feature重算/帧,count,3.0,3.0
+Frames,Hover,图层重录/帧,count,2.0,2.0
+Frames,Hover,绘制命令/帧,count,6.0,6.0
+Frames,Hover,分配/帧,B,14716.0,14769.0
+Frames,Pan,帧耗时中位,ms,0.107,0.094
+Frames,Pan,帧耗时P95,ms,0.172,0.162
+Frames,Pan,帧耗时P99,ms,0.226,0.188
+Frames,Pan,Feature重算/帧,count,3.0,3.0
+Frames,Pan,图层重录/帧,count,5.1,5.1
+Frames,Pan,绘制命令/帧,count,23.0,23.0
+Frames,Pan,分配/帧,B,62152.0,62193.0
+Frames,Zoom,帧耗时中位,ms,0.185,0.209
+Frames,Zoom,帧耗时P95,ms,0.815,0.743
+Frames,Zoom,帧耗时P99,ms,1.215,0.951
+Frames,Zoom,Feature重算/帧,count,3.3,3.3
+Frames,Zoom,图层重录/帧,count,5.5,5.5
+Frames,Zoom,绘制命令/帧,count,28.0,28.0
+Frames,Zoom,分配/帧,B,209362.0,190135.0
+Frames,Tick,帧耗时中位,ms,0.052,0.047
+Frames,Tick,帧耗时P95,ms,0.082,0.062
+Frames,Tick,帧耗时P99,ms,0.086,0.077
+Frames,Tick,Feature重算/帧,count,1.0,1.0
+Frames,Tick,图层重录/帧,count,2.0,2.0
+Frames,Tick,绘制命令/帧,count,9.0,9.0
+Frames,Tick,分配/帧,B,40053.0,40078.0
+Frames,Append,帧耗时中位,ms,0.121,0.115
+Frames,Append,帧耗时P95,ms,0.204,0.176
+Frames,Append,帧耗时P99,ms,0.236,0.211
+Frames,Append,Feature重算/帧,count,6.2,6.2
+Frames,Append,图层重录/帧,count,7.4,7.4
+Frames,Append,绘制命令/帧,count,31.0,31.0
+Frames,Append,分配/帧,B,70241.0,70360.0
+Frames,Resize,帧耗时中位,ms,0.159,0.136
+Frames,Resize,帧耗时P95,ms,0.252,0.209
+Frames,Resize,帧耗时P99,ms,0.341,0.231
+Frames,Resize,Feature重算/帧,count,12.0,12.0
+Frames,Resize,图层重录/帧,count,10.0,10.0
+Frames,Resize,绘制命令/帧,count,41.0,41.0
+Frames,Resize,分配/帧,B,80901.0,81002.0
+Frames,HoverNoTip,帧耗时中位,ms,0.041,0.042
+Frames,HoverNoTip,帧耗时P95,ms,0.06,0.06
+Frames,HoverNoTip,帧耗时P99,ms,0.074,0.077
+Frames,HoverNoTip,Feature重算/帧,count,2.0,2.0
+Frames,HoverNoTip,图层重录/帧,count,1.0,1.0
+Frames,HoverNoTip,绘制命令/帧,count,6.0,6.0
+Frames,HoverNoTip,分配/帧,B,11844.0,11844.0
+Frames,DashHover,帧耗时中位,ms,0.038,0.035
+Frames,DashHover,帧耗时P95,ms,0.066,0.064
+Frames,DashHover,帧耗时P99,ms,0.084,0.08
+Frames,DashHover,Feature重算/帧,count,5.0,5.0
+Frames,DashHover,图层重录/帧,count,3.0,3.0
+Frames,DashHover,绘制命令/帧,count,11.0,11.0
+Frames,DashHover,分配/帧,B,21541.0,21541.0
+Frames,DashPan,帧耗时中位,ms,0.037,0.077
+Frames,DashPan,帧耗时P95,ms,0.063,0.121
+Frames,DashPan,帧耗时P99,ms,0.098,0.142
+Frames,DashPan,Feature重算/帧,count,3.1,4.1
+Frames,DashPan,图层重录/帧,count,4.2,9.1
+Frames,DashPan,绘制命令/帧,count,8.0,41.0
+Frames,DashPan,分配/帧,B,58594.0,85486.0
+Frames,DashTick,帧耗时中位,ms,0.035,0.032
+Frames,DashTick,帧耗时P95,ms,0.051,0.052
+Frames,DashTick,帧耗时P99,ms,0.059,0.056
+Frames,DashTick,Feature重算/帧,count,2.0,2.0
+Frames,DashTick,图层重录/帧,count,3.0,3.0
+Frames,DashTick,绘制命令/帧,count,10.0,10.0
+Frames,DashTick,分配/帧,B,55192.0,55192.0
+Frames,Zoom@150,帧耗时中位,ms,0.114,0.079
+Frames,Zoom@150,帧耗时P95,ms,0.605,0.289
+Frames,Zoom@150,帧耗时P99,ms,0.95,0.343
+Frames,Zoom@150,Feature重算/帧,count,3.3,3.3
+Frames,Zoom@150,图层重录/帧,count,5.5,5.5
+Frames,Zoom@150,绘制命令/帧,count,21.0,21.0
+Frames,Zoom@150,分配/帧,B,202250.0,182565.0
+Frames,Zoom@200,帧耗时中位,ms,0.07,0.074
+Frames,Zoom@200,帧耗时P95,ms,0.299,0.268
+Frames,Zoom@200,帧耗时P99,ms,0.371,0.319
+Frames,Zoom@200,Feature重算/帧,count,3.3,3.3
+Frames,Zoom@200,图层重录/帧,count,5.5,5.5
+Frames,Zoom@200,绘制命令/帧,count,16.0,16.0
+Frames,Zoom@200,分配/帧,B,197602.0,177705.0
+Feed,2000根 C# SMA @100/s,帧/s,fps,76.3,76.1
+Feed,2000根 C# SMA @100/s,Feature重算/帧,count,6.57,7.0
+Feed,2000根 C# SMA @100/s,图层重录/帧,count,5.41,5.66
+Feed,2000根 C# SMA @100/s,延迟P50,ms,0.3,0.2
+Feed,2000根 C# SMA @100/s,延迟P95,ms,0.7,0.4
+Feed,2000根 C# SMA @100/s,延迟P99,ms,1.1,0.5
+Feed,2000根 C# SMA @100/s,分配,MB/s,5.5,5.5
+Feed,2000根 C# SMA @100/s,Gen0,次/s,0.15,0.15
+Feed,2000根 C# SMA @100/s,Gen1,次/s,0.05,0.05
+Feed,2000根 C# SMA @100/s,Gen2,次/s,0.03,0.03
+Feed,2000根 C# SMA @100/s,GC暂停,ms/s,0.12,0.12
+Feed,2000根 C# SMA @100/s,工作集,MB,161.0,159.0
+Feed,2000根 C# SMA @100/s,CPU,%,3.3,3.3
+Feed,2000根 C# SMA @1000/s,帧/s,fps,998.9,1000.0
+Feed,2000根 C# SMA @1000/s,Feature重算/帧,count,6.02,6.03
+Feed,2000根 C# SMA @1000/s,图层重录/帧,count,5.05,5.05
+Feed,2000根 C# SMA @1000/s,延迟P50,ms,0.2,0.1
+Feed,2000根 C# SMA @1000/s,延迟P95,ms,0.3,0.2
+Feed,2000根 C# SMA @1000/s,延迟P99,ms,0.5,0.3
+Feed,2000根 C# SMA @1000/s,分配,MB/s,70.6,70.8
+Feed,2000根 C# SMA @1000/s,Gen0,次/s,2.48,2.48
+Feed,2000根 C# SMA @1000/s,Gen1,次/s,0.9,0.92
+Feed,2000根 C# SMA @1000/s,Gen2,次/s,0.9,0.9
+Feed,2000根 C# SMA @1000/s,GC暂停,ms/s,1.14,0.94
+Feed,2000根 C# SMA @1000/s,工作集,MB,163.0,163.0
+Feed,2000根 C# SMA @1000/s,CPU,%,6.9,6.6
+Feed,20000根 C# SMA @100/s,帧/s,fps,81.1,79.2
+Feed,20000根 C# SMA @100/s,Feature重算/帧,count,7.26,7.44
+Feed,20000根 C# SMA @100/s,图层重录/帧,count,5.83,5.95
+Feed,20000根 C# SMA @100/s,延迟P50,ms,0.7,0.6
+Feed,20000根 C# SMA @100/s,延迟P95,ms,1.2,1.1
+Feed,20000根 C# SMA @100/s,延迟P99,ms,1.5,1.2
+Feed,20000根 C# SMA @100/s,分配,MB/s,21.5,21.4
+Feed,20000根 C# SMA @100/s,Gen0,次/s,2.68,1.78
+Feed,20000根 C# SMA @100/s,Gen1,次/s,2.62,1.72
+Feed,20000根 C# SMA @100/s,Gen2,次/s,2.6,1.7
+Feed,20000根 C# SMA @100/s,GC暂停,ms/s,1.16,0.82
+Feed,20000根 C# SMA @100/s,工作集,MB,115.0,134.0
+Feed,20000根 C# SMA @100/s,CPU,%,3.5,3.5
+Feed,20000根 C# SMA @1000/s,帧/s,fps,997.8,999.9
+Feed,20000根 C# SMA @1000/s,Feature重算/帧,count,6.04,6.04
+Feed,20000根 C# SMA @1000/s,图层重录/帧,count,5.06,5.06
+Feed,20000根 C# SMA @1000/s,延迟P50,ms,0.5,0.5
+Feed,20000根 C# SMA @1000/s,延迟P95,ms,0.7,0.6
+Feed,20000根 C# SMA @1000/s,延迟P99,ms,0.9,0.8
+Feed,20000根 C# SMA @1000/s,分配,MB/s,229.1,229.0
+Feed,20000根 C# SMA @1000/s,Gen0,次/s,24.57,18.82
+Feed,20000根 C# SMA @1000/s,Gen1,次/s,23.52,17.78
+Feed,20000根 C# SMA @1000/s,Gen2,次/s,23.52,17.78
+Feed,20000根 C# SMA @1000/s,GC暂停,ms/s,9.35,6.48
+Feed,20000根 C# SMA @1000/s,工作集,MB,128.0,141.0
+Feed,20000根 C# SMA @1000/s,CPU,%,7.2,7.4
+AutoMapFeed,2000根 C# SMA @100/s,帧/s,fps,2.0,76.3
+AutoMapFeed,2000根 C# SMA @100/s,Feature重算/帧,count,7.53,3.51
+AutoMapFeed,2000根 C# SMA @100/s,图层重录/帧,count,7.75,3.33
+AutoMapFeed,2000根 C# SMA @100/s,延迟P50,ms,247.7,0.2
+AutoMapFeed,2000根 C# SMA @100/s,延迟P95,ms,468.6,0.4
+AutoMapFeed,2000根 C# SMA @100/s,延迟P99,ms,486.2,0.5
+AutoMapFeed,2000根 C# SMA @100/s,分配,MB/s,0.7,5.3
+AutoMapFeed,2000根 C# SMA @100/s,Gen0,次/s,0.03,0.15
+AutoMapFeed,2000根 C# SMA @100/s,Gen1,次/s,0.03,0.07
+AutoMapFeed,2000根 C# SMA @100/s,Gen2,次/s,0.03,0.03
+AutoMapFeed,2000根 C# SMA @100/s,GC暂停,ms/s,0.04,0.1
+AutoMapFeed,2000根 C# SMA @100/s,工作集,MB,129.0,163.0
+AutoMapFeed,2000根 C# SMA @100/s,CPU,%,0.3,3.3
+AutoMapFeed,20000根 C# SMA @100/s,帧/s,fps,2.0,79.3
+AutoMapFeed,20000根 C# SMA @100/s,Feature重算/帧,count,7.98,3.72
+AutoMapFeed,20000根 C# SMA @100/s,图层重录/帧,count,8.24,3.46
+AutoMapFeed,20000根 C# SMA @100/s,延迟P50,ms,249.0,0.7
+AutoMapFeed,20000根 C# SMA @100/s,延迟P95,ms,469.5,1.4
+AutoMapFeed,20000根 C# SMA @100/s,延迟P99,ms,486.7,1.9
+AutoMapFeed,20000根 C# SMA @100/s,分配,MB/s,4.5,21.2
+AutoMapFeed,20000根 C# SMA @100/s,Gen0,次/s,0.57,1.98
+AutoMapFeed,20000根 C# SMA @100/s,Gen1,次/s,0.57,1.92
+AutoMapFeed,20000根 C# SMA @100/s,Gen2,次/s,0.57,1.9
+AutoMapFeed,20000根 C# SMA @100/s,GC暂停,ms/s,0.27,0.84
+AutoMapFeed,20000根 C# SMA @100/s,工作集,MB,115.0,132.0
+AutoMapFeed,20000根 C# SMA @100/s,CPU,%,0.4,3.5
+PyFeed,20000根 1 个 Python 指标 @100/s,帧/s,fps,81.5,85.7
+PyFeed,20000根 1 个 Python 指标 @100/s,Feature重算/帧,count,8.32,8.03
+PyFeed,20000根 1 个 Python 指标 @100/s,图层重录/帧,count,6.9,6.73
+PyFeed,20000根 1 个 Python 指标 @100/s,延迟P50,ms,0.6,0.6
+PyFeed,20000根 1 个 Python 指标 @100/s,延迟P95,ms,1.2,1.1
+PyFeed,20000根 1 个 Python 指标 @100/s,延迟P99,ms,1.5,1.3
+PyFeed,20000根 1 个 Python 指标 @100/s,分配,MB/s,33.8,35.6
+PyFeed,20000根 1 个 Python 指标 @100/s,Gen0,次/s,4.18,1.65
+PyFeed,20000根 1 个 Python 指标 @100/s,Gen1,次/s,4.08,1.55
+PyFeed,20000根 1 个 Python 指标 @100/s,Gen2,次/s,4.07,1.53
+PyFeed,20000根 1 个 Python 指标 @100/s,GC暂停,ms/s,3.46,1.59
+PyFeed,20000根 1 个 Python 指标 @100/s,工作集,MB,286.0,314.0
+PyFeed,20000根 1 个 Python 指标 @100/s,CPU,%,6.7,6.6
+PyFeed,20000根 1 个 Python 指标 @100/s,指标单次调用中位,ms,438.32,408.95
+PyFeed,20000根 1 个 Python 指标 @100/s,指标完成率,%,88.0,92.0
+PyFeed,20000根 4 个 Python 指标 @100/s,帧/s,fps,82.5,86.1
+PyFeed,20000根 4 个 Python 指标 @100/s,Feature重算/帧,count,8.19,7.94
+PyFeed,20000根 4 个 Python 指标 @100/s,图层重录/帧,count,6.63,6.61
+PyFeed,20000根 4 个 Python 指标 @100/s,延迟P50,ms,0.6,0.6
+PyFeed,20000根 4 个 Python 指标 @100/s,延迟P95,ms,1.2,1.1
+PyFeed,20000根 4 个 Python 指标 @100/s,延迟P99,ms,1.4,1.3
+PyFeed,20000根 4 个 Python 指标 @100/s,分配,MB/s,32.3,33.5
+PyFeed,20000根 4 个 Python 指标 @100/s,Gen0,次/s,1.92,1.07
+PyFeed,20000根 4 个 Python 指标 @100/s,Gen1,次/s,1.82,0.97
+PyFeed,20000根 4 个 Python 指标 @100/s,Gen2,次/s,1.8,0.95
+PyFeed,20000根 4 个 Python 指标 @100/s,GC暂停,ms/s,2.25,1.44
+PyFeed,20000根 4 个 Python 指标 @100/s,工作集,MB,310.0,340.0
+PyFeed,20000根 4 个 Python 指标 @100/s,CPU,%,6.5,6.5
+PyFeed,20000根 4 个 Python 指标 @100/s,指标单次调用中位,ms,222.44,213.3
+PyFeed,20000根 4 个 Python 指标 @100/s,指标完成率,%,30.0,34.0
+PyFeed,20000根 8 个 Python 指标 @100/s,帧/s,fps,83.1,85.8
+PyFeed,20000根 8 个 Python 指标 @100/s,Feature重算/帧,count,8.11,7.96
+PyFeed,20000根 8 个 Python 指标 @100/s,图层重录/帧,count,4.66,4.55
+PyFeed,20000根 8 个 Python 指标 @100/s,延迟P50,ms,0.7,0.6
+PyFeed,20000根 8 个 Python 指标 @100/s,延迟P95,ms,1.2,1.1
+PyFeed,20000根 8 个 Python 指标 @100/s,延迟P99,ms,1.4,1.3
+PyFeed,20000根 8 个 Python 指标 @100/s,分配,MB/s,30.9,32.1
+PyFeed,20000根 8 个 Python 指标 @100/s,Gen0,次/s,1.42,0.98
+PyFeed,20000根 8 个 Python 指标 @100/s,Gen1,次/s,1.32,0.88
+PyFeed,20000根 8 个 Python 指标 @100/s,Gen2,次/s,1.3,0.87
+PyFeed,20000根 8 个 Python 指标 @100/s,GC暂停,ms/s,1.91,1.42
+PyFeed,20000根 8 个 Python 指标 @100/s,工作集,MB,243.0,284.0
+PyFeed,20000根 8 个 Python 指标 @100/s,CPU,%,6.5,6.5
+PyFeed,20000根 8 个 Python 指标 @100/s,指标完成率,%,0.0,0.0
+Blueprint,冷启动,LaunchEx(DryRun+实例化+装配),ms,62.4,62.1
+Blueprint,冷启动,显示+布局,ms,234.6,219.4
+Blueprint,冷启动,数据到达→全部首帧,ms,75.1,62.9
+Blueprint,冷启动,合计,ms,372.1,344.5
+Blueprint,热启动中位(5次),LaunchEx(DryRun+实例化+装配),ms,2.4,2.1
+Blueprint,热启动中位(5次),显示+布局,ms,32.9,27.9
+Blueprint,热启动中位(5次),数据到达→全部首帧,ms,16.5,17.5
+Blueprint,热启动中位(5次),合计,ms,55.0,50.1
+Startup,Startup JIT(6进程中位),冷启动装配,ms,172.8,165.2
+Startup,Startup JIT(6进程中位),冷启动首帧,ms,51.35,50.8
+Startup,Startup JIT(6进程中位),冷启动合计,ms,224.0,215.6
+Startup,Startup JIT(6进程中位),热启动装配,ms,15.29,13.27
+Startup,Startup JIT(6进程中位),热启动首帧,ms,1.02,0.98
+Startup,Startup R2R(6进程中位),冷启动装配,ms,159.75,148.9
+Startup,Startup R2R(6进程中位),冷启动首帧,ms,31.85,30.9
+Startup,Startup R2R(6进程中位),冷启动合计,ms,193.65,179.45
+Startup,Startup R2R(6进程中位),热启动装配,ms,15.0,13.29
+Startup,Startup R2R(6进程中位),热启动首帧,ms,0.97,0.97

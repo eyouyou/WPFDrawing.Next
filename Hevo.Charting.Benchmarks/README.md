@@ -22,6 +22,59 @@ dotnet run -c Release -- --filter "*" --warmupCount 3 --iterationCount 5
 > 按宿主 runtime 生成的 boilerplate 是 `net10.0`,引用本项目会 NU1201。`Program.BenchConfig` 已把默认 job 的工具链
 > 钉到 `net10.0-windows10.0.19041.0`(`--job dry/short/medium/long` 也在那里映射),不要再手动覆盖。
 
+## A/B 全量对比:origin/main → 本分支(2026-10-09)
+
+- **A** = origin/main `3bce488`。A 的 Benchmarks 还没有本分支的套件,两边统一用 B 的基准代码;
+  A 的库里只补了基准代码需要的 4 个纯测量钩子(`ChartCell.RunFrameNow` / `DiscardPendingUpdates` /
+  `LastFrameDirtyLayers`、`IncrementalRenderProbe.FrameRendered`,把帧循环拆成 Swap / Run 两段,不改逻辑),没有提交。
+- **B** = `b1911b9`(本分支:K 线 LOD、DryRun 端口元数据缓存、GetSnapshot / 摄入器列缓冲的锁外读修复、AutoMap 通知、
+  Python handler 让出列读者登记等)。
+- 机器:AMD Ryzen 9 9950X3D(16C/32T)、内存 61.6 GB 可用、Windows 11 10.0.26300、.NET 10.0.12、Release、默认 LOH 阈值、
+  Workstation/Interactive GC。**远程桌面会话**:WPF 走软件渲染(RenderTier 0,32 Hz),合成 / 上屏数字不代表本机直显;
+  帧内 CPU 耗时、分配、GC、计数类指标不受影响。A、B 同机先后跑,没有其它负载。
+- 时长:逐帧场景 300 帧 × 5 轮(2000 根 × 1 图,增量模式);Feed / AutoMap / PyFeed 每档 60 s;Blueprint 冷启动 + 5 次热启动;
+  Startup JIT / R2R 各 6 个进程取中位;BDN `--job short`。
+- 全部数字:[docs/ab/ab.csv](docs/ab/ab.csv)(`suite,scenario,metric,unit,A,B`,348 行)。命令:
+  `--render-probe --scenarios=<逐帧场景>,Startup --modes=inc`;`--scenarios=Feed --feed-bars=2000|20000 --feed-rates=100,1000 --feed-seconds=60`
+  (AutoMap 加 `--feed-map=source`、只跑 100);`--scenarios=PyFeed --feed-bars=20000 --py-rate=100 --py-indicators=1,4,8 --feed-seconds=60`;
+  `--scenarios=Blueprint`;`--filter "*" --job short`。
+
+**结论**
+
+| 方面 | A → B | 原因 |
+|---|---|---|
+| AutoMap Feed(2000 / 2 万根,100 tick/s) | 帧率 2.0 → 76 / 79 帧/s;tick→帧延迟中位 248 / 249 → 0.2 / 0.7 ms;每帧 Feature 重算 7.5 / 8.0 → 3.5 / 3.7 | A 的 FastSourceMap 原地复用同一块数组再 `WriteIfChanged`,ROM 引用没变 → 长度不变的 tick 不通知,只有新增 K 线时才出帧(**A 上是功能缺陷**)。B 每次写新缓冲 + 按内容判等。B 的分配(5.3 / 21.2 MB/s)是正常出帧的代价 |
+| PyFeed(2 万根,1 / 4 / 8 个 Python 指标) | GC 暂停 3.46 / 2.25 / 1.91 → 1.59 / 1.44 / 1.42 ms/s;完成率 88 / 30 / 0 → 92 / 34 / 0 % | Python 调用期间让出列读者登记,不再挡缓冲复用 |
+| Feed(C# SMA) | 2 万根 @1000 tick/s GC 暂停 9.35 → 6.48 ms/s;其余分配 / 延迟持平 | 列缓冲按纪元复用 |
+| BDN DryRun_50Features | 57.6 µs / 81 KB → 2.25 µs / 3 KB | DryRun 按类型缓存端口元数据 |
+| Blueprint 端到端 | 冷启动合计 372 → 345 ms;热启动中位 55 → 50 ms | LaunchEx 持平(冷 62 ms / 热 2 ms),差异在显示 + 布局,远程桌面下波动大,不算结论 |
+| Startup 冷启动(装配 + 首帧) | JIT 224 → 216 ms;R2R 194 → 179 ms | — |
+| 逐帧场景 | 帧耗时 / 计数基本持平;Zoom 类每帧分配 202–209 → 178–190 KB | K 线 / 折线按物理像素列 LOD |
+| DashPan(联动 dashboard 平移) | 每帧 Feature 3.1 → 4.1、分配 58 → 85 KB、帧耗时 0.037 → 0.077 ms | A 的时间轴不跟随平移(74fd952 修的缺陷),B 多出来的是本该有的重绘 |
+| 其余 BDN(61 项) | 差异都在 ±25% 噪声内 | — |
+
+**已知旧问题(A、B 都有,与本轮改动无关)**:PyFeed 2 万根 × 8 个纯 Python 指标 × 100 tick/s 时,60 s 内没有一次指标调用完成
+(4 个指标约三成)。慢指标的 WatchAsync 调用不合并、越积越多、抢 GIL,谁都完不成;在 f98ad75 上用同一套基准代码复测结果相同。待单独处理。
+
+![AutoMap 延迟](docs/ab/automap-latency.svg)
+![AutoMap 帧率](docs/ab/automap-fps.svg)
+![AutoMap 计数](docs/ab/automap-work.svg)
+![AutoMap 分配](docs/ab/automap-alloc.svg)
+![PyFeed GC 暂停](docs/ab/pyfeed-gcpause.svg)
+![PyFeed 分配](docs/ab/pyfeed-alloc.svg)
+![PyFeed 完成率](docs/ab/pyfeed-done.svg)
+![Feed 分配](docs/ab/feed-alloc.svg)
+![Feed GC 暂停](docs/ab/feed-gcpause.svg)
+![Feed Gen2](docs/ab/feed-gen2.svg)
+![Feed 工作集](docs/ab/feed-ws.svg)
+![Feed 延迟 P99](docs/ab/feed-p99.svg)
+![逐帧 帧耗时中位](docs/ab/frames-p50.svg)
+![逐帧 帧耗时 P99](docs/ab/frames-p99.svg)
+![逐帧 每帧分配](docs/ab/frames-alloc.svg)
+![逐帧 图层重录](docs/ab/frames-work.svg)
+![启动](docs/ab/startup.svg)
+![BDN](docs/ab/bdn-common.svg)
+
 ## 实测结果 (.NET 10.0.12, Win11, 5 warmup / 10 iter)
 
 测量机:AMD Ryzen 9 9950X3D(16C/32T),BenchmarkDotNet 0.14.0,2026-10-08。

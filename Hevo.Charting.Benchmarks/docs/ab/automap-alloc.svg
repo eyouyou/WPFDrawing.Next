@@ -1,0 +1,17 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='960' height='188' viewBox='0 0 960 188' font-family='Segoe UI, Microsoft YaHei, sans-serif'>
+<rect width='960' height='188' fill='#ffffff'/>
+<text x='16' y='26' font-size='17' font-weight='600' fill='#1f2328'>AutoMap Feed:分配</text>
+<text x='16' y='46' font-size='12' fill='#57606a'>100 tick/s × 60 s(单位:MB/s)</text>
+<rect x='700' y='14' width='12' height='12' fill='#9aa3ad'/><text x='717' y='25' font-size='12' fill='#1f2328'>A origin/main 3bce488(+测量钩子)</text>
+<rect x='700' y='32' width='12' height='12' fill='#2f6fdb'/><text x='717' y='43' font-size='12' fill='#1f2328'>B b1911b9(本分支)</text>
+<text x='332' y='86' font-size='12' text-anchor='end' fill='#1f2328'>2000根 @100 tick/s</text>
+<rect x='340' y='70' width='17.5' height='12' rx='2' fill='#9aa3ad'/>
+<text x='361.5' y='80' font-size='10' fill='#1f2328'>0.70</text>
+<rect x='340' y='84' width='132.5' height='12' rx='2' fill='#2f6fdb'/>
+<text x='476.5' y='94' font-size='10' fill='#1f2328'>5.30</text>
+<text x='332' y='120' font-size='12' text-anchor='end' fill='#1f2328'>20000根 @100 tick/s</text>
+<rect x='340' y='104' width='112.5' height='12' rx='2' fill='#9aa3ad'/>
+<text x='456.5' y='114' font-size='10' fill='#1f2328'>4.50</text>
+<rect x='340' y='118' width='530.0' height='12' rx='2' fill='#2f6fdb'/>
+<text x='874.0' y='128' font-size='10' fill='#1f2328'>21.2</text>
+</svg>

@@ -1,0 +1,67 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='960' height='528' viewBox='0 0 960 528' font-family='Segoe UI, Microsoft YaHei, sans-serif'>
+<rect width='960' height='528' fill='#ffffff'/>
+<text x='16' y='26' font-size='17' font-weight='600' fill='#1f2328'>逐帧场景:每帧分配</text>
+<text x='16' y='46' font-size='12' fill='#57606a'>2000 根 × 1 图,UI 线程(单位:KB/帧)</text>
+<rect x='700' y='14' width='12' height='12' fill='#9aa3ad'/><text x='717' y='25' font-size='12' fill='#1f2328'>A origin/main 3bce488(+测量钩子)</text>
+<rect x='700' y='32' width='12' height='12' fill='#2f6fdb'/><text x='717' y='43' font-size='12' fill='#1f2328'>B b1911b9(本分支)</text>
+<text x='332' y='86' font-size='12' text-anchor='end' fill='#1f2328'>Hover</text>
+<rect x='340' y='70' width='37.3' height='12' rx='2' fill='#9aa3ad'/>
+<text x='381.3' y='80' font-size='10' fill='#1f2328'>14.4</text>
+<rect x='340' y='84' width='37.4' height='12' rx='2' fill='#2f6fdb'/>
+<text x='381.4' y='94' font-size='10' fill='#1f2328'>14.4</text>
+<text x='332' y='120' font-size='12' text-anchor='end' fill='#1f2328'>Pan</text>
+<rect x='340' y='104' width='157.3' height='12' rx='2' fill='#9aa3ad'/>
+<text x='501.3' y='114' font-size='10' fill='#1f2328'>60.7</text>
+<rect x='340' y='118' width='157.4' height='12' rx='2' fill='#2f6fdb'/>
+<text x='501.4' y='128' font-size='10' fill='#1f2328'>60.7</text>
+<text x='332' y='154' font-size='12' text-anchor='end' fill='#1f2328'>Zoom</text>
+<rect x='340' y='138' width='530.0' height='12' rx='2' fill='#9aa3ad'/>
+<text x='874.0' y='148' font-size='10' fill='#1f2328'>204</text>
+<rect x='340' y='152' width='481.3' height='12' rx='2' fill='#2f6fdb'/>
+<text x='825.3' y='162' font-size='10' fill='#1f2328'>186</text>
+<text x='332' y='188' font-size='12' text-anchor='end' fill='#1f2328'>Tick</text>
+<rect x='340' y='172' width='101.4' height='12' rx='2' fill='#9aa3ad'/>
+<text x='445.4' y='182' font-size='10' fill='#1f2328'>39.1</text>
+<rect x='340' y='186' width='101.5' height='12' rx='2' fill='#2f6fdb'/>
+<text x='445.5' y='196' font-size='10' fill='#1f2328'>39.1</text>
+<text x='332' y='222' font-size='12' text-anchor='end' fill='#1f2328'>Append</text>
+<rect x='340' y='206' width='177.8' height='12' rx='2' fill='#9aa3ad'/>
+<text x='521.8' y='216' font-size='10' fill='#1f2328'>68.6</text>
+<rect x='340' y='220' width='178.1' height='12' rx='2' fill='#2f6fdb'/>
+<text x='522.1' y='230' font-size='10' fill='#1f2328'>68.7</text>
+<text x='332' y='256' font-size='12' text-anchor='end' fill='#1f2328'>Resize</text>
+<rect x='340' y='240' width='204.8' height='12' rx='2' fill='#9aa3ad'/>
+<text x='548.8' y='250' font-size='10' fill='#1f2328'>79.0</text>
+<rect x='340' y='254' width='205.1' height='12' rx='2' fill='#2f6fdb'/>
+<text x='549.1' y='264' font-size='10' fill='#1f2328'>79.1</text>
+<text x='332' y='290' font-size='12' text-anchor='end' fill='#1f2328'>HoverNoTip</text>
+<rect x='340' y='274' width='30.0' height='12' rx='2' fill='#9aa3ad'/>
+<text x='374.0' y='284' font-size='10' fill='#1f2328'>11.6</text>
+<rect x='340' y='288' width='30.0' height='12' rx='2' fill='#2f6fdb'/>
+<text x='374.0' y='298' font-size='10' fill='#1f2328'>11.6</text>
+<text x='332' y='324' font-size='12' text-anchor='end' fill='#1f2328'>DashHover</text>
+<rect x='340' y='308' width='54.5' height='12' rx='2' fill='#9aa3ad'/>
+<text x='398.5' y='318' font-size='10' fill='#1f2328'>21.0</text>
+<rect x='340' y='322' width='54.5' height='12' rx='2' fill='#2f6fdb'/>
+<text x='398.5' y='332' font-size='10' fill='#1f2328'>21.0</text>
+<text x='332' y='358' font-size='12' text-anchor='end' fill='#1f2328'>DashPan</text>
+<rect x='340' y='342' width='148.3' height='12' rx='2' fill='#9aa3ad'/>
+<text x='492.3' y='352' font-size='10' fill='#1f2328'>57.2</text>
+<rect x='340' y='356' width='216.4' height='12' rx='2' fill='#2f6fdb'/>
+<text x='560.4' y='366' font-size='10' fill='#1f2328'>83.5</text>
+<text x='332' y='392' font-size='12' text-anchor='end' fill='#1f2328'>DashTick</text>
+<rect x='340' y='376' width='139.7' height='12' rx='2' fill='#9aa3ad'/>
+<text x='483.7' y='386' font-size='10' fill='#1f2328'>53.9</text>
+<rect x='340' y='390' width='139.7' height='12' rx='2' fill='#2f6fdb'/>
+<text x='483.7' y='400' font-size='10' fill='#1f2328'>53.9</text>
+<text x='332' y='426' font-size='12' text-anchor='end' fill='#1f2328'>Zoom@150</text>
+<rect x='340' y='410' width='512.0' height='12' rx='2' fill='#9aa3ad'/>
+<text x='856.0' y='420' font-size='10' fill='#1f2328'>198</text>
+<rect x='340' y='424' width='462.2' height='12' rx='2' fill='#2f6fdb'/>
+<text x='806.2' y='434' font-size='10' fill='#1f2328'>178</text>
+<text x='332' y='460' font-size='12' text-anchor='end' fill='#1f2328'>Zoom@200</text>
+<rect x='340' y='444' width='500.2' height='12' rx='2' fill='#9aa3ad'/>
+<text x='844.2' y='454' font-size='10' fill='#1f2328'>193</text>
+<rect x='340' y='458' width='449.9' height='12' rx='2' fill='#2f6fdb'/>
+<text x='793.9' y='468' font-size='10' fill='#1f2328'>174</text>
+</svg>

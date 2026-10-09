@@ -1,0 +1,27 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='960' height='256' viewBox='0 0 960 256' font-family='Segoe UI, Microsoft YaHei, sans-serif'>
+<rect width='960' height='256' fill='#ffffff'/>
+<text x='16' y='26' font-size='17' font-weight='600' fill='#1f2328'>AutoMap Feed:每帧 Feature 重算 / 图层重录</text>
+<text x='16' y='46' font-size='12' fill='#57606a'>source map(AutoMap 生成的 FastSourceMap),100 tick/s × 60 s(单位:次/帧)</text>
+<rect x='700' y='14' width='12' height='12' fill='#9aa3ad'/><text x='717' y='25' font-size='12' fill='#1f2328'>A origin/main 3bce488(+测量钩子)</text>
+<rect x='700' y='32' width='12' height='12' fill='#2f6fdb'/><text x='717' y='43' font-size='12' fill='#1f2328'>B b1911b9(本分支)</text>
+<text x='332' y='86' font-size='12' text-anchor='end' fill='#1f2328'>2000根 @100 tick/s Feature</text>
+<rect x='340' y='70' width='484.3' height='12' rx='2' fill='#9aa3ad'/>
+<text x='828.3' y='80' font-size='10' fill='#1f2328'>7.53</text>
+<rect x='340' y='84' width='225.8' height='12' rx='2' fill='#2f6fdb'/>
+<text x='569.8' y='94' font-size='10' fill='#1f2328'>3.51</text>
+<text x='332' y='120' font-size='12' text-anchor='end' fill='#1f2328'>20000根 @100 tick/s Feature</text>
+<rect x='340' y='104' width='513.3' height='12' rx='2' fill='#9aa3ad'/>
+<text x='857.3' y='114' font-size='10' fill='#1f2328'>7.98</text>
+<rect x='340' y='118' width='239.3' height='12' rx='2' fill='#2f6fdb'/>
+<text x='583.3' y='128' font-size='10' fill='#1f2328'>3.72</text>
+<text x='332' y='154' font-size='12' text-anchor='end' fill='#1f2328'>2000根 @100 tick/s 图层</text>
+<rect x='340' y='138' width='498.5' height='12' rx='2' fill='#9aa3ad'/>
+<text x='842.5' y='148' font-size='10' fill='#1f2328'>7.75</text>
+<rect x='340' y='152' width='214.2' height='12' rx='2' fill='#2f6fdb'/>
+<text x='558.2' y='162' font-size='10' fill='#1f2328'>3.33</text>
+<text x='332' y='188' font-size='12' text-anchor='end' fill='#1f2328'>20000根 @100 tick/s 图层</text>
+<rect x='340' y='172' width='530.0' height='12' rx='2' fill='#9aa3ad'/>
+<text x='874.0' y='182' font-size='10' fill='#1f2328'>8.24</text>
+<rect x='340' y='186' width='222.5' height='12' rx='2' fill='#2f6fdb'/>
+<text x='566.5' y='196' font-size='10' fill='#1f2328'>3.46</text>
+</svg>

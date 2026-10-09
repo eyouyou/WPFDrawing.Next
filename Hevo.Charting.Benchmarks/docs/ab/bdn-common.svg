@@ -1,0 +1,317 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='960' height='2228' viewBox='0 0 960 2228' font-family='Segoe UI, Microsoft YaHei, sans-serif'>
+<rect width='960' height='2228' fill='#ffffff'/>
+<text x='16' y='26' font-size='17' font-weight='600' fill='#1f2328'>BDN 微基准:Mean(全部 62 项)</text>
+<text x='16' y='46' font-size='12' fill='#57606a'>ShortRun,两边同一套基准代码(单位:µs,对数刻度)</text>
+<rect x='700' y='14' width='12' height='12' fill='#9aa3ad'/><text x='717' y='25' font-size='12' fill='#1f2328'>A origin/main 3bce488(+测量钩子)</text>
+<rect x='700' y='32' width='12' height='12' fill='#2f6fdb'/><text x='717' y='43' font-size='12' fill='#1f2328'>B b1911b9(本分支)</text>
+<text x='332' y='86' font-size='12' text-anchor='end' fill='#1f2328'>Transaction(PortsPerTransaction=1,Scenario=…</text>
+<rect x='340' y='70' width='228.4' height='12' rx='2' fill='#9aa3ad'/>
+<text x='572.4' y='80' font-size='10' fill='#1f2328'>0.12</text>
+<rect x='340' y='84' width='228.3' height='12' rx='2' fill='#2f6fdb'/>
+<text x='572.3' y='94' font-size='10' fill='#1f2328'>0.12</text>
+<text x='332' y='120' font-size='12' text-anchor='end' fill='#1f2328'>ReadUnderLock(PortsPerTransaction=1,Scenari…</text>
+<rect x='340' y='104' width='126.2' height='12' rx='2' fill='#9aa3ad'/>
+<text x='470.2' y='114' font-size='10' fill='#1f2328'>0.01</text>
+<rect x='340' y='118' width='125.8' height='12' rx='2' fill='#2f6fdb'/>
+<text x='469.8' y='128' font-size='10' fill='#1f2328'>0.01</text>
+<text x='332' y='154' font-size='12' text-anchor='end' fill='#1f2328'>Transaction(PortsPerTransaction=1,Scenario=…</text>
+<rect x='340' y='138' width='163.0' height='12' rx='2' fill='#9aa3ad'/>
+<text x='507.0' y='148' font-size='10' fill='#1f2328'>0.03</text>
+<rect x='340' y='152' width='162.2' height='12' rx='2' fill='#2f6fdb'/>
+<text x='506.2' y='162' font-size='10' fill='#1f2328'>0.03</text>
+<text x='332' y='188' font-size='12' text-anchor='end' fill='#1f2328'>ReadUnderLock(PortsPerTransaction=1,Scenari…</text>
+<rect x='340' y='172' width='126.5' height='12' rx='2' fill='#9aa3ad'/>
+<text x='470.5' y='182' font-size='10' fill='#1f2328'>0.01</text>
+<rect x='340' y='186' width='125.8' height='12' rx='2' fill='#2f6fdb'/>
+<text x='469.8' y='196' font-size='10' fill='#1f2328'>0.01</text>
+<text x='332' y='222' font-size='12' text-anchor='end' fill='#1f2328'>Transaction(PortsPerTransaction=8,Scenario=…</text>
+<rect x='340' y='206' width='318.2' height='12' rx='2' fill='#9aa3ad'/>
+<text x='662.2' y='216' font-size='10' fill='#1f2328'>0.80</text>
+<rect x='340' y='220' width='318.2' height='12' rx='2' fill='#2f6fdb'/>
+<text x='662.2' y='230' font-size='10' fill='#1f2328'>0.80</text>
+<text x='332' y='256' font-size='12' text-anchor='end' fill='#1f2328'>ReadUnderLock(PortsPerTransaction=8,Scenari…</text>
+<rect x='340' y='240' width='165.3' height='12' rx='2' fill='#9aa3ad'/>
+<text x='509.3' y='250' font-size='10' fill='#1f2328'>0.03</text>
+<rect x='340' y='254' width='163.4' height='12' rx='2' fill='#2f6fdb'/>
+<text x='507.4' y='264' font-size='10' fill='#1f2328'>0.03</text>
+<text x='332' y='290' font-size='12' text-anchor='end' fill='#1f2328'>Transaction(PortsPerTransaction=8,Scenario=…</text>
+<rect x='340' y='274' width='229.4' height='12' rx='2' fill='#9aa3ad'/>
+<text x='573.4' y='284' font-size='10' fill='#1f2328'>0.12</text>
+<rect x='340' y='288' width='226.9' height='12' rx='2' fill='#2f6fdb'/>
+<text x='570.9' y='298' font-size='10' fill='#1f2328'>0.12</text>
+<text x='332' y='324' font-size='12' text-anchor='end' fill='#1f2328'>ReadUnderLock(PortsPerTransaction=8,Scenari…</text>
+<rect x='340' y='308' width='164.7' height='12' rx='2' fill='#9aa3ad'/>
+<text x='508.7' y='318' font-size='10' fill='#1f2328'>0.03</text>
+<rect x='340' y='322' width='163.4' height='12' rx='2' fill='#2f6fdb'/>
+<text x='507.4' y='332' font-size='10' fill='#1f2328'>0.03</text>
+<text x='332' y='358' font-size='12' text-anchor='end' fill='#1f2328'>Transaction(PortsPerTransaction=32,Scenario…</text>
+<rect x='340' y='342' width='387.5' height='12' rx='2' fill='#9aa3ad'/>
+<text x='731.5' y='352' font-size='10' fill='#1f2328'>3.43</text>
+<rect x='340' y='356' width='387.1' height='12' rx='2' fill='#2f6fdb'/>
+<text x='731.1' y='366' font-size='10' fill='#1f2328'>3.40</text>
+<text x='332' y='392' font-size='12' text-anchor='end' fill='#1f2328'>ReadUnderLock(PortsPerTransaction=32,Scenar…</text>
+<rect x='340' y='376' width='222.5' height='12' rx='2' fill='#9aa3ad'/>
+<text x='566.5' y='386' font-size='10' fill='#1f2328'>0.11</text>
+<rect x='340' y='390' width='220.8' height='12' rx='2' fill='#2f6fdb'/>
+<text x='564.8' y='400' font-size='10' fill='#1f2328'>0.10</text>
+<text x='332' y='426' font-size='12' text-anchor='end' fill='#1f2328'>Transaction(PortsPerTransaction=32,Scenario…</text>
+<rect x='340' y='410' width='289.6' height='12' rx='2' fill='#9aa3ad'/>
+<text x='633.6' y='420' font-size='10' fill='#1f2328'>0.44</text>
+<rect x='340' y='424' width='288.8' height='12' rx='2' fill='#2f6fdb'/>
+<text x='632.8' y='434' font-size='10' fill='#1f2328'>0.43</text>
+<text x='332' y='460' font-size='12' text-anchor='end' fill='#1f2328'>ReadUnderLock(PortsPerTransaction=32,Scenar…</text>
+<rect x='340' y='444' width='221.7' height='12' rx='2' fill='#9aa3ad'/>
+<text x='565.7' y='454' font-size='10' fill='#1f2328'>0.10</text>
+<rect x='340' y='458' width='220.7' height='12' rx='2' fill='#2f6fdb'/>
+<text x='564.7' y='468' font-size='10' fill='#1f2328'>0.10</text>
+<text x='332' y='494' font-size='12' text-anchor='end' fill='#1f2328'>CreateNode_50Features</text>
+<rect x='340' y='478' width='388.5' height='12' rx='2' fill='#9aa3ad'/>
+<text x='732.5' y='488' font-size='10' fill='#1f2328'>3.50</text>
+<rect x='340' y='492' width='387.2' height='12' rx='2' fill='#2f6fdb'/>
+<text x='731.2' y='502' font-size='10' fill='#1f2328'>3.40</text>
+<text x='332' y='528' font-size='12' text-anchor='end' fill='#1f2328'>DryRun_50Features</text>
+<rect x='340' y='512' width='521.8' height='12' rx='2' fill='#9aa3ad'/>
+<text x='865.8' y='522' font-size='10' fill='#1f2328'>57.6</text>
+<rect x='340' y='526' width='367.5' height='12' rx='2' fill='#2f6fdb'/>
+<text x='711.5' y='536' font-size='10' fill='#1f2328'>2.25</text>
+<text x='332' y='562' font-size='12' text-anchor='end' fill='#1f2328'>Activator.CreateInstance(type) — 反射</text>
+<rect x='340' y='546' width='79.1' height='12' rx='2' fill='#9aa3ad'/>
+<text x='423.1' y='556' font-size='10' fill='#1f2328'>0.00</text>
+<rect x='340' y='560' width='77.1' height='12' rx='2' fill='#2f6fdb'/>
+<text x='421.1' y='570' font-size='10' fill='#1f2328'>0.00</text>
+<text x='332' y='596' font-size='12' text-anchor='end' fill='#1f2328'>ComponentRegistry.CreateInstance(type) — 编译…</text>
+<rect x='340' y='580' width='87.2' height='12' rx='2' fill='#9aa3ad'/>
+<text x='431.2' y='590' font-size='10' fill='#1f2328'>0.01</text>
+<rect x='340' y='594' width='85.1' height='12' rx='2' fill='#2f6fdb'/>
+<text x='429.1' y='604' font-size='10' fill='#1f2328'>0.00</text>
+<text x='332' y='630' font-size='12' text-anchor='end' fill='#1f2328'>Frame(Layers=8,Scenario=AllDirty)</text>
+<rect x='340' y='614' width='401.1' height='12' rx='2' fill='#9aa3ad'/>
+<text x='745.1' y='624' font-size='10' fill='#1f2328'>4.56</text>
+<rect x='340' y='628' width='397.8' height='12' rx='2' fill='#2f6fdb'/>
+<text x='741.8' y='638' font-size='10' fill='#1f2328'>4.26</text>
+<text x='332' y='664' font-size='12' text-anchor='end' fill='#1f2328'>Frame(Layers=8,Scenario=Idle)</text>
+<rect x='340' y='648' width='222.2' height='12' rx='2' fill='#9aa3ad'/>
+<text x='566.2' y='658' font-size='10' fill='#1f2328'>0.11</text>
+<rect x='340' y='662' width='224.9' height='12' rx='2' fill='#2f6fdb'/>
+<text x='568.9' y='672' font-size='10' fill='#1f2328'>0.11</text>
+<text x='332' y='698' font-size='12' text-anchor='end' fill='#1f2328'>Frame(Layers=8,Scenario=OneDirty)</text>
+<rect x='340' y='682' width='329.1' height='12' rx='2' fill='#9aa3ad'/>
+<text x='673.1' y='692' font-size='10' fill='#1f2328'>1.00</text>
+<rect x='340' y='696' width='327.3' height='12' rx='2' fill='#2f6fdb'/>
+<text x='671.3' y='706' font-size='10' fill='#1f2328'>0.97</text>
+<text x='332' y='732' font-size='12' text-anchor='end' fill='#1f2328'>Frame(Layers=32,Scenario=AllDirty)</text>
+<rect x='340' y='716' width='462.1' height='12' rx='2' fill='#9aa3ad'/>
+<text x='806.1' y='726' font-size='10' fill='#1f2328'>16.4</text>
+<rect x='340' y='730' width='460.8' height='12' rx='2' fill='#2f6fdb'/>
+<text x='804.8' y='740' font-size='10' fill='#1f2328'>16.0</text>
+<text x='332' y='766' font-size='12' text-anchor='end' fill='#1f2328'>Frame(Layers=32,Scenario=Idle)</text>
+<rect x='340' y='750' width='274.0' height='12' rx='2' fill='#9aa3ad'/>
+<text x='618.0' y='760' font-size='10' fill='#1f2328'>0.32</text>
+<rect x='340' y='764' width='274.3' height='12' rx='2' fill='#2f6fdb'/>
+<text x='618.3' y='774' font-size='10' fill='#1f2328'>0.32</text>
+<text x='332' y='800' font-size='12' text-anchor='end' fill='#1f2328'>Frame(Layers=32,Scenario=OneDirty)</text>
+<rect x='340' y='784' width='343.2' height='12' rx='2' fill='#9aa3ad'/>
+<text x='687.2' y='794' font-size='10' fill='#1f2328'>1.35</text>
+<rect x='340' y='798' width='342.5' height='12' rx='2' fill='#2f6fdb'/>
+<text x='686.5' y='808' font-size='10' fill='#1f2328'>1.33</text>
+<text x='332' y='834' font-size='12' text-anchor='end' fill='#1f2328'>Frame(Layers=128,Scenario=AllDirty)</text>
+<rect x='340' y='818' width='530.0' height='12' rx='2' fill='#9aa3ad'/>
+<text x='874.0' y='828' font-size='10' fill='#1f2328'>68.4</text>
+<rect x='340' y='832' width='529.0' height='12' rx='2' fill='#2f6fdb'/>
+<text x='873.0' y='842' font-size='10' fill='#1f2328'>67.0</text>
+<text x='332' y='868' font-size='12' text-anchor='end' fill='#1f2328'>Frame(Layers=128,Scenario=Idle)</text>
+<rect x='340' y='852' width='336.5' height='12' rx='2' fill='#9aa3ad'/>
+<text x='680.5' y='862' font-size='10' fill='#1f2328'>1.17</text>
+<rect x='340' y='866' width='335.9' height='12' rx='2' fill='#2f6fdb'/>
+<text x='679.9' y='876' font-size='10' fill='#1f2328'>1.16</text>
+<text x='332' y='902' font-size='12' text-anchor='end' fill='#1f2328'>Frame(Layers=128,Scenario=OneDirty)</text>
+<rect x='340' y='886' width='380.7' height='12' rx='2' fill='#9aa3ad'/>
+<text x='724.7' y='896' font-size='10' fill='#1f2328'>2.97</text>
+<rect x='340' y='900' width='378.2' height='12' rx='2' fill='#2f6fdb'/>
+<text x='722.2' y='910' font-size='10' fill='#1f2328'>2.82</text>
+<text x='332' y='936' font-size='12' text-anchor='end' fill='#1f2328'>ExtractList: CSV 5 ids (老格式)</text>
+<rect x='340' y='920' width='203.4' height='12' rx='2' fill='#9aa3ad'/>
+<text x='547.4' y='930' font-size='10' fill='#1f2328'>0.07</text>
+<rect x='340' y='934' width='202.5' height='12' rx='2' fill='#2f6fdb'/>
+<text x='546.5' y='944' font-size='10' fill='#1f2328'>0.07</text>
+<text x='332' y='970' font-size='12' text-anchor='end' fill='#1f2328'>ExtractList: List&lt;string&gt; 5 ids (新格式)</text>
+<rect x='340' y='954' width='178.6' height='12' rx='2' fill='#9aa3ad'/>
+<text x='522.6' y='964' font-size='10' fill='#1f2328'>0.04</text>
+<rect x='340' y='968' width='174.1' height='12' rx='2' fill='#2f6fdb'/>
+<text x='518.1' y='978' font-size='10' fill='#1f2328'>0.04</text>
+<text x='332' y='1004' font-size='12' text-anchor='end' fill='#1f2328'>ExtractList: single string (退化)</text>
+<rect x='340' y='988' width='80.8' height='12' rx='2' fill='#9aa3ad'/>
+<text x='424.8' y='998' font-size='10' fill='#1f2328'>0.00</text>
+<rect x='340' y='1002' width='79.8' height='12' rx='2' fill='#2f6fdb'/>
+<text x='423.8' y='1012' font-size='10' fill='#1f2328'>0.00</text>
+<text x='332' y='1038' font-size='12' text-anchor='end' fill='#1f2328'>ExtractSingle: string (单端口典型)</text>
+<rect x='340' y='1022' width='8.2' height='12' rx='2' fill='#9aa3ad'/>
+<text x='352.2' y='1032' font-size='10' fill='#1f2328'>0.00</text>
+<rect x='340' y='1036' width='1.0' height='12' rx='2' fill='#2f6fdb'/>
+<text x='345.0' y='1046' font-size='10' fill='#1f2328'>0.00</text>
+<text x='332' y='1072' font-size='12' text-anchor='end' fill='#1f2328'>ProjectAll(Features=8,Scenario=AllPorts)</text>
+<rect x='340' y='1056' width='351.9' height='12' rx='2' fill='#9aa3ad'/>
+<text x='695.9' y='1066' font-size='10' fill='#1f2328'>1.62</text>
+<rect x='340' y='1070' width='348.3' height='12' rx='2' fill='#2f6fdb'/>
+<text x='692.3' y='1080' font-size='10' fill='#1f2328'>1.50</text>
+<text x='332' y='1106' font-size='12' text-anchor='end' fill='#1f2328'>ProjectAll(Features=8,Scenario=FullPass)</text>
+<rect x='340' y='1090' width='312.4' height='12' rx='2' fill='#9aa3ad'/>
+<text x='656.4' y='1100' font-size='10' fill='#1f2328'>0.71</text>
+<rect x='340' y='1104' width='302.0' height='12' rx='2' fill='#2f6fdb'/>
+<text x='646.0' y='1114' font-size='10' fill='#1f2328'>0.57</text>
+<text x='332' y='1140' font-size='12' text-anchor='end' fill='#1f2328'>ProjectAll(Features=8,Scenario=Idle)</text>
+<rect x='340' y='1124' width='168.6' height='12' rx='2' fill='#9aa3ad'/>
+<text x='512.6' y='1134' font-size='10' fill='#1f2328'>0.03</text>
+<rect x='340' y='1138' width='165.2' height='12' rx='2' fill='#2f6fdb'/>
+<text x='509.2' y='1148' font-size='10' fill='#1f2328'>0.03</text>
+<text x='332' y='1174' font-size='12' text-anchor='end' fill='#1f2328'>ProjectAll(Features=8,Scenario=OnePort)</text>
+<rect x='340' y='1158' width='280.5' height='12' rx='2' fill='#9aa3ad'/>
+<text x='624.5' y='1168' font-size='10' fill='#1f2328'>0.36</text>
+<rect x='340' y='1172' width='276.0' height='12' rx='2' fill='#2f6fdb'/>
+<text x='620.0' y='1182' font-size='10' fill='#1f2328'>0.33</text>
+<text x='332' y='1208' font-size='12' text-anchor='end' fill='#1f2328'>ProjectAll(Features=32,Scenario=AllPorts)</text>
+<rect x='340' y='1192' width='417.7' height='12' rx='2' fill='#9aa3ad'/>
+<text x='761.7' y='1202' font-size='10' fill='#1f2328'>6.47</text>
+<rect x='340' y='1206' width='416.9' height='12' rx='2' fill='#2f6fdb'/>
+<text x='760.9' y='1216' font-size='10' fill='#1f2328'>6.36</text>
+<text x='332' y='1242' font-size='12' text-anchor='end' fill='#1f2328'>ProjectAll(Features=32,Scenario=FullPass)</text>
+<rect x='340' y='1226' width='354.4' height='12' rx='2' fill='#9aa3ad'/>
+<text x='698.4' y='1236' font-size='10' fill='#1f2328'>1.71</text>
+<rect x='340' y='1240' width='356.2' height='12' rx='2' fill='#2f6fdb'/>
+<text x='700.2' y='1250' font-size='10' fill='#1f2328'>1.77</text>
+<text x='332' y='1276' font-size='12' text-anchor='end' fill='#1f2328'>ProjectAll(Features=32,Scenario=Idle)</text>
+<rect x='340' y='1260' width='167.4' height='12' rx='2' fill='#9aa3ad'/>
+<text x='511.4' y='1270' font-size='10' fill='#1f2328'>0.03</text>
+<rect x='340' y='1274' width='165.1' height='12' rx='2' fill='#2f6fdb'/>
+<text x='509.1' y='1284' font-size='10' fill='#1f2328'>0.03</text>
+<text x='332' y='1310' font-size='12' text-anchor='end' fill='#1f2328'>ProjectAll(Features=32,Scenario=OnePort)</text>
+<rect x='340' y='1294' width='289.1' height='12' rx='2' fill='#9aa3ad'/>
+<text x='633.1' y='1304' font-size='10' fill='#1f2328'>0.43</text>
+<rect x='340' y='1308' width='287.8' height='12' rx='2' fill='#2f6fdb'/>
+<text x='631.8' y='1318' font-size='10' fill='#1f2328'>0.42</text>
+<text x='332' y='1344' font-size='12' text-anchor='end' fill='#1f2328'>ProjectAll(Features=128,Scenario=AllPorts)</text>
+<rect x='340' y='1328' width='484.9' height='12' rx='2' fill='#9aa3ad'/>
+<text x='828.9' y='1338' font-size='10' fill='#1f2328'>26.5</text>
+<rect x='340' y='1342' width='481.7' height='12' rx='2' fill='#2f6fdb'/>
+<text x='825.7' y='1352' font-size='10' fill='#1f2328'>24.8</text>
+<text x='332' y='1378' font-size='12' text-anchor='end' fill='#1f2328'>ProjectAll(Features=128,Scenario=FullPass)</text>
+<rect x='340' y='1362' width='419.7' height='12' rx='2' fill='#9aa3ad'/>
+<text x='763.7' y='1372' font-size='10' fill='#1f2328'>6.74</text>
+<rect x='340' y='1376' width='418.0' height='12' rx='2' fill='#2f6fdb'/>
+<text x='762.0' y='1386' font-size='10' fill='#1f2328'>6.50</text>
+<text x='332' y='1412' font-size='12' text-anchor='end' fill='#1f2328'>ProjectAll(Features=128,Scenario=Idle)</text>
+<rect x='340' y='1396' width='168.4' height='12' rx='2' fill='#9aa3ad'/>
+<text x='512.4' y='1406' font-size='10' fill='#1f2328'>0.03</text>
+<rect x='340' y='1410' width='166.2' height='12' rx='2' fill='#2f6fdb'/>
+<text x='510.2' y='1420' font-size='10' fill='#1f2328'>0.03</text>
+<text x='332' y='1446' font-size='12' text-anchor='end' fill='#1f2328'>ProjectAll(Features=128,Scenario=OnePort)</text>
+<rect x='340' y='1430' width='314.4' height='12' rx='2' fill='#9aa3ad'/>
+<text x='658.4' y='1440' font-size='10' fill='#1f2328'>0.74</text>
+<rect x='340' y='1444' width='313.2' height='12' rx='2' fill='#2f6fdb'/>
+<text x='657.2' y='1454' font-size='10' fill='#1f2328'>0.72</text>
+<text x='332' y='1480' font-size='12' text-anchor='end' fill='#1f2328'>ROM↔ndarray round-trip: 1 point</text>
+<rect x='340' y='1464' width='418.3' height='12' rx='2' fill='#9aa3ad'/>
+<text x='762.3' y='1474' font-size='10' fill='#1f2328'>6.54</text>
+<rect x='340' y='1478' width='413.0' height='12' rx='2' fill='#2f6fdb'/>
+<text x='757.0' y='1488' font-size='10' fill='#1f2328'>5.86</text>
+<text x='332' y='1514' font-size='12' text-anchor='end' fill='#1f2328'>ROM↔ndarray round-trip: 100 points</text>
+<rect x='340' y='1498' width='418.6' height='12' rx='2' fill='#9aa3ad'/>
+<text x='762.6' y='1508' font-size='10' fill='#1f2328'>6.58</text>
+<rect x='340' y='1512' width='415.6' height='12' rx='2' fill='#2f6fdb'/>
+<text x='759.6' y='1522' font-size='10' fill='#1f2328'>6.19</text>
+<text x='332' y='1548' font-size='12' text-anchor='end' fill='#1f2328'>ROM↔ndarray round-trip: 1000 points (time-s…</text>
+<rect x='340' y='1532' width='423.2' height='12' rx='2' fill='#9aa3ad'/>
+<text x='767.2' y='1542' font-size='10' fill='#1f2328'>7.25</text>
+<rect x='340' y='1546' width='420.9' height='12' rx='2' fill='#2f6fdb'/>
+<text x='764.9' y='1556' font-size='10' fill='#1f2328'>6.91</text>
+<text x='332' y='1582' font-size='12' text-anchor='end' fill='#1f2328'>ROM↔ndarray round-trip: 10000 points</text>
+<rect x='340' y='1566' width='444.6' height='12' rx='2' fill='#9aa3ad'/>
+<text x='788.6' y='1576' font-size='10' fill='#1f2328'>11.4</text>
+<rect x='340' y='1580' width='438.4' height='12' rx='2' fill='#2f6fdb'/>
+<text x='782.4' y='1590' font-size='10' fill='#1f2328'>9.99</text>
+<text x='332' y='1616' font-size='12' text-anchor='end' fill='#1f2328'>MakeGenericMethod + Invoke — 反射 (每次)</text>
+<rect x='340' y='1600' width='227.4' height='12' rx='2' fill='#9aa3ad'/>
+<text x='571.4' y='1610' font-size='10' fill='#1f2328'>0.12</text>
+<rect x='340' y='1614' width='225.1' height='12' rx='2' fill='#2f6fdb'/>
+<text x='569.1' y='1624' font-size='10' fill='#1f2328'>0.11</text>
+<text x='332' y='1650' font-size='12' text-anchor='end' fill='#1f2328'>缓存的编译 Action&lt;IFeatureContext, object&gt;</text>
+<rect x='340' y='1634' width='101.8' height='12' rx='2' fill='#9aa3ad'/>
+<text x='445.8' y='1644' font-size='10' fill='#1f2328'>0.01</text>
+<rect x='340' y='1648' width='95.6' height='12' rx='2' fill='#2f6fdb'/>
+<text x='439.6' y='1658' font-size='10' fill='#1f2328'>0.01</text>
+<text x='332' y='1684' font-size='12' text-anchor='end' fill='#1f2328'>PropertyInfo.SetValue — 反射 (含 GetProperty 一…</text>
+<rect x='340' y='1668' width='144.0' height='12' rx='2' fill='#9aa3ad'/>
+<text x='488.0' y='1678' font-size='10' fill='#1f2328'>0.02</text>
+<rect x='340' y='1682' width='144.3' height='12' rx='2' fill='#2f6fdb'/>
+<text x='488.3' y='1692' font-size='10' fill='#1f2328'>0.02</text>
+<text x='332' y='1718' font-size='12' text-anchor='end' fill='#1f2328'>SmartActivator.InjectProperties — 编译 setter…</text>
+<rect x='340' y='1702' width='127.7' height='12' rx='2' fill='#9aa3ad'/>
+<text x='471.7' y='1712' font-size='10' fill='#1f2328'>0.01</text>
+<rect x='340' y='1716' width='128.7' height='12' rx='2' fill='#2f6fdb'/>
+<text x='472.7' y='1726' font-size='10' fill='#1f2328'>0.01</text>
+<text x='332' y='1752' font-size='12' text-anchor='end' fill='#1f2328'>PropertyInfo.SetValue — 反射 (无 GetProperty,直…</text>
+<rect x='340' y='1736' width='96.3' height='12' rx='2' fill='#9aa3ad'/>
+<text x='440.3' y='1746' font-size='10' fill='#1f2328'>0.01</text>
+<rect x='340' y='1750' width='97.4' height='12' rx='2' fill='#2f6fdb'/>
+<text x='441.4' y='1760' font-size='10' fill='#1f2328'>0.01</text>
+<text x='332' y='1786' font-size='12' text-anchor='end' fill='#1f2328'>SubmitSync(Layers=8,Scenario=GlobalChanged)</text>
+<rect x='340' y='1770' width='227.3' height='12' rx='2' fill='#9aa3ad'/>
+<text x='571.3' y='1780' font-size='10' fill='#1f2328'>0.12</text>
+<rect x='340' y='1784' width='222.9' height='12' rx='2' fill='#2f6fdb'/>
+<text x='566.9' y='1794' font-size='10' fill='#1f2328'>0.11</text>
+<text x='332' y='1820' font-size='12' text-anchor='end' fill='#1f2328'>SubmitSync(Layers=8,Scenario=GlobalRepublis…</text>
+<rect x='340' y='1804' width='222.3' height='12' rx='2' fill='#9aa3ad'/>
+<text x='566.3' y='1814' font-size='10' fill='#1f2328'>0.11</text>
+<rect x='340' y='1818' width='220.2' height='12' rx='2' fill='#2f6fdb'/>
+<text x='564.2' y='1828' font-size='10' fill='#1f2328'>0.10</text>
+<text x='332' y='1854' font-size='12' text-anchor='end' fill='#1f2328'>SubmitSync(Layers=8,Scenario=Idle)</text>
+<rect x='340' y='1838' width='198.9' height='12' rx='2' fill='#9aa3ad'/>
+<text x='542.9' y='1848' font-size='10' fill='#1f2328'>0.06</text>
+<rect x='340' y='1852' width='200.3' height='12' rx='2' fill='#2f6fdb'/>
+<text x='544.3' y='1862' font-size='10' fill='#1f2328'>0.07</text>
+<text x='332' y='1888' font-size='12' text-anchor='end' fill='#1f2328'>SubmitSync(Layers=8,Scenario=OneLocal)</text>
+<rect x='340' y='1872' width='234.6' height='12' rx='2' fill='#9aa3ad'/>
+<text x='578.6' y='1882' font-size='10' fill='#1f2328'>0.14</text>
+<rect x='340' y='1886' width='231.0' height='12' rx='2' fill='#2f6fdb'/>
+<text x='575.0' y='1896' font-size='10' fill='#1f2328'>0.13</text>
+<text x='332' y='1922' font-size='12' text-anchor='end' fill='#1f2328'>SubmitSync(Layers=32,Scenario=GlobalChanged)</text>
+<rect x='340' y='1906' width='275.5' height='12' rx='2' fill='#9aa3ad'/>
+<text x='619.5' y='1916' font-size='10' fill='#1f2328'>0.33</text>
+<rect x='340' y='1920' width='276.7' height='12' rx='2' fill='#2f6fdb'/>
+<text x='620.7' y='1930' font-size='10' fill='#1f2328'>0.33</text>
+<text x='332' y='1956' font-size='12' text-anchor='end' fill='#1f2328'>SubmitSync(Layers=32,Scenario=GlobalRepubli…</text>
+<rect x='340' y='1940' width='279.5' height='12' rx='2' fill='#9aa3ad'/>
+<text x='623.5' y='1950' font-size='10' fill='#1f2328'>0.35</text>
+<rect x='340' y='1954' width='275.6' height='12' rx='2' fill='#2f6fdb'/>
+<text x='619.6' y='1964' font-size='10' fill='#1f2328'>0.33</text>
+<text x='332' y='1990' font-size='12' text-anchor='end' fill='#1f2328'>SubmitSync(Layers=32,Scenario=Idle)</text>
+<rect x='340' y='1974' width='254.5' height='12' rx='2' fill='#9aa3ad'/>
+<text x='598.5' y='1984' font-size='10' fill='#1f2328'>0.21</text>
+<rect x='340' y='1988' width='254.1' height='12' rx='2' fill='#2f6fdb'/>
+<text x='598.1' y='1998' font-size='10' fill='#1f2328'>0.21</text>
+<text x='332' y='2024' font-size='12' text-anchor='end' fill='#1f2328'>SubmitSync(Layers=32,Scenario=OneLocal)</text>
+<rect x='340' y='2008' width='274.2' height='12' rx='2' fill='#9aa3ad'/>
+<text x='618.2' y='2018' font-size='10' fill='#1f2328'>0.32</text>
+<rect x='340' y='2022' width='274.1' height='12' rx='2' fill='#2f6fdb'/>
+<text x='618.1' y='2032' font-size='10' fill='#1f2328'>0.32</text>
+<text x='332' y='2058' font-size='12' text-anchor='end' fill='#1f2328'>SubmitSync(Layers=128,Scenario=GlobalChange…</text>
+<rect x='340' y='2042' width='342.6' height='12' rx='2' fill='#9aa3ad'/>
+<text x='686.6' y='2052' font-size='10' fill='#1f2328'>1.33</text>
+<rect x='340' y='2056' width='342.0' height='12' rx='2' fill='#2f6fdb'/>
+<text x='686.0' y='2066' font-size='10' fill='#1f2328'>1.32</text>
+<text x='332' y='2092' font-size='12' text-anchor='end' fill='#1f2328'>SubmitSync(Layers=128,Scenario=GlobalRepubl…</text>
+<rect x='340' y='2076' width='344.3' height='12' rx='2' fill='#9aa3ad'/>
+<text x='688.3' y='2086' font-size='10' fill='#1f2328'>1.38</text>
+<rect x='340' y='2090' width='343.4' height='12' rx='2' fill='#2f6fdb'/>
+<text x='687.4' y='2100' font-size='10' fill='#1f2328'>1.36</text>
+<text x='332' y='2126' font-size='12' text-anchor='end' fill='#1f2328'>SubmitSync(Layers=128,Scenario=Idle)</text>
+<rect x='340' y='2110' width='327.5' height='12' rx='2' fill='#9aa3ad'/>
+<text x='671.5' y='2120' font-size='10' fill='#1f2328'>0.97</text>
+<rect x='340' y='2124' width='319.8' height='12' rx='2' fill='#2f6fdb'/>
+<text x='663.8' y='2134' font-size='10' fill='#1f2328'>0.83</text>
+<text x='332' y='2160' font-size='12' text-anchor='end' fill='#1f2328'>SubmitSync(Layers=128,Scenario=OneLocal)</text>
+<rect x='340' y='2144' width='332.6' height='12' rx='2' fill='#9aa3ad'/>
+<text x='676.6' y='2154' font-size='10' fill='#1f2328'>1.08</text>
+<rect x='340' y='2158' width='332.5' height='12' rx='2' fill='#2f6fdb'/>
+<text x='676.5' y='2168' font-size='10' fill='#1f2328'>1.08</text>
+</svg>
