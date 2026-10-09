@@ -76,6 +76,10 @@ namespace Hevo.Charting.WorkFlow
         // ==========================================
         // 🚀 算子 2：异步 WatchAsync (重度指标专用)
         // 语义：自动分发到后台线程池，由开发者自己加锁保护数据！
+        // 合并(single-flight + 最新值):同一订阅同时最多一个回调在跑;在跑期间来的通知只记一个"待重跑",
+        // 回调结束后再跑一次(回调自己从黑板读最新值,中间版本被跳过是对的)。
+        // 以前每次通知都往线程池丢一个任务:慢回调(2 万根纯 Python 指标 ~200 ms)在 100 tick/s 下任务无限堆积、
+        // 抢 GIL 谁都算不完;同一订阅并发的任务还会乱序提交,旧结果覆盖新结果。
         // ==========================================
         public static IWorkflow<DataBlackboard> WatchAsync(
             this IWorkflow<DataBlackboard> flow,
@@ -85,24 +89,77 @@ namespace Hevo.Charting.WorkFlow
 #if DEBUG
             object owner = DevTools.TopologyTracer.SetupContext.Value ?? "UnknownOwner";
 #endif
-            Action<DataBlackboard> backgroundAction = b =>
+            var gate = new SingleFlight(b =>
             {
-                Core.HevoDispatcher.FireAndForget(() =>
-                {
 #if DEBUG
-                    using (DevTools.TopologyTracer.EnterScope(owner))
+                using (DevTools.TopologyTracer.EnterScope(owner))
 #endif
-                    // 回调里读锁内取列引用、锁外读元素(ComputeFeature 的三段式):登记为列读者,
-                    // 摄入器在本回调结束前不会改写它可能拿到的缓冲
-                    // releasable:回调里调 Python handler 时,输入已拷成私有副本,长计算期间可让出登记(见 PythonInvokerShim)
-                    using (LowCode.ColumnReaders.Enter(releasable: true))
-                    {
-                        sideEffect(b);
-                    }
-                });
-            };
+                // 回调里读锁内取列引用、锁外读元素(ComputeFeature 的三段式):登记为列读者,
+                // 摄入器在本回调结束前不会改写它可能拿到的缓冲
+                // releasable:回调里调 Python handler 时,输入已拷成私有副本,长计算期间可让出登记(见 PythonInvokerShim)
+                using (LowCode.ColumnReaders.Enter(releasable: true))
+                {
+                    sideEffect(b);
+                }
+            });
 
-            return AttachWatchCore(flow, listenPorts, backgroundAction);
+            return AttachWatchCore(flow, listenPorts, gate.Notify).DoOnDispose(gate.Dispose);
+        }
+
+        /// <summary>
+        /// WatchAsync 的单订阅调度:状态 0 空闲 / 1 运行中 / 2 运行中且有新通知。
+        /// 空闲时投递一次;运行中只标记待重跑;回调结束后若有标记就清掉再跑一次,否则回到空闲。
+        /// 回调抛异常不影响状态复位,循环跑完后再把第一个异常抛给 HevoDispatcher 记录。退订(Dispose)后不再重跑待重跑的那次。
+        /// </summary>
+        internal sealed class SingleFlight
+        {
+            private const int Idle = 0, Running = 1, RunningPending = 2;
+            private readonly Action<DataBlackboard> _body;
+            private int _state;
+            private DataBlackboard? _board;
+            private volatile bool _disposed;
+
+            public SingleFlight(Action<DataBlackboard> body) => _body = body;
+
+            public void Notify(DataBlackboard board)
+            {
+                // 通知只在订阅着时到来(AttachWatchCore 退订后会复查 currentBoard);流被重新订阅时这里重新放行
+                _disposed = false;
+                Volatile.Write(ref _board, board);
+                while (true)
+                {
+                    int s = Volatile.Read(ref _state);
+                    if (s == Idle)
+                    {
+                        if (Interlocked.CompareExchange(ref _state, Running, Idle) == Idle) break;
+                    }
+                    else if (s == Running)
+                    {
+                        if (Interlocked.CompareExchange(ref _state, RunningPending, Running) == Running) return;
+                    }
+                    else return; // 已有待重跑
+                }
+                Core.HevoDispatcher.FireAndForget(RunLoop);
+            }
+
+            public void Dispose() => _disposed = true;
+
+            private void RunLoop()
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo? first = null;
+                while (true)
+                {
+                    if (!_disposed)
+                    {
+                        try { _body(Volatile.Read(ref _board)!); }
+                        catch (Exception ex) { first ??= System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex); }
+                    }
+                    // 没有新通知 → 回到空闲;有 → 清标记再跑一次
+                    if (Interlocked.CompareExchange(ref _state, Idle, Running) == Running) break;
+                    Volatile.Write(ref _state, Running);
+                }
+                first?.Throw();
+            }
         }
 
         /// <summary>
