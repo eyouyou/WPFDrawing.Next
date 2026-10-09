@@ -403,8 +403,53 @@ namespace Hevo.Charting.PythonNet
         // 实际调用入口 —— Expression 树编译后的委托内部调这个,经 IPythonModule 转给 Python 运行时。
         // §D2.4: PythonDiagnosticsException 原样穿透（让调用方收到 Python traceback）。
         // 其他异常也穿透 —— 不在这一层吞掉，宿主 / DryRun 自己决定怎么处理。
+        //
+        // 列读者让出:handler 一般在 WatchAsync 回调里跑(ComputeFeature / PlotFeature / HandlerFeature),回调登记了列读者
+        // (LowCode.ColumnReaders)。Python 调用可能等 GIL + 算好几毫秒,期间一直登记着会挡住全进程所有列缓冲的复用。
+        // 回调声明了可让出时,先把入参里的列(ReadOnlyMemory<double>)拷成池化的私有副本,再让出登记跑 Python,
+        // 回来重新登记。PythonMarshaller 当前是 Marshal.Copy 进 numpy(不保留对入参内存的引用),所以调用结束就能把副本还池;
+        // 将来改 zero-copy 时,副本要等 numpy 释放后才能还。
         private static object? Call(IPythonModule module, string functionName, object?[] args)
-            => module.Invoke(functionName, args);   // may throw PythonDiagnosticsException
+        {
+            if (!Hevo.Charting.LowCode.ColumnReaders.CanReleaseForLongCall || !OnlyDoubleColumns(args))
+                return module.Invoke(functionName, args);   // may throw PythonDiagnosticsException
+
+            double[]?[] copies = new double[]?[args.Length];
+            try
+            {
+                for (int i = 0; i < args.Length; i++)
+                {
+                    if (args[i] is ReadOnlyMemory<double> col && col.Length > 0)
+                    {
+                        var copy = System.Buffers.ArrayPool<double>.Shared.Rent(col.Length);
+                        col.Span.CopyTo(copy);
+                        copies[i] = copy;
+                        args[i] = new ReadOnlyMemory<double>(copy, 0, col.Length);
+                    }
+                }
+                using (Hevo.Charting.LowCode.ColumnReaders.ReleaseForLongCall())
+                    return module.Invoke(functionName, args);
+            }
+            finally
+            {
+                foreach (var c in copies)
+                    if (c != null) System.Buffers.ArrayPool<double>.Shared.Return(c);
+            }
+        }
+
+        // 入参里的列只认 ReadOnlyMemory<double>(指标 handler 的标准签名);出现别的 ROM 类型就不让出(不知道怎么拷)。
+        private static bool OnlyDoubleColumns(object?[] args)
+        {
+            foreach (var a in args)
+            {
+                if (a == null || a is ReadOnlyMemory<double>) continue;
+                var t = a.GetType();
+                if (t.IsGenericType && (t.GetGenericTypeDefinition() == typeof(ReadOnlyMemory<>) || t.GetGenericTypeDefinition() == typeof(Memory<>)))
+                    return false;
+                if (t.IsArray) return false;
+            }
+            return true;
+        }
 
         // §D2.6.4 增量协议:把 raw 装到 ValueTuple<...> (TR)。
         //   - raw is TR              → 直接返回(Mock 路径:测试桩直接喂 ValueTuple)

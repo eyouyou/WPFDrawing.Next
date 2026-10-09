@@ -94,7 +94,8 @@ namespace Hevo.Charting.WorkFlow
 #endif
                     // 回调里读锁内取列引用、锁外读元素(ComputeFeature 的三段式):登记为列读者,
                     // 摄入器在本回调结束前不会改写它可能拿到的缓冲
-                    using (LowCode.ColumnReaders.Enter())
+                    // releasable:回调里调 Python handler 时,输入已拷成私有副本,长计算期间可让出登记(见 PythonInvokerShim)
+                    using (LowCode.ColumnReaders.Enter(releasable: true))
                     {
                         sideEffect(b);
                     }

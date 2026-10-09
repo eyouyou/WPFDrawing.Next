@@ -28,7 +28,15 @@ namespace Hevo.Charting.LowCode
         private static int s_overflow;
 
         /// <summary>读者进场:登记当前纪元,Dispose 时离场。可以嵌套(各占一个槽位)。</summary>
-        public static Scope Enter()
+        public static Scope Enter() => Enter(releasable: false);
+
+        /// <summary>
+        /// 读者进场。<paramref name="releasable"/>=true 表示这个读者遵守"读输入 → 长计算 → 提交"的模式
+        /// (WatchAsync 回调,如 ComputeFeature / PlotFeature / HandlerFeature):长计算开始后不再碰之前拿到的列,
+        /// 允许在长计算期间用 <see cref="ReleaseForLongCall"/> 暂时让出,不挡全进程的缓冲复用。
+        /// 帧(ProjectAll → 图层录制)和同步 Watch 不可让出。
+        /// </summary>
+        public static Scope Enter(bool releasable)
         {
             long e = Volatile.Read(ref s_epoch);
             int start = Environment.CurrentManagedThreadId & (SlotCount - 1);
@@ -36,11 +44,83 @@ namespace Hevo.Charting.LowCode
             {
                 int i = (start + k) & (SlotCount - 1);
                 if (Volatile.Read(ref s_slots[i]) == 0 && Interlocked.CompareExchange(ref s_slots[i], e, 0) == 0)
+                {
+                    Push(i + 1, releasable);
                     return new Scope(i, true);
+                }
             }
             Interlocked.Increment(ref s_overflow);
+            Push(0, releasable: false);
             return Scope.ForOverflow();
         }
+
+        // 本线程当前在场的登记(按进场顺序):槽位 + 1(0 = 溢出)、能否让出
+        [ThreadStatic] private static int[]? t_slots;
+        [ThreadStatic] private static bool[]? t_releasable;
+        [ThreadStatic] private static int t_depth;
+
+        private static void Push(int rawSlot, bool releasable)
+        {
+            t_slots ??= new int[4];
+            t_releasable ??= new bool[4];
+            if (t_depth == t_slots.Length)
+            {
+                Array.Resize(ref t_slots, t_depth * 2);
+                Array.Resize(ref t_releasable, t_depth * 2);
+            }
+            t_slots[t_depth] = rawSlot;
+            t_releasable[t_depth] = releasable;
+            t_depth++;
+        }
+
+        private static void Pop()
+        {
+            if (t_depth > 0) t_depth--;
+        }
+
+        /// <summary>
+        /// 本线程在场的登记是否全部可让出(且至少有一个)。调用方据此决定要不要先把输入列拷成私有副本再
+        /// <see cref="ReleaseForLongCall"/>(典型:Python handler 调用前,PythonInvokerShim 用它)。
+        /// </summary>
+        public static bool CanReleaseForLongCall
+        {
+            get
+            {
+                if (t_depth == 0) return false;
+                for (int i = 0; i < t_depth; i++)
+                    if (!t_releasable![i] || t_slots![i] == 0) return false;
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// 长计算期间让出本线程的读者登记:槽位挂"不阻挡任何回收"的值(仍归本线程占用),Dispose 时按当前纪元重新登记。
+        /// 前提:<see cref="CanReleaseForLongCall"/> 为 true,且调用方在此之后、Dispose 之前不再读之前拿到的列
+        /// (需要的输入先拷成私有副本)。不满足前提时返回空凭据,什么都不做。
+        /// </summary>
+        public static Released ReleaseForLongCall()
+        {
+            if (!CanReleaseForLongCall) return default;
+            for (int i = 0; i < t_depth; i++) Volatile.Write(ref s_slots[t_slots![i] - 1], long.MaxValue);
+            return new Released(t_depth);
+        }
+
+        public readonly struct Released : IDisposable
+        {
+            private readonly int _depth;
+            internal Released(int depth) => _depth = depth;
+            public bool IsReleased => _depth > 0;
+
+            public void Dispose()
+            {
+                if (_depth == 0) return;
+                long e = Volatile.Read(ref s_epoch);
+                for (int i = 0; i < _depth && i < t_depth; i++) Volatile.Write(ref s_slots[t_slots![i] - 1], e);
+            }
+        }
+
+        /// <summary>测试用:读槽位当前值(0 = 空,long.MaxValue = 让出中,其它 = 进场纪元)。</summary>
+        internal static long ReadSlot(int slot) => Volatile.Read(ref s_slots[slot]);
 
         /// <summary>摄入器换下一块缓冲时调用:返回这块缓冲的退役纪元,并推进全局纪元。</summary>
         internal static long Retire() => Interlocked.Increment(ref s_epoch) - 1;
@@ -69,12 +149,14 @@ namespace Hevo.Charting.LowCode
             private Scope(int raw) => _raw = raw;
 
             internal Scope(int slot, bool _) : this(slot + 1) { }
+            /// <summary>测试用:占用的槽位(溢出 / default 为 -1)。</summary>
+            internal int SlotIndex => _raw > 0 ? _raw - 1 : -1;
             internal static Scope ForOverflow() => new(OverflowMarker);
 
             public void Dispose()
             {
-                if (_raw > 0) Volatile.Write(ref s_slots[_raw - 1], 0);
-                else if (_raw == OverflowMarker) Interlocked.Decrement(ref s_overflow);
+                if (_raw > 0) { Volatile.Write(ref s_slots[_raw - 1], 0); Pop(); }
+                else if (_raw == OverflowMarker) { Interlocked.Decrement(ref s_overflow); Pop(); }
             }
         }
     }

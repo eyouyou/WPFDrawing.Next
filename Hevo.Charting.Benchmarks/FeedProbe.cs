@@ -424,6 +424,7 @@ namespace Hevo.Charting.Benchmarks
             var ema = py.Registry.TryGet("probe_ema_20") as Func<ReadOnlyMemory<double>, ReadOnlyMemory<double>>
                       ?? throw new InvalidOperationException("probe_ema_20 注册失败");
 
+            ProbeFeedSource.SeedBars = opt.FeedBars;
             var runs = new List<FeedRun>();
             foreach (int n in opt.PyIndicators)
             {
@@ -449,7 +450,7 @@ namespace Hevo.Charting.Benchmarks
                 Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
                     $"[pyfeed] {n} 指标:单次调用中位 {Stats.Percentile(r.ComputeMs ?? new List<double>(), 0.5):F2} ms,延迟中位 {Stats.Percentile(r.LatencyMs, 0.5):F1} ms"));
             }
-            return Report("PyFeed", $"Python 指标(RSI14 / EMA20 交替,纯 Python 循环,{ProbeFeedSource.SeedBars}+ 根),多指标并发抢 GIL", runs);
+            return Report("PyFeed", $"Python 指标(RSI14 / EMA20 交替,纯 Python 循环,{ProbeFeedSource.SeedBars}+ 根),多指标并发抢 GIL,LOH 阈值 {Environment.GetEnvironmentVariable("DOTNET_GCLOHThreshold") ?? "默认"}", runs);
         }
 
         private const string PyIndicators = """
