@@ -71,8 +71,10 @@ namespace Hevo.Charting.Tests
 
         private sealed class GrowingSource : BufferedDataSource<GrowingSource, Bar>
         {
-            public override int LogicalLength => SnapshotCount;
+            // 不写 LogicalLength:基类默认就是最近一次推送的条数
             protected override bool ReserveSnapshotCapacity => true;
+            public double LastViaItems() { lock (_lock) return SnapshotItems[^1].V; }
+            public int ItemsLength() { lock (_lock) return SnapshotItems.Length; }
             public int Capacity => _readSnapshot.Length;
             public void Set(int n) { lock (_lock) { _buffer.Clear(); for (int i = 0; i < n; i++) _buffer.Add(new Bar(i)); Publish(); } }
             public void Append() { lock (_lock) { _buffer.Add(new Bar(_buffer.Count)); Publish(); } }
@@ -118,6 +120,52 @@ namespace Hevo.Charting.Tests
             Assert.Equal(0, src.Capacity);
             Assert.Equal(0, src.GetSnapshot().Count);
         }
+
+        private sealed class DefaultLengthSource : BufferedDataSource<DefaultLengthSource, Bar>
+        {
+            public void Set(int n) { lock (_lock) { _buffer.Clear(); for (int i = 0; i < n; i++) _buffer.Add(new Bar(i)); Publish(); } }
+        }
+
+        [Fact]
+        public void DefaultLogicalLength_IsPublishedCount_WithOrWithoutReserve()
+        {
+            var plain = new DefaultLengthSource();
+            plain.Set(10); Assert.Equal(10, plain.LogicalLength);
+            plain.Set(3); Assert.Equal(3, plain.LogicalLength);
+            var reserved = new GrowingSource();
+            reserved.Set(20000);
+            Assert.True(reserved.Capacity > 20000);
+            Assert.Equal(20000, reserved.LogicalLength);
+            Assert.Equal(20000, reserved.ItemsLength());        // SnapshotItems 按条数切好
+            Assert.Equal(19999, reserved.LastViaItems());
+        }
+
+        private sealed class ForgotToMigrateSource : BufferedDataSource<ForgotToMigrateSource, Bar>
+        {
+            public override int LogicalLength => _readSnapshot.Length;   // 开了预留空位却还按数组长度报
+            protected override bool ReserveSnapshotCapacity => true;
+            public void Set(int n) { lock (_lock) { _buffer.Clear(); for (int i = 0; i < n; i++) _buffer.Add(new Bar(i)); Publish(); } }
+        }
+
+        private sealed class CaptureListener : System.Diagnostics.TraceListener
+        {
+            public readonly List<string> Lines = new();
+            public override void Write(string? message) { lock (Lines) Lines.Add(message ?? ""); }
+            public override void WriteLine(string? message) { lock (Lines) Lines.Add(message ?? ""); }
+        }
+
+#if DEBUG
+        [Fact]
+        public void Debug_WarnsWhenReservedSourceStillReportsArrayLength()
+        {
+            var listener = new CaptureListener();
+            System.Diagnostics.Trace.Listeners.Add(listener);
+            try { new ForgotToMigrateSource().Set(100); }
+            finally { System.Diagnostics.Trace.Listeners.Remove(listener); }
+            lock (listener.Lines)
+                Assert.Contains(listener.Lines, l => l.Contains(nameof(ForgotToMigrateSource)) && l.Contains("SnapshotCount"));
+        }
+#endif
 
         [Fact]
         public void LegacySnapshot_LengthAlwaysEqualsCount_IncludingShrink()
