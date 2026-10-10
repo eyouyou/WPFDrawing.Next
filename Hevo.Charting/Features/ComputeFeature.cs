@@ -136,12 +136,6 @@ namespace Hevo.Charting.Features
             }
             bool multiOutput = Outputs.Count > 0;
             if (!multiOutput && OutputPort == null) return;
-#if DEBUG
-            if (AllocatesResultEachCall(Compute) && s_allocHinted.TryAdd(Compute.Method, true))
-                System.Diagnostics.Trace.TraceWarning(
-                    $"[ComputeFeature] C# 指标 {Compute.Method.DeclaringType?.Name}.{Compute.Method.Name} 返回新数组,每次计算都分配一块结果" +
-                    "(2 万根时 160 KB,进 LOH)。改用 ComputeInto(input, output) / ComputeIntoMulti 往框架给的缓冲里写,可零分配。");
-#endif
 
             // §D2.X 多输入路径:Inputs 非空时,InputOrder 必填。按声明顺序拉值,DynamicInvoke。
             if (Inputs.Count > 0)
@@ -272,7 +266,42 @@ namespace Hevo.Charting.Features
 
 #if DEBUG
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<System.Reflection.MethodInfo, bool> s_allocHinted = new();
+
+        // 旧写法(返回新数组)的迁移提示只在"真的重"时出,每个方法一次。
+        private readonly HeavyCallMeter _allocMeter = new();
+
+        private void MaybeHintAllocating(object raw)
+        {
+            int len = raw switch { ReadOnlyMemory<double> m => m.Length, double[] a => a.Length, _ => 0 };
+            if (len == 0 || Compute == null || !AllocatesResultEachCall(Compute)) return;
+            if (!_allocMeter.Record(len, System.Diagnostics.Stopwatch.GetTimestamp(), System.Diagnostics.Stopwatch.Frequency)) return;
+            if (!s_allocHinted.TryAdd(Compute.Method, true)) return;
+            System.Diagnostics.Trace.TraceWarning(
+                $"[ComputeFeature] C# 指标 {Compute.Method.DeclaringType?.Name}.{Compute.Method.Name} 每次返回新数组,当前结果 {len} 个元素" +
+                $"(≥ {HeavyCallMeter.HeavyLength},每块进 LOH)且 1 秒内算了 ≥ {HeavyCallMeter.HeavyCallsPerSecond} 次。" +
+                "改用 ComputeInto(input, output) / ComputeIntoMulti 往框架给的缓冲里写,可零分配。");
+        }
 #endif
+
+        /// <summary>
+        /// 判断"返回新数组"的旧写法是否重到值得提示:结果 ≥ <see cref="HeavyLength"/> 个 double(85000 字节,正好进 LOH)
+        /// 且 1 秒窗口内算了 ≥ <see cref="HeavyCallsPerSecond"/> 次。小数据量 / 低频指标不提示,旧写法完全够用。
+        /// </summary>
+        internal sealed class HeavyCallMeter
+        {
+            public const int HeavyLength = 85_000 / sizeof(double);   // 10625
+            public const int HeavyCallsPerSecond = 5;
+            private long _windowStart;
+            private int _calls;
+
+            /// <summary>记一次调用;返回 true 表示已达到"重"的标准(调用方自己保证只提示一次)。</summary>
+            public bool Record(int resultLength, long now, long ticksPerSecond)
+            {
+                if (resultLength < HeavyLength) return false;
+                if (_calls == 0 || now - _windowStart >= ticksPerSecond) { _windowStart = now; _calls = 0; }
+                return ++_calls >= HeavyCallsPerSecond;
+            }
+        }
 
         /// <summary>
         /// 是不是"每次自己 new 结果数组"的 C# 指标(DEBUG 下提示迁移到 <see cref="ComputeInto"/>)。
@@ -294,6 +323,9 @@ namespace Hevo.Charting.Features
         private void WriteOutput(DataBlackboard board, object? raw, bool multiOutput, ResultBufferPool.CallScope call)
         {
             if (raw == null) return;
+#if DEBUG
+            if (!multiOutput) MaybeHintAllocating(raw);
+#endif
 
             if (multiOutput)
             {

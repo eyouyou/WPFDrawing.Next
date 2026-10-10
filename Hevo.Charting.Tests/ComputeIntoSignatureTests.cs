@@ -79,6 +79,21 @@ namespace Hevo.Charting.Tests
         }
 
         [Fact]
+        public void MigrationHint_OnlyWhenResultIsLargeAndFrequent()
+        {
+            const long sec = 1000;
+            var m = new ComputeFeature.HeavyCallMeter();
+            for (int i = 0; i < 20; i++) Assert.False(m.Record(2000, i * 10, sec));          // 小结果:多频繁都不提示
+            var slow = new ComputeFeature.HeavyCallMeter();
+            for (int i = 0; i < 10; i++) Assert.False(slow.Record(20000, i * 500, sec));     // 大结果但每秒 2 次:不提示
+            var heavy = new ComputeFeature.HeavyCallMeter();
+            bool hit = false;
+            for (int i = 0; i < 5; i++) hit = heavy.Record(20000, i * 100, sec);             // 大结果、每秒 10 次:第 5 次达标
+            Assert.True(hit);
+            Assert.Equal(10625, ComputeFeature.HeavyCallMeter.HeavyLength);
+        }
+
+        [Fact]
         public void SingleInput_SpanSignature_ProducesCorrectValues_AndReusesBuffers()
         {
             var sink = new Sink();
