@@ -121,20 +121,27 @@ namespace Hevo.Charting
         // 最近一次 Publish 的有效长度(锁内写)。_buffer.Count 可能在两次 Publish 之间被子类改过,不能代替它。
         private int _publishedCount;
 
-        /// <summary>最近一次 Publish 的有效长度。开了 <see cref="SnapshotGrowth"/> 的子类,LogicalLength 要用它而不是 <c>_readSnapshot.Length</c>。</summary>
+        /// <summary>
+        /// 最近一次 Publish 的有效长度。LogicalLength 用它(或子类自己的计数),<b>不要用 <c>_readSnapshot.Length</c></b>:
+        /// 展示柜默认留余量(<see cref="SnapshotGrowth"/>),数组长度是容量,不是有效长度。
+        /// </summary>
         protected int PublishedCount => Volatile.Read(ref _publishedCount);
 
         /// <summary>
         /// 展示柜 <c>_readSnapshot</c> 的扩缩容规则。
         /// <list type="bullet">
-        ///   <item>null(默认,兼容旧子类):展示柜长度始终等于有效长度 —— 有子类(包括 hevo.drawing 的数据源)用
-        ///         <c>_readSnapshot.Length</c> 当 LogicalLength、或直接读 <c>_readSnapshot[^1]</c>。代价是每追加一根就整块重分配、整块拷贝
-        ///         (2 万根 K 线每次 ~1 MB 进 LOH)。</item>
-        ///   <item>非 null:按 <see cref="LowCode.ArrayGrowth"/> 留封顶余量、远小于容量时收缩。此时 <c>_readSnapshot.Length</c> 是容量,
-        ///         子类必须用 <see cref="PublishedCount"/>(或自己的计数)做 LogicalLength,不能直接按数组长度读。</item>
+        ///   <item>默认 <see cref="LowCode.ArrayGrowthOptions.Default"/>:按 <see cref="LowCode.ArrayGrowth"/> 留封顶余量、远小于容量时收缩,
+        ///         追加一根 K 线不再整块重分配 + 拷贝(2 万根时每次 ~1 MB 进 LOH)。此时 <c>_readSnapshot.Length</c> 是容量,
+        ///         LogicalLength 必须用 <see cref="PublishedCount"/>(或自己的计数),也不能按数组长度读 <c>_readSnapshot[^1]</c>。
+        ///         DEBUG 下发现 LogicalLength 等于数组长度而不是有效长度时会打一次警告。</item>
+        ///   <item>override 返回 null:兼容模式,展示柜长度始终等于有效长度(给还没改 LogicalLength 的老子类兜底)。</item>
         /// </list>
         /// </summary>
-        protected virtual LowCode.ArrayGrowthOptions? SnapshotGrowth => null;
+        protected virtual LowCode.ArrayGrowthOptions? SnapshotGrowth => LowCode.ArrayGrowthOptions.Default;
+
+#if DEBUG
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, bool> s_lengthWarned = new();
+#endif
 
         public VersionToken CurrentVersion => _dataClock.Snapshot();
 
@@ -179,6 +186,14 @@ namespace Hevo.Charting
                 // 3. 拨动时钟(融合 Advance+Snapshot,单次 Interlocked.Increment 取新值)
                 VersionToken newVersion = _dataClock.AdvanceAndSnapshot();
 
+#if DEBUG
+                // 子类 LogicalLength 还在用 _readSnapshot.Length:留余量后报的是容量,图表会多出一截空数据
+                if (growth != null && _readSnapshot.Length != need && LogicalLength == _readSnapshot.Length
+                    && s_lengthWarned.TryAdd(GetType(), true))
+                    System.Diagnostics.Trace.TraceWarning(
+                        $"[{GetType().Name}] LogicalLength 返回了展示柜数组长度({_readSnapshot.Length})而不是有效长度({need})。" +
+                        "展示柜默认留余量,LogicalLength 请改用 PublishedCount;确实依赖数组长度的话 override SnapshotGrowth 返回 null。");
+#endif
                 // 4. 💥 关键点：传出的是物理数组，但告诉外层有效长度是 _buffer.Count！
                 base.Publish(new DataSnapshot<TItem>(_readSnapshot, _buffer.Count, newVersion));
             }
@@ -381,7 +396,7 @@ namespace Hevo.Charting
     // ==========================================
     public class VirtualDataSource<TItem> : BufferedDataSource<VirtualDataSource<TItem>, TItem>
     {
-        public override int LogicalLength => _readSnapshot.Length;
+        public override int LogicalLength => PublishedCount;
 
         // 💥 保存上游 CombineLatest 产生的订阅句柄
         private IDisposable? _subscription;

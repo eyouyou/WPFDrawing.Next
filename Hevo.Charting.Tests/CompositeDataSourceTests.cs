@@ -53,7 +53,7 @@ namespace Hevo.Charting.Tests
                 });
                 return Task.FromResult(2);
             }
-            public override int LogicalLength => _readSnapshot.Length;
+            public override int LogicalLength => PublishedCount;
         }
 
         public sealed class ShardB : ReactiveDataSource<ShardB, string, TestRow>
@@ -70,7 +70,7 @@ namespace Hevo.Charting.Tests
                 });
                 return Task.FromResult(1);
             }
-            public override int LogicalLength => _readSnapshot.Length;
+            public override int LogicalLength => PublishedCount;
         }
 
         /// <summary>

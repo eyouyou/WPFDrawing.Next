@@ -58,7 +58,7 @@ namespace Hevo.Charting.Tests
                 base.Resume();
             }
 
-            public override int LogicalLength => _readSnapshot.Length;
+            public override int LogicalLength => PublishedCount;
         }
 
         public static class TriggerDrivers

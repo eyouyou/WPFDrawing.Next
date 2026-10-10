@@ -38,7 +38,7 @@ namespace Hevo.Charting.Tests
                 return Task.FromResult(1);
             }
 
-            public override int LogicalLength => _readSnapshot.Length;
+            public override int LogicalLength => PublishedCount;
         }
 
         public sealed class DownstreamDs : ReactiveDataSource<DownstreamDs, DownstreamContext, Item>
@@ -53,7 +53,7 @@ namespace Hevo.Charting.Tests
                 return Task.FromResult(1);
             }
 
-            public override int LogicalLength => _readSnapshot.Length;
+            public override int LogicalLength => PublishedCount;
         }
 
         public static class CascadeDrivers

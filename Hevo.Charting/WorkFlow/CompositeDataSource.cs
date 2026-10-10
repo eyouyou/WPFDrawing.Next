@@ -38,8 +38,8 @@ namespace Hevo.Charting.WorkFlow
         /// <summary>已 <see cref="Attach"/> 的上游数量(= slot 总数)。派生类的 <see cref="ShouldPublishAfterMerge"/> / merge 状态机用它判 WhenAll 是否凑齐。</summary>
         public int UpstreamCount { get; private set; }
 
-        /// <summary>LogicalLength 默认 = 当前展柜数组长度;派生类有自定义"逻辑长度"(KLine 那种 row-of-Block)时 override。</summary>
-        public override int LogicalLength => _readSnapshot.Length;
+        /// <summary>LogicalLength 默认 = 最近一次发布的有效长度;派生类有自定义"逻辑长度"(KLine 那种 row-of-Block)时 override。</summary>
+        public override int LogicalLength => PublishedCount;
 
         /// <summary>
         /// 接一路上游 Stream,slotIndex 按 Attach 顺序递增。返回的 IDisposable 解绑该路订阅;
