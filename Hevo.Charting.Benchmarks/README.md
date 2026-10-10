@@ -455,6 +455,31 @@ float64 结果拷进调用点缓冲池(`LowCode/ColumnCallBuffers`),Python 这�
 - 工作集持平:固定输入缓冲 + 每个调用点 2–3 块输出缓冲是常驻的,省掉的是 GC 周期里的瞬时垃圾。
 - 约定:输出列跟摄入器的列一样只在本帧 / 本回调有效;Python handler 的输入 ndarray 只在本次调用内有效(跨调用保留要 `.copy()`)。
 
+**Feed:2 万根,C# 指标零分配签名 + 统一扩缩容模型前后**(`--scenarios=Feed --feed-bars=20000 --feed-rates=100,1000 --feed-seconds=60`,
+默认 LOH 阈值,同机先后跑,远程桌面会话)。`--alloc-types` 采样:修前剩下的 ~21 MB/s 里 70% 是基准 SMA 每个 tick `new double[2 万]`
+(156.7 KB 进 LOH),10% 是数据源展示柜每追加一根 K 线就按精确长度整块重分配(1.1 MB 进 LOH)。
+
+- e6e84c4:ComputeFeature 新增 `ColumnCompute(ReadOnlySpan<double> input, Span<double> output)` / `ColumnComputeMulti`,
+  输出缓冲由调用点池(`ColumnCallBuffers`)复用;基准 SMA 改用它。旧 `Func<ROM, ROM>` 照常可用。
+- 9a61553:`LowCode/ArrayGrowth`(参数名对齐 RecyclableMemoryStream:余量 = clamp(需要量 / 8, 1024, 64K 个元素),
+  不到一半且超出复用范围才缩,每个池空闲字节封顶 8 MB);列缓冲环 / 调用点池 / Python 固定输入缓冲改用它;
+  `BufferedDataSource.SnapshotGrowth` 可选开启展示柜留余量(默认关,兼容用 `_readSnapshot.Length` 当 LogicalLength 的子类)。
+
+| 推送 | 版本 | 分配(MB/s) | Gen0 / Gen1 / Gen2(次/s) | GC 暂停(ms/s) | 工作集(MB) | 延迟 P50 / P99(ms) |
+|---|---|---:|---:|---:|---:|---:|
+| 100 tick/s | ae1fa59(修前) | 21.4 | 1.90 / 1.82 / 1.80 | 0.95 | 141 | 0.7 / 1.8 |
+| 100 tick/s | e6e84c4(Span 签名) | 6.1 | 0.25 / 0.17 / 0.15 | 0.24 | 170 | 0.7 / 2.1 |
+| 100 tick/s | 9a61553(+ ArrayGrowth) | **4.0** | 0.10 / 0.05 / **0.02** | **0.09** | 159 | 0.7 / 1.4 |
+| 1000 tick/s | ae1fa59(修前) | 230.2 | 18.62 / 17.58 / 17.58 | 9.30 | 145 | 0.5 / 1.0 |
+| 1000 tick/s | e6e84c4(Span 签名) | 69.8 | 2.98 / 1.98 / 1.98 | 2.12 | 179 | 0.5 / 0.9 |
+| 1000 tick/s | 9a61553(+ ArrayGrowth) | **47.6** | 1.00 / 0.08 / **0.00** | **0.42** | 164 | 0.5 / 0.7 |
+
+- 两步之后 Feed 链路上已经没有 LOH 分配:100 tick/s 的分配类型采样只剩 WPF 每次重录图层生成的 RenderData
+  (`Byte[]` 指令流 + `Object[]` 资源表,都是 Gen0),Gen2 从每秒 1.8 次降到 0.02 次(1000 tick/s 从 17.6 降到 0)。
+- 表来自两次对比:ae1fa59 → e6e84c4、e6e84c4 → 9a61553;e6e84c4 行取第二次,两次数字一致(100 tick/s 都是 6.1 MB/s,
+  1000 tick/s 69.1 / 69.8 MB/s)。工作集 +20 MB 左右是复用缓冲常驻的代价。
+- 剩下的 RenderData 是 WPF 保留模式的机制,本轮不动渲染器(宿主可按"LOH 阈值"一节设 1 MB;位图渲染器另行评估)。
+
 **Blueprint:蓝图端到端**(`--scenarios=Blueprint`):`default_kline_dashboard.json`(主图 + 成交量 + 策略三张联动图)
 → `DashboardLauncher.LaunchEx`(DryRun + 实例化数据源 / Feature + 装配)→ 放进窗口 → 每张图在自己的数据到达后出第一帧。
 数据源用 `ProbeFeedSource` 以别名 `MockKLineDataSource` 顶替;strategy 图的 `bb_breakout` 是 LowCodeDemo/PyIndicators 里的真 Python handler。
