@@ -272,6 +272,17 @@ namespace Hevo.Charting.WorkFlow
         /// 长度一变就通知;现在按内容比:变了才通知、没变不通知 —— AutoMap 生成的就是这类 Map,
         /// tick 时 Time / 历史 OHLC 列不变,不能每次推送都把依赖它们的 Feature / 图层叫醒。
         /// </summary>
+        // 逐元素比较(EqualityComparer.Default:double 的 NaN 与 NaN 视为相等)。
+        // 不用 ReadOnlySpan.SequenceEqual(other, comparer):那个重载是 .NET 6+,开发规范要求 .NET 5 SDK 可编译。
+        private static bool ContentEquals(ReadOnlySpan<TValue> a, ReadOnlySpan<TValue> b)
+        {
+            if (a.Length != b.Length) return false;
+            var cmp = EqualityComparer<TValue>.Default;
+            for (int i = 0; i < a.Length; i++)
+                if (!cmp.Equals(a[i], b[i])) return false;
+            return true;
+        }
+
         internal static void PublishIfContentChanged(DataBlackboard board, DataPort<ReadOnlyMemory<TValue>> port,
             ColumnBufferPool<TValue> ring, TValue[] target, int length)
         {
@@ -279,7 +290,7 @@ namespace Hevo.Charting.WorkFlow
             var fresh = new ReadOnlySpan<TValue>(target, 0, length);
             if (current != null && board.Read(port) is var published
                 && published.Length == length && published.Span == new ReadOnlySpan<TValue>(current, 0, length)
-                && fresh.SequenceEqual(published.Span, null))
+                && ContentEquals(fresh, published.Span))
             {
                 ring.Unused(target);
                 return;
