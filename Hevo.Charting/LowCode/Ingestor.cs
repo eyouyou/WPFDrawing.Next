@@ -41,8 +41,8 @@ namespace Hevo.Charting.LowCode
         private readonly Func<TItem, TValue> _valueSelector;
 
         private VersionToken _lastVersion;
-        // 每次发布写进一块没有读者的缓冲(锁外读者可能还拿着上一块),见 ColumnBufferRing
-        private readonly ColumnBufferRing<TValue> _ring = new();
+        // 每次发布写进一块没有读者的缓冲(锁外读者可能还拿着上一块),见 ColumnBufferPool
+        private readonly ColumnBufferPool<TValue> _ring = new();
 
         public ScatterIngestor(DataPort<ReadOnlyMemory<TValue>> targetPort, Func<int> lengthProvider, TValue defaultValue, Func<TItem, int>? indexSelector, Func<TItem, TValue> valueSelector)
         {

@@ -437,7 +437,7 @@ Tick / Pan 跟数据量无关(只碰最后一根 / 可见窗口固定 ~120 根)�
 
 **PyFeed:2 万根,Python 入参 / 结果缓冲复用前后**(同上参数;修前 b44c157 / 修后 3bcd81f;默认 LOH 阈值与
 `DOTNET_GCLOHThreshold=0x100000`(1 MB)各跑一遍)。修后入参拷进调用点固定在 POH 上的缓冲、传缓存的 ndarray 切片视图,
-float64 结果拷进调用点缓冲池(`LowCode/ColumnCallBuffers`),Python 这条路径上不再有 .NET 侧的大数组分配。
+float64 结果拷进调用点缓冲池(`LowCode/ResultBufferPool`),Python 这条路径上不再有 .NET 侧的大数组分配。
 
 | LOH 阈值 | 指标数 | 分配(MB/s) | Gen0 / Gen1 / Gen2(次/s) | GC 暂停(ms/s) | 工作集(MB) | 单次调用 中位 / P95(ms) | 结果新鲜度 中位 / P95(ms) | 每指标产出(次/s) |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -459,20 +459,20 @@ float64 结果拷进调用点缓冲池(`LowCode/ColumnCallBuffers`),Python 这�
 默认 LOH 阈值,同机先后跑,远程桌面会话)。`--alloc-types` 采样:修前剩下的 ~21 MB/s 里 70% 是基准 SMA 每个 tick `new double[2 万]`
 (156.7 KB 进 LOH),10% 是数据源展示柜每追加一根 K 线就按精确长度整块重分配(1.1 MB 进 LOH)。
 
-- e6e84c4:ComputeFeature 新增 `ColumnCompute(ReadOnlySpan<double> input, Span<double> output)` / `ColumnComputeMulti`,
-  输出缓冲由调用点池(`ColumnCallBuffers`)复用;基准 SMA 改用它。旧 `Func<ROM, ROM>` 照常可用。
-- 9a61553:`LowCode/ArrayGrowth`(参数名对齐 RecyclableMemoryStream:余量 = clamp(需要量 / 8, 1024, 64K 个元素),
+- e6e84c4:ComputeFeature 新增 `ComputeInto(ReadOnlySpan<double> input, Span<double> output)` / `ComputeIntoMulti`,
+  输出缓冲由调用点池(`ResultBufferPool`)复用;基准 SMA 改用它。旧 `Func<ROM, ROM>` 照常可用。
+- 9a61553:`LowCode/CapacityPolicy`(参数名对齐 RecyclableMemoryStream:余量 = clamp(需要量 / 8, 1024, 64K 个元素),
   不到一半且超出复用范围才缩,每个池空闲字节封顶 8 MB);列缓冲环 / 调用点池 / Python 固定输入缓冲改用它;
-  `BufferedDataSource.SnapshotGrowth` 可选开启展示柜留余量(默认关,兼容用 `_readSnapshot.Length` 当 LogicalLength 的子类)。
+  `BufferedDataSource.ReserveSnapshotCapacity` 可选开启展示柜留余量(默认关,兼容用 `_readSnapshot.Length` 当 LogicalLength 的子类)。
 
 | 推送 | 版本 | 分配(MB/s) | Gen0 / Gen1 / Gen2(次/s) | GC 暂停(ms/s) | 工作集(MB) | 延迟 P50 / P99(ms) |
 |---|---|---:|---:|---:|---:|---:|
 | 100 tick/s | ae1fa59(修前) | 21.4 | 1.90 / 1.82 / 1.80 | 0.95 | 141 | 0.7 / 1.8 |
 | 100 tick/s | e6e84c4(Span 签名) | 6.1 | 0.25 / 0.17 / 0.15 | 0.24 | 170 | 0.7 / 2.1 |
-| 100 tick/s | 9a61553(+ ArrayGrowth) | **4.0** | 0.10 / 0.05 / **0.02** | **0.09** | 159 | 0.7 / 1.4 |
+| 100 tick/s | 9a61553(+ CapacityPolicy) | **4.0** | 0.10 / 0.05 / **0.02** | **0.09** | 159 | 0.7 / 1.4 |
 | 1000 tick/s | ae1fa59(修前) | 230.2 | 18.62 / 17.58 / 17.58 | 9.30 | 145 | 0.5 / 1.0 |
 | 1000 tick/s | e6e84c4(Span 签名) | 69.8 | 2.98 / 1.98 / 1.98 | 2.12 | 179 | 0.5 / 0.9 |
-| 1000 tick/s | 9a61553(+ ArrayGrowth) | **47.6** | 1.00 / 0.08 / **0.00** | **0.42** | 164 | 0.5 / 0.7 |
+| 1000 tick/s | 9a61553(+ CapacityPolicy) | **47.6** | 1.00 / 0.08 / **0.00** | **0.42** | 164 | 0.5 / 0.7 |
 
 - 两步之后 Feed 链路上已经没有 LOH 分配:100 tick/s 的分配类型采样只剩 WPF 每次重录图层生成的 RenderData
   (`Byte[]` 指令流 + `Object[]` 资源表,都是 Gen0),Gen2 从每秒 1.8 次降到 0.02 次(1000 tick/s 从 17.6 降到 0)。

@@ -10,15 +10,15 @@ namespace Hevo.Charting.Features
 {
     /// <summary>
     /// C# 指标的零分配签名:往框架给的 <paramref name="output"/> 里写结果(长度 = 输入长度),不用自己 new 数组。
-    /// output 来自调用点缓冲池(<see cref="ColumnCallBuffers"/>),内容是上一轮留下的旧值,handler 要把每个元素都写一遍。
+    /// output 来自调用点缓冲池(<see cref="ResultBufferPool"/>),内容是上一轮留下的旧值,handler 要把每个元素都写一遍。
     /// </summary>
-    public delegate void ColumnCompute(ReadOnlySpan<double> input, Span<double> output);
+    public delegate void ComputeInto(ReadOnlySpan<double> input, Span<double> output);
 
     /// <summary>
     /// 多输入版零分配签名:<paramref name="inputs"/> 按 <see cref="ComputeFeature.InputOrder"/> 排列,
     /// <paramref name="output"/> 长度 = 第一个输入的长度。同样每个元素都要写。
     /// </summary>
-    public delegate void ColumnComputeMulti(ReadOnlySpan<ReadOnlyMemory<double>> inputs, Span<double> output);
+    public delegate void ComputeIntoMulti(ReadOnlySpan<ReadOnlyMemory<double>> inputs, Span<double> output);
 
     /// <summary>
     /// 蓝图层"计算节点":输入 → 委托 → 输出。委托可以是 Python(经 PythonHandlerRegistry 注册)、
@@ -65,8 +65,8 @@ namespace Hevo.Charting.Features
     /// </summary>
     public sealed class ComputeFeature : ComputeNodeFeature
     {
-        // 输出缓冲池:Python handler 的结果拷进这里租来的缓冲,不再每次 new(2 万根一块 160 KB 进 LOH)。见 ColumnCallBuffers
-        private ColumnCallBuffers _outBuffers = new();
+        // 输出缓冲池:Python handler 的结果拷进这里租来的缓冲,不再每次 new(2 万根一块 160 KB 进 LOH)。见 ResultBufferPool
+        private ResultBufferPool _outBuffers = new();
 
         /// <summary>
         /// 单输入端口 —— 数据源 / 上游 Compute 推过来的 ROM&lt;double&gt;。
@@ -111,7 +111,7 @@ namespace Hevo.Charting.Features
         ///   <item>单输入 + 单输出:<c>Func&lt;ROM, ROM&gt;</c></item>
         ///   <item>多输入 + 单输出:<c>Func&lt;ROM, ROM, ..., ROM&gt;</c>(N 参 + 1 返回)</item>
         ///   <item>单/多输入 + 多输出:返回 <c>IDictionary&lt;string, object?&gt;</c>,key 对齐 <see cref="Outputs"/> 字典</item>
-        ///   <item>零分配(单输出):<see cref="ColumnCompute"/> / <see cref="ColumnComputeMulti"/>,往框架给的 Span 里写,
+        ///   <item>零分配(单输出):<see cref="ComputeInto"/> / <see cref="ComputeIntoMulti"/>,往框架给的 Span 里写,
         ///         输出缓冲由调用点池复用(2 万根时每次省一块 160 KB 的 LOH 数组);上面的 Func 签名照常可用。</item>
         /// </list>
         /// 业务侧也可以直接代码注入(测试 / mock 用)。
@@ -140,7 +140,7 @@ namespace Hevo.Charting.Features
             if (AllocatesResultEachCall(Compute) && s_allocHinted.TryAdd(Compute.Method, true))
                 System.Diagnostics.Trace.TraceWarning(
                     $"[ComputeFeature] C# 指标 {Compute.Method.DeclaringType?.Name}.{Compute.Method.Name} 返回新数组,每次计算都分配一块结果" +
-                    "(2 万根时 160 KB,进 LOH)。改用 ColumnCompute(input, output) / ColumnComputeMulti 往框架给的缓冲里写,可零分配。");
+                    "(2 万根时 160 KB,进 LOH)。改用 ComputeInto(input, output) / ComputeIntoMulti 往框架给的缓冲里写,可零分配。");
 #endif
 
             // §D2.X 多输入路径:Inputs 非空时,InputOrder 必填。按声明顺序拉值,DynamicInvoke。
@@ -180,7 +180,7 @@ namespace Hevo.Charting.Features
                     finally { if (buffers.IsAbandoned) _outBuffers = new(); }
                 });
 
-                void RunMulti(DataBlackboard board, ColumnCallBuffers.CallScope call)
+                void RunMulti(DataBlackboard board, ResultBufferPool.CallScope call)
                 {
                     // ① 瞬间读锁捞 inputs
                     var argsBuf = new object?[orderedPorts.Length];
@@ -198,7 +198,7 @@ namespace Hevo.Charting.Features
                     object? raw;
                     try
                     {
-                        if (Compute is ColumnComputeMulti cm)
+                        if (Compute is ComputeIntoMulti cm)
                         {
                             if (multiOutput) { WarnSpanMultiOutput(); return; }
                             var roms = new ReadOnlyMemory<double>[argsBuf.Length];
@@ -233,7 +233,7 @@ namespace Hevo.Charting.Features
                 finally { if (buffers.IsAbandoned) _outBuffers = new(); }
             });
 
-            void RunSingle(DataBlackboard board, ColumnCallBuffers.CallScope call)
+            void RunSingle(DataBlackboard board, ResultBufferPool.CallScope call)
             {
                 // ① 瞬间读锁捞 input
                 ReadOnlyMemory<double> input;
@@ -247,7 +247,7 @@ namespace Hevo.Charting.Features
                 object? raw;
                 try
                 {
-                    if (Compute is ColumnCompute cc)
+                    if (Compute is ComputeInto cc)
                     {
                         if (multiOutput) { WarnSpanMultiOutput(); return; }
                         var arr = call.Rent(input.Length);
@@ -275,23 +275,23 @@ namespace Hevo.Charting.Features
 #endif
 
         /// <summary>
-        /// 是不是"每次自己 new 结果数组"的 C# 指标(DEBUG 下提示迁移到 <see cref="ColumnCompute"/>)。
+        /// 是不是"每次自己 new 结果数组"的 C# 指标(DEBUG 下提示迁移到 <see cref="ComputeInto"/>)。
         /// Python handler 不算:PythonInvokerShim 用表达式树编译(Method.DeclaringType 为空),结果由框架拷进调用点池。
         /// 返回字典的多输出 handler 也不算(零分配签名只支持单输出)。
         /// </summary>
         internal static bool AllocatesResultEachCall(Delegate compute)
         {
-            if (compute is ColumnCompute || compute is ColumnComputeMulti) return false;
+            if (compute is ComputeInto || compute is ComputeIntoMulti) return false;
             if (compute.Method.DeclaringType == null) return false;
             var ret = compute.Method.ReturnType;
             return ret == typeof(ReadOnlyMemory<double>) || ret == typeof(double[]);
         }
 
         private static void WarnSpanMultiOutput() =>
-            System.Diagnostics.Trace.TraceWarning("[ComputeFeature] ColumnCompute / ColumnComputeMulti 只支持单输出(OutputPort),多输出请用返回字典的 Func 签名。");
+            System.Diagnostics.Trace.TraceWarning("[ComputeFeature] ComputeInto / ComputeIntoMulti 只支持单输出(OutputPort),多输出请用返回字典的 Func 签名。");
 
         // 把 handler 返回值按 Outputs 字典(多输出)或 OutputPort(单输出)路由到 board。
-        private void WriteOutput(DataBlackboard board, object? raw, bool multiOutput, ColumnCallBuffers.CallScope call)
+        private void WriteOutput(DataBlackboard board, object? raw, bool multiOutput, ResultBufferPool.CallScope call)
         {
             if (raw == null) return;
 

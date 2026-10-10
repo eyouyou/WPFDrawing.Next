@@ -145,8 +145,8 @@ namespace Hevo.Charting.Features
     /// </summary>
     public sealed class PlotFeature : ChartFeature
     {
-        // line / bar 输出的缓冲池:Python handler 的结果拷进这里租来的缓冲,不再每次 new。见 ColumnCallBuffers
-        private Hevo.Charting.LowCode.ColumnCallBuffers _outBuffers = new();
+        // line / bar 输出的缓冲池:Python handler 的结果拷进这里租来的缓冲,不再每次 new。见 ResultBufferPool
+        private Hevo.Charting.LowCode.ResultBufferPool _outBuffers = new();
 
         public override FeaturePhase Phase => FeaturePhase.Series;
 
@@ -552,7 +552,7 @@ namespace Hevo.Charting.Features
         // scatter: port = DataPort<ROM<ScatterPoint>>,value 期望 object?[](Python list of dict)
         // arrow:   port = DataPort<ROM<ArrowMarker>>
         private static void WriteValueByKind(DataBlackboard board, object port, string kind, object value,
-            Hevo.Charting.LowCode.ColumnCallBuffers.CallScope call = default)
+            Hevo.Charting.LowCode.ResultBufferPool.CallScope call = default)
         {
             switch ((kind ?? "line").Trim().ToLowerInvariant())
             {

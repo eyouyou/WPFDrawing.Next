@@ -405,26 +405,26 @@ namespace Hevo.Charting.PythonNet
         // 其他异常也穿透 —— 不在这一层吞掉，宿主 / DryRun 自己决定怎么处理。
         //
         // 列读者让出:handler 一般在 WatchAsync 回调里跑(ComputeFeature / PlotFeature / HandlerFeature),回调登记了列读者
-        // (LowCode.ColumnReaders)。Python 调用可能等 GIL + 算好几毫秒,期间一直登记着会挡住全进程所有列缓冲的复用。
+        // (LowCode.ColumnReadScope)。Python 调用可能等 GIL + 算好几毫秒,期间一直登记着会挡住全进程所有列缓冲的复用。
         // 回调声明了可让出时,先把入参里的列(ReadOnlyMemory<double>)拷成池化的私有副本,再让出登记跑 Python,
         // 回来重新登记。PythonMarshaller 当前是 Marshal.Copy 进 numpy(不保留对入参内存的引用),所以调用结束就能把副本还池;
         // 将来改 zero-copy 时,副本要等 numpy 释放后才能还。
         //
-        // 调用点缓冲(ComputeFeature / PlotFeature 调用时 ColumnCallBuffers.Current 不为空,且是真 Python 模块):
+        // 调用点缓冲(ComputeFeature / PlotFeature 调用时 ResultBufferPool.Current 不为空,且是真 Python 模块):
         // 入参列拷进调用点固定在 POH 上的缓冲,传给 Python 的是缓存的 ndarray 切片视图(不再 ArrayPool 副本 + np.empty + memcpy);
         // float64 结果拷进调用点租来的输出缓冲(不再每次 new,2 万根一块 160 KB 进 LOH)。输入 ndarray 只在本次调用内有效。
         private static object? Call(IPythonModule module, string functionName, object?[] args)
         {
-            bool release = Hevo.Charting.LowCode.ColumnReaders.CanReleaseForLongCall && OnlyDoubleColumns(args);
-            if (Hevo.Charting.LowCode.ColumnCallBuffers.Current is { IsAbandoned: false } buffers && module is PythonNetModule pm)
+            bool release = Hevo.Charting.LowCode.ColumnReadScope.CanReleaseForLongCall && OnlyDoubleColumns(args);
+            if (Hevo.Charting.LowCode.ResultBufferPool.Current is { IsAbandoned: false } buffers && module is PythonNetModule pm)
             {
                 if (!release) return pm.InvokePooled(functionName, args, buffers, null);
-                var inputs = buffers.HostCache as PythonPinnedInputs;
-                if (inputs == null) buffers.HostCache = inputs = new PythonPinnedInputs();
+                var inputs = buffers.HostCache as PythonInputBuffers;
+                if (inputs == null) buffers.HostCache = inputs = new PythonInputBuffers();
                 for (int i = 0; i < args.Length; i++)
                     if (args[i] is ReadOnlyMemory<double> col && col.Length > 0)
                         args[i] = inputs.Stage(i, col.Span);
-                using (Hevo.Charting.LowCode.ColumnReaders.ReleaseForLongCall())
+                using (Hevo.Charting.LowCode.ColumnReadScope.ReleaseForLongCall())
                     return pm.InvokePooled(functionName, args, buffers, inputs);
             }
 
@@ -444,7 +444,7 @@ namespace Hevo.Charting.PythonNet
                         args[i] = new ReadOnlyMemory<double>(copy, 0, col.Length);
                     }
                 }
-                using (Hevo.Charting.LowCode.ColumnReaders.ReleaseForLongCall())
+                using (Hevo.Charting.LowCode.ColumnReadScope.ReleaseForLongCall())
                     return module.Invoke(functionName, args);
             }
             finally

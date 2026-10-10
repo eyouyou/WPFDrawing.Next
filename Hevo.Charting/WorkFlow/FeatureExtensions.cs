@@ -54,7 +54,7 @@ namespace Hevo.Charting.WorkFlow
         {
             // 同步回调同样可能锁内取列、锁外读(多个数据源从不同线程写同一块黑板时会并发):登记为列读者
             var inner = sideEffect;
-            sideEffect = b => { using (LowCode.ColumnReaders.Enter()) inner(b); };
+            sideEffect = b => { using (LowCode.ColumnReadScope.Begin()) inner(b); };
 #if DEBUG
             // 拓扑追踪闭环:跟 WatchAsync 对称,把 sideEffect 包在 EnterScope(owner) 里。
             // 否则 sync Watch 回调里的 board.Read(...) 因为 _currentCaller.Value == null
@@ -89,7 +89,7 @@ namespace Hevo.Charting.WorkFlow
 #if DEBUG
             object owner = DevTools.TopologyTracer.SetupContext.Value ?? "UnknownOwner";
 #endif
-            var gate = new SingleFlight(b =>
+            var gate = new LatestOnlyRunner(b =>
             {
 #if DEBUG
                 using (DevTools.TopologyTracer.EnterScope(owner))
@@ -97,7 +97,7 @@ namespace Hevo.Charting.WorkFlow
                 // 回调里读锁内取列引用、锁外读元素(ComputeFeature 的三段式):登记为列读者,
                 // 摄入器在本回调结束前不会改写它可能拿到的缓冲
                 // releasable:回调里调 Python handler 时,输入已拷成私有副本,长计算期间可让出登记(见 PythonInvokerShim)
-                using (LowCode.ColumnReaders.Enter(releasable: true))
+                using (LowCode.ColumnReadScope.Begin(releasable: true))
                 {
                     sideEffect(b);
                 }
@@ -111,7 +111,7 @@ namespace Hevo.Charting.WorkFlow
         /// 空闲时投递一次;运行中只标记待重跑;回调结束后若有标记就清掉再跑一次,否则回到空闲。
         /// 回调抛异常不影响状态复位,循环跑完后再把第一个异常抛给 HevoDispatcher 记录。退订(Dispose)后不再重跑待重跑的那次。
         /// </summary>
-        internal sealed class SingleFlight
+        internal sealed class LatestOnlyRunner
         {
             private const int Idle = 0, Running = 1, RunningPending = 2;
             private readonly Action<DataBlackboard> _body;
@@ -119,7 +119,7 @@ namespace Hevo.Charting.WorkFlow
             private DataBlackboard? _board;
             private volatile bool _disposed;
 
-            public SingleFlight(Action<DataBlackboard> body) => _body = body;
+            public LatestOnlyRunner(Action<DataBlackboard> body) => _body = body;
 
             public void Notify(DataBlackboard board)
             {

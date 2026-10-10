@@ -15,7 +15,7 @@ namespace Hevo.Charting.Buildin
         private readonly int _period;
 
         private VersionToken _lastVersion;
-        private readonly ColumnBufferRing<double> _ring = new();
+        private readonly ColumnBufferPool<double> _ring = new();
 
         public WindowMapIngestor(
             DataPort<ReadOnlyMemory<double>> targetPort,
@@ -45,7 +45,7 @@ namespace Hevo.Charting.Buildin
             int len = _lengthProvider();
             if (len <= 0) return;
 
-            // 每次发布写进一块没有读者的缓冲,见 ColumnBufferRing(raw 是本方法内的临时数组,照旧走 ArrayPool)
+            // 每次发布写进一块没有读者的缓冲,见 ColumnBufferPool(raw 是本方法内的临时数组,照旧走 ArrayPool)
             var target = _ring.Rent(len);
             Span<double> span = target.AsSpan(0, len);
 

@@ -15,10 +15,10 @@ namespace Hevo.Charting.Tests
     /// handler 抛异常后调用点还能继续用。
     /// </summary>
     [Collection(nameof(RealPythonCollection))]
-    public sealed class PythonCallBuffersTests
+    public sealed class PythonResultBufferTests
     {
         private readonly RealPythonFixture _fx;
-        public PythonCallBuffersTests(RealPythonFixture fx) { _fx = fx; }
+        public PythonResultBufferTests(RealPythonFixture fx) { _fx = fx; }
 
         private Func<ReadOnlyMemory<double>, ReadOnlyMemory<double>> Load(string name)
         {
@@ -50,10 +50,10 @@ namespace Hevo.Charting.Tests
             return (Func<ReadOnlyMemory<double>, ReadOnlyMemory<double>>)_fx.Registry.TryGet(name)!;
         }
 
-        private static ReadOnlyMemory<double> InCallSite(ColumnCallBuffers b, Func<ReadOnlyMemory<double>, ReadOnlyMemory<double>> fn,
+        private static ReadOnlyMemory<double> InCallSite(ResultBufferPool b, Func<ReadOnlyMemory<double>, ReadOnlyMemory<double>> fn,
             double[] input, object port)
         {
-            using var reader = ColumnReaders.Enter(releasable: true);   // 跟 WatchAsync 回调一样(走固定输入缓冲路径)
+            using var reader = ColumnReadScope.Begin(releasable: true);   // 跟 WatchAsync 回调一样(走固定输入缓冲路径)
             using var call = b.BeginCall();
             var r = fn(input);
             call.Written(port, r);
@@ -65,7 +65,7 @@ namespace Hevo.Charting.Tests
         {
             if (!_fx.Available) return;
             var fn = Load("cb_cumsum");
-            var b = new ColumnCallBuffers();
+            var b = new ResultBufferPool();
             var port = new object();
             foreach (int len in new[] { 10, 5, 2000, 20_000, 7, 20_000, 30_000 })
             {
@@ -83,7 +83,7 @@ namespace Hevo.Charting.Tests
         {
             if (!_fx.Available) return;
             var fn = Load("cb_keep_input");
-            var b = new ColumnCallBuffers();
+            var b = new ResultBufferPool();
             var port = new object();
             InCallSite(b, fn, new double[] { 1, 2, 3 }, port);
             var r = InCallSite(b, fn, new double[] { 9, 8 }, port).ToArray();
@@ -93,7 +93,7 @@ namespace Hevo.Charting.Tests
             var r2 = InCallSite(b, fn, big, port).ToArray();
             Assert.Equal(new[] { 9.0, 50_000.0, 49_999.0 }, r2);
             GC.Collect(); GC.WaitForPendingFinalizers();
-            // 变得很短:固定缓冲按 ArrayGrowth 收缩成新的一块,存住的旧视图还指着 5 万那块(内容不变、内存还活着)
+            // 变得很短:固定缓冲按 CapacityPolicy 收缩成新的一块,存住的旧视图还指着 5 万那块(内容不变、内存还活着)
             var r3 = InCallSite(b, fn, new double[] { 4 }, port).ToArray();
             Assert.Equal(new[] { 0.0, 1.0, 4.0 }, r3);
         }
@@ -103,12 +103,12 @@ namespace Hevo.Charting.Tests
         {
             if (!_fx.Available) return;
             var fn = Load("cb_fail_on_negative");
-            var b = new ColumnCallBuffers();
+            var b = new ResultBufferPool();
             var port = new object();
             Assert.ThrowsAny<Exception>(() => InCallSite(b, fn, new double[] { -1, 2 }, port));
-            Assert.Null(ColumnCallBuffers.Current);
+            Assert.Null(ResultBufferPool.Current);
             Assert.Equal(new[] { 2.0, 4.0 }, InCallSite(b, fn, new double[] { 1, 2 }, port).ToArray());
-            Assert.Equal(0, ColumnReaders.CanReleaseForLongCall ? 1 : 0);   // 读者登记都已离场
+            Assert.Equal(0, ColumnReadScope.CanReleaseForLongCall ? 1 : 0);   // 读者登记都已离场
         }
     }
 }

@@ -64,12 +64,12 @@ namespace Hevo.Charting.PythonNet
         }
 
         /// <summary>
-        /// 调用点版本(PythonInvokerShim 在 ColumnCallBuffers.Current 不为空时走这里):
+        /// 调用点版本(PythonInvokerShim 在 ResultBufferPool.Current 不为空时走这里):
         /// float64 ndarray 结果拷进 <paramref name="outputs"/> 租来的缓冲(不再每次 new);
         /// 入参里的 <see cref="PinnedArg"/> 换成 <paramref name="inputs"/> 的固定缓冲视图(不再 np.empty + memcpy)。
         /// 超时(Python 线程变成孤儿、可能还在用这两样)时把调用点标记弃用,调用点下次换新的。
         /// </summary>
-        internal object? InvokePooled(string functionName, object?[] args, Hevo.Charting.LowCode.ColumnCallBuffers outputs, PythonPinnedInputs? inputs)
+        internal object? InvokePooled(string functionName, object?[] args, Hevo.Charting.LowCode.ResultBufferPool outputs, PythonInputBuffers? inputs)
         {
             if (string.IsNullOrEmpty(functionName))
                 throw new ArgumentNullException(nameof(functionName));
@@ -85,7 +85,7 @@ namespace Hevo.Charting.PythonNet
         }
 
         private object? InvokeCore(string functionName, object?[] args,
-            Hevo.Charting.LowCode.ColumnCallBuffers? outputs = null, PythonPinnedInputs? inputs = null)
+            Hevo.Charting.LowCode.ResultBufferPool? outputs = null, PythonInputBuffers? inputs = null)
         {
             using (Py.GIL())
             {
@@ -159,7 +159,7 @@ namespace Hevo.Charting.PythonNet
         //   - dict → Dictionary&lt;string, object?&gt;(递归 unbox 每个 value)
         //   - 标量 → As&lt;T&gt;()
         //   - 兜底:返 null,调用方按缺省值兜底
-        private static object? UnboxBestEffort(PyObject py, Hevo.Charting.LowCode.ColumnCallBuffers? outputs = null)
+        private static object? UnboxBestEffort(PyObject py, Hevo.Charting.LowCode.ResultBufferPool? outputs = null)
         {
             if (py == null || py.IsNone()) return null;
 
@@ -267,7 +267,7 @@ namespace Hevo.Charting.PythonNet
         }
 
         // float64 结果拷进调用点租来的缓冲(只用前 n 个),发布 / 退役由调用点按列读者纪元管理。
-        private static unsafe ReadOnlyMemory<double> ReadOnlyMemoryFromNumpyInto(PyObject ndarray, Hevo.Charting.LowCode.ColumnCallBuffers outputs)
+        private static unsafe ReadOnlyMemory<double> ReadOnlyMemoryFromNumpyInto(PyObject ndarray, Hevo.Charting.LowCode.ResultBufferPool outputs)
         {
             using var np = Py.Import("numpy");
             using var contig = np.InvokeMethod("ascontiguousarray", new PyObject[] { ndarray });

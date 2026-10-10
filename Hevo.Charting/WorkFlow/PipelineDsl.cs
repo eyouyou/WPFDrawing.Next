@@ -258,8 +258,8 @@ namespace Hevo.Charting.WorkFlow
         private readonly Func<TItem, TSource, TValue> _selector;
 
         private VersionToken _lastVersion; // 💥 显式查脏哨兵
-        // 每次发布写进一块没有读者的缓冲,见 ColumnBufferRing
-        private readonly ColumnBufferRing<TValue> _ring = new();
+        // 每次发布写进一块没有读者的缓冲,见 ColumnBufferPool
+        private readonly ColumnBufferPool<TValue> _ring = new();
 
         public FastSourceMapIngestor(DataPort<ReadOnlyMemory<TValue>> port, Func<int> lenProv, TSource source, Func<TItem, TSource, TValue> selector)
         {
@@ -273,7 +273,7 @@ namespace Hevo.Charting.WorkFlow
         /// tick 时 Time / 历史 OHLC 列不变,不能每次推送都把依赖它们的 Feature / 图层叫醒。
         /// </summary>
         internal static void PublishIfContentChanged(DataBlackboard board, DataPort<ReadOnlyMemory<TValue>> port,
-            ColumnBufferRing<TValue> ring, TValue[] target, int length)
+            ColumnBufferPool<TValue> ring, TValue[] target, int length)
         {
             var current = ring.Current;
             var fresh = new ReadOnlySpan<TValue>(target, 0, length);
@@ -320,7 +320,7 @@ namespace Hevo.Charting.WorkFlow
         private readonly Func<TItem, TSource, TState, TValue> _selector;
 
         private VersionToken _lastVersion; // 💥 显式查脏哨兵
-        private readonly ColumnBufferRing<TValue> _ring = new();
+        private readonly ColumnBufferPool<TValue> _ring = new();
 
         public FastStateMapIngestor(DataPort<ReadOnlyMemory<TValue>> port, Func<int> lenProv, TSource source, TState state, Func<TItem, TSource, TState, TValue> selector)
         {

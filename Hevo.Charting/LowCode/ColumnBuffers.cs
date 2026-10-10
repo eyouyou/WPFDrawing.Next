@@ -7,8 +7,8 @@ namespace Hevo.Charting.LowCode
     /// <para>
     /// 摄入器写进黑板的列(<c>ReadOnlyMemory&lt;T&gt;</c>)只在读锁内取引用,读元素都在锁外:ChartCell 一帧里的
     /// ProjectAll → 图层录制 → 上屏,ComputeFeature 等 Watch / WatchAsync 回调从读输入到写结果。
-    /// 这些读者在开始前 <see cref="Enter"/>、结束后 Dispose;摄入器换下一块缓冲时记下退役纪元,
-    /// 只有在退役之前进场的读者全部离场后,这块缓冲才会被重新写入(<see cref="ColumnBufferRing{T}"/>)。
+    /// 这些读者在开始前 <see cref="Begin"/>、结束后 Dispose;摄入器换下一块缓冲时记下退役纪元,
+    /// 只有在退役之前进场的读者全部离场后,这块缓冲才会被重新写入(<see cref="ColumnBufferPool{T}"/>)。
     /// </para>
     /// <para>
     /// 全进程一张表,不按黑板分:列的 ROM 可能被转写到别的黑板(LinkedChartContext 的端口镜像),
@@ -20,12 +20,12 @@ namespace Hevo.Charting.LowCode
     /// 列 ROM 只在拿到它的那一帧 / 那次回调内有效 —— 必须在进场之后、从黑板(读锁内)取到,用完再离场;
     /// 不要存进字段跨帧 / 跨回调再读(需要保留就拷贝;TickProvider 的 RefBox 这类缓存引用必须每帧先 UsePort 刷新)。
     /// 帧和 Watch / WatchAsync 回调由框架自动登记;其它时机(鼠标事件、Task.Run、定时器、分页回调)读列要自己
-    /// <c>using (ColumnReaders.Enter())</c>。没登记的锁外读者不受保护:缓冲退役、且没有登记读者后就可能被重写。
+    /// <c>using (ColumnReadScope.Begin())</c>。没登记的锁外读者不受保护:缓冲退役、且没有登记读者后就可能被重写。
     /// 2026-10 排查过框架内的帧外读取:交互事件只读标量端口(视口 / hit),trigger / URI 模板走 GetSnapshot 拷贝,
     /// DEBUG 拓扑追踪只缓存 ROM 用于显示长度摘要,不读元素 —— 目前没有需要额外登记的地方。
     /// </para>
     /// </summary>
-    public static class ColumnReaders
+    public static class ColumnReadScope
     {
         private const int SlotCount = 128;
         private static readonly long[] s_slots = new long[SlotCount];
@@ -33,7 +33,7 @@ namespace Hevo.Charting.LowCode
         private static int s_overflow;
 
         /// <summary>读者进场:登记当前纪元,Dispose 时离场。可以嵌套(各占一个槽位)。</summary>
-        public static Scope Enter() => Enter(releasable: false);
+        public static Scope Begin() => Begin(releasable: false);
 
         /// <summary>
         /// 读者进场。<paramref name="releasable"/>=true 表示这个读者遵守"读输入 → 长计算 → 提交"的模式
@@ -41,7 +41,7 @@ namespace Hevo.Charting.LowCode
         /// 允许在长计算期间用 <see cref="ReleaseForLongCall"/> 暂时让出,不挡全进程的缓冲复用。
         /// 帧(ProjectAll → 图层录制)和同步 Watch 不可让出。
         /// </summary>
-        public static Scope Enter(bool releasable)
+        public static Scope Begin(bool releasable)
         {
             long e = Volatile.Read(ref s_epoch);
             int start = Environment.CurrentManagedThreadId & (SlotCount - 1);
@@ -169,16 +169,16 @@ namespace Hevo.Charting.LowCode
     /// <summary>
     /// 摄入器的列缓冲轮换:每次发布都写进一块"没有读者"的缓冲,绝不改写已发布的那块。
     /// <list type="bullet">
-    ///   <item><see cref="Rent"/>:优先复用已退役、<see cref="ColumnReaders.IsReclaimable"/> 且容量合适(<see cref="ArrayGrowth.Fits"/>)
-    ///         的缓冲,没有就按 <see cref="ArrayGrowth.Capacity"/> 新分配(带封顶的余量,逐根追加时不必每次都换);绝不等待。</item>
+    ///   <item><see cref="Rent"/>:优先复用已退役、<see cref="ColumnReadScope.IsReclaimable"/> 且容量合适(<see cref="CapacityPolicy.Fits"/>)
+    ///         的缓冲,没有就按 <see cref="CapacityPolicy.Capacity"/> 新分配(带封顶的余量,逐根追加时不必每次都换);绝不等待。</item>
     ///   <item><see cref="Published"/>:发布后调用,上一块退役并记下纪元。最多留 3 块退役缓冲、且总字节不超过
-    ///         <see cref="ArrayGrowthOptions.MaximumFreeBytes"/>(至少留一块),更旧的直接丢给 GC
+    ///         <see cref="CapacityPolicyOptions.MaxIdleBytes"/>(至少留一块),更旧的直接丢给 GC
     ///         (可能还有读者拿着,不能回收进任何池子)。列变短很多时,太大的旧缓冲不再被选中,会被挤出去(即收缩)。</item>
     /// </list>
     /// 不再 Return 给 ArrayPool:还给共享池的数组会被别人租走改写,而读者可能还拿着它。
     /// 单写者(调用方在黑板写锁 / 数据源锁内),本类不加锁。
     /// </summary>
-    internal sealed class ColumnBufferRing<T>
+    internal sealed class ColumnBufferPool<T>
     {
         private const int MaxRetired = 3;
         private readonly T[][] _retired = new T[MaxRetired][];
@@ -191,24 +191,24 @@ namespace Hevo.Charting.LowCode
         // 挡不住回收。下一次 Rent 时上一个事务的通知早已发完,此时打戳才安全。
         private T[]? _pendingRetire;
 
-        private readonly ArrayGrowthOptions _growth;
+        private readonly CapacityPolicyOptions _growth;
         private static readonly int ElementSize = System.Runtime.CompilerServices.Unsafe.SizeOf<T>();
 
-        public ColumnBufferRing(ArrayGrowthOptions? growth = null) => _growth = growth ?? ArrayGrowthOptions.Default;
+        public ColumnBufferPool(CapacityPolicyOptions? growth = null) => _growth = growth ?? CapacityPolicyOptions.Default;
 
         public T[] Rent(int minLength)
         {
             StampPending();
             for (int i = 0; i < _retiredCount; i++)
             {
-                if (ArrayGrowth.Fits(_retired[i].Length, minLength, _growth) && ColumnReaders.IsReclaimable(_retiredAt[i]))
+                if (CapacityPolicy.Fits(_retired[i].Length, minLength, _growth) && ColumnReadScope.IsReclaimable(_retiredAt[i]))
                 {
                     var arr = _retired[i];
                     RemoveAt(i);
                     return arr;
                 }
             }
-            return new T[ArrayGrowth.Capacity(minLength, _growth)];
+            return new T[CapacityPolicy.Capacity(minLength, _growth)];
         }
 
         /// <summary>最近一次发布的缓冲(写者自己读它是安全的:已发布的缓冲不会再被改写)。</summary>
@@ -232,7 +232,7 @@ namespace Hevo.Charting.LowCode
             if (_pendingRetire == null) return;
             var arr = _pendingRetire;
             _pendingRetire = null;
-            AddRetired(arr, ColumnReaders.Retire());
+            AddRetired(arr, ColumnReadScope.Retire());
         }
 
         private void AddRetired(T[] array, long retiredAt)
@@ -244,7 +244,7 @@ namespace Hevo.Charting.LowCode
             // 空闲总字节封顶(至少留最新的一块):超出时丢最旧的给 GC
             long bytes = 0;
             for (int i = 0; i < _retiredCount; i++) bytes += (long)_retired[i].Length * ElementSize;
-            while (_retiredCount > 1 && bytes > _growth.MaximumFreeBytes)
+            while (_retiredCount > 1 && bytes > _growth.MaxIdleBytes)
             {
                 bytes -= (long)_retired[0].Length * ElementSize;
                 RemoveAt(0);

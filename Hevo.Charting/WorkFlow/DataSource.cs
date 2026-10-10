@@ -121,20 +121,20 @@ namespace Hevo.Charting
         // 最近一次 Publish 的有效长度(锁内写)。_buffer.Count 可能在两次 Publish 之间被子类改过,不能代替它。
         private int _publishedCount;
 
-        /// <summary>最近一次 Publish 的有效长度。开了 <see cref="SnapshotGrowth"/> 的子类,LogicalLength 要用它而不是 <c>_readSnapshot.Length</c>。</summary>
-        protected int PublishedCount => Volatile.Read(ref _publishedCount);
+        /// <summary>最近一次 Publish 的有效长度。开了 <see cref="ReserveSnapshotCapacity"/> 的子类,LogicalLength 要用它而不是 <c>_readSnapshot.Length</c>。</summary>
+        protected int SnapshotCount => Volatile.Read(ref _publishedCount);
 
         /// <summary>
         /// 展示柜 <c>_readSnapshot</c> 的扩缩容规则。
         /// <list type="bullet">
-        ///   <item>null(默认,兼容旧子类):展示柜长度始终等于有效长度 —— 有子类(包括 hevo.drawing 的数据源)用
+        ///   <item>false(默认,兼容旧子类):展示柜长度始终等于有效长度 —— 有子类(包括 hevo.drawing 的数据源)用
         ///         <c>_readSnapshot.Length</c> 当 LogicalLength、或直接读 <c>_readSnapshot[^1]</c>。代价是每追加一根就整块重分配、整块拷贝
         ///         (2 万根 K 线每次 ~1 MB 进 LOH)。</item>
-        ///   <item>非 null:按 <see cref="LowCode.ArrayGrowth"/> 留封顶余量、远小于容量时收缩。此时 <c>_readSnapshot.Length</c> 是容量,
-        ///         子类必须用 <see cref="PublishedCount"/>(或自己的计数)做 LogicalLength,不能直接按数组长度读。</item>
+        ///   <item>true:按 <see cref="LowCode.CapacityPolicy"/>(默认参数)留封顶余量、远小于容量时收缩。此时 <c>_readSnapshot.Length</c> 是容量,
+        ///         子类必须用 <see cref="SnapshotCount"/>(或自己的计数)做 LogicalLength,不能直接按数组长度读。</item>
         /// </list>
         /// </summary>
-        protected virtual LowCode.ArrayGrowthOptions? SnapshotGrowth => null;
+        protected virtual bool ReserveSnapshotCapacity => false;
 
         public VersionToken CurrentVersion => _dataClock.Snapshot();
 
@@ -149,7 +149,7 @@ namespace Hevo.Charting
             {
                 // 1. 展示柜尺寸
                 int need = _buffer.Count;
-                var growth = SnapshotGrowth;
+                var growth = ReserveSnapshotCapacity ? LowCode.CapacityPolicyOptions.Default : null;
                 if (need == 0)
                 {
                     // 归零路径：SwitchContext 清 buffer 后必须把展示柜也清空，
@@ -165,7 +165,7 @@ namespace Hevo.Charting
                 }
                 else
                 {
-                    int cap = LowCode.ArrayGrowth.Resize(_readSnapshot.Length, need, growth);
+                    int cap = LowCode.CapacityPolicy.Resize(_readSnapshot.Length, need, growth);
                     if (cap != _readSnapshot.Length) _readSnapshot = new TItem[cap];
                     else if (need < _publishedCount && RuntimeHelpers.IsReferenceOrContainsReferences<TItem>())
                         Array.Clear(_readSnapshot, need, _publishedCount - need); // 变短:尾部旧元素别拖着引用

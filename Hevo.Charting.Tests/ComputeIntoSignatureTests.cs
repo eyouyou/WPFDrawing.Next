@@ -11,12 +11,12 @@ using static Hevo.Charting.Tests.IngestorColumnConsistencyTests;
 namespace Hevo.Charting.Tests
 {
     /// <summary>
-    /// ComputeFeature 的零分配 C# 签名(ColumnCompute / ColumnComputeMulti):结果正确、输出缓冲在调用点池里复用
+    /// ComputeFeature 的零分配 C# 签名(ComputeInto / ComputeIntoMulti):结果正确、输出缓冲在调用点池里复用
     /// (稳态只在几块之间轮换)、旧 Func 签名照常可用、handler 抛异常后还能继续算。
     /// 下游用第二个 ComputeFeature 读输出端口,记录看到的值和底层数组。
     /// </summary>
-    [Collection(nameof(ColumnReadersCollection))]
-    public sealed class ColumnComputeSignatureTests
+    [Collection(nameof(ColumnReadScopeCollection))]
+    public sealed class ComputeIntoSignatureTests
     {
         private sealed class Sink
         {
@@ -64,8 +64,8 @@ namespace Hevo.Charting.Tests
             Func<ReadOnlyMemory<double>, ReadOnlyMemory<double>> csharp = col => new double[col.Length];
             Func<ReadOnlyMemory<double>, ReadOnlyMemory<double>, ReadOnlyMemory<double>> csharp2 = (a, b) => a;
             Func<ReadOnlyMemory<double>, IDictionary<string, object?>> dict = _ => new Dictionary<string, object?>();
-            ColumnCompute span = (i, o) => { };
-            ColumnComputeMulti spanMulti = (i, o) => { };
+            ComputeInto span = (i, o) => { };
+            ComputeIntoMulti spanMulti = (i, o) => { };
             // Python handler 的委托是表达式树编译出来的(跟 PythonInvokerShim 一样)
             var p = System.Linq.Expressions.Expression.Parameter(typeof(ReadOnlyMemory<double>));
             var compiled = System.Linq.Expressions.Expression.Lambda<Func<ReadOnlyMemory<double>, ReadOnlyMemory<double>>>(p, p).Compile();
@@ -88,7 +88,7 @@ namespace Hevo.Charting.Tests
                 new ComputeFeature
                 {
                     InputPort = s.Mapped, OutputPort = outPort,
-                    Compute = (ColumnCompute)((input, output) => { for (int i = 0; i < input.Length; i++) output[i] = input[i] * 2 + i; }),
+                    Compute = (ComputeInto)((input, output) => { for (int i = 0; i < input.Length; i++) output[i] = input[i] * 2 + i; }),
                 },
                 sink.Reader(outPort, "1"),
             }, s =>
@@ -117,7 +117,7 @@ namespace Hevo.Charting.Tests
                     Inputs = new() { ["a"] = s.Mapped, ["b"] = s.Scatter },
                     InputOrder = new[] { "a", "b" },
                     OutputPort = outPort,
-                    Compute = (ColumnComputeMulti)((inputs, output) =>
+                    Compute = (ComputeIntoMulti)((inputs, output) =>
                     {
                         var a = inputs[0].Span; var b = inputs[1].Span;
                         for (int i = 0; i < output.Length; i++) output[i] = a[i] + b[i];
@@ -152,7 +152,7 @@ namespace Hevo.Charting.Tests
                 new ComputeFeature
                 {
                     InputPort = s.Mapped, OutputPort = outSpan,
-                    Compute = (ColumnCompute)((input, output) =>
+                    Compute = (ComputeInto)((input, output) =>
                     {
                         if (input[0] == 3) throw new InvalidOperationException("boom");
                         for (int i = 0; i < input.Length; i++) output[i] = -input[i];

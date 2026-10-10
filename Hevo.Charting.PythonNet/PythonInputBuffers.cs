@@ -5,20 +5,20 @@ using Python.Runtime;
 
 namespace Hevo.Charting.PythonNet
 {
-    /// <summary>入参占位:第 <see cref="Index"/> 个参数已拷进 <see cref="PythonPinnedInputs"/>,本次长度 <see cref="Length"/>。</summary>
+    /// <summary>入参占位:第 <see cref="Index"/> 个参数已拷进 <see cref="PythonInputBuffers"/>,本次长度 <see cref="Length"/>。</summary>
     internal readonly record struct PinnedArg(int Index, int Length);
 
     /// <summary>
-    /// 一个调用点(ComputeFeature / PlotFeature 的一个订阅,挂在 <see cref="Hevo.Charting.LowCode.ColumnCallBuffers.HostCache"/> 上)
+    /// 一个调用点(ComputeFeature / PlotFeature 的一个订阅,挂在 <see cref="Hevo.Charting.LowCode.ResultBufferPool.HostCache"/> 上)
     /// 的 Python 入参缓冲:每个参数一块固定在 POH 上的 double[],以及指向它的 numpy ndarray 视图(只在扩容时重建)。
     /// 每次调用只把输入列 memcpy 进固定缓冲一次,传给 Python 的是 <c>full[:n]</c> 切片视图,不再 np.empty + memcpy。
     /// <para>
     /// <b>输入 ndarray 只在本次调用内有效</b>:下一次调用会改写同一块内存。handler 要跨调用保留输入必须 <c>.copy()</c>。
     /// 视图通过一个持有 .NET 数组引用的 Python 对象做 base,handler 即使把视图存起来,底层内存也不会被回收(只是内容会变)。
     /// </para>
-    /// 单线程使用:调用点一次只有一个调用在跑(WatchAsync single-flight);超时时整个 ColumnCallBuffers 被弃用。
+    /// 单线程使用:调用点一次只有一个调用在跑(WatchAsync single-flight);超时时整个 ResultBufferPool 被弃用。
     /// </summary>
-    internal sealed class PythonPinnedInputs
+    internal sealed class PythonInputBuffers
     {
         private sealed class Slot
         {
@@ -34,8 +34,8 @@ namespace Hevo.Charting.PythonNet
         {
             while (_slots.Count <= index) _slots.Add(new Slot());
             var slot = _slots[index];
-            int cap = Hevo.Charting.LowCode.ArrayGrowth.Resize(slot.Array.Length, column.Length);
-            if (cap != slot.Array.Length)   // 不够了就扩,远小于容量就缩(ArrayGrowth 统一规则)
+            int cap = Hevo.Charting.LowCode.CapacityPolicy.Resize(slot.Array.Length, column.Length);
+            if (cap != slot.Array.Length)   // 不够了就扩,远小于容量就缩(CapacityPolicy 统一规则)
             {
                 slot.Array = GC.AllocateUninitializedArray<double>(cap, pinned: true);
                 if (slot.Full != null) { slot.Stale.Add(slot.Full); slot.Full = null; }

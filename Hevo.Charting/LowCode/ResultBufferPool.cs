@@ -8,7 +8,7 @@ namespace Hevo.Charting.LowCode
     /// handler(典型是 Python 指标)每算完一次,结果要落到一块 double[] 里再写进黑板。以前每次 new 一块,
     /// 2 万根时每块 160 KB 直接进 LOH。现在宿主(PythonNet 的 marshaller)在 <see cref="Current"/> 不为空时
     /// 从这里 <see cref="Rent"/>,调用点把结果写进端口后用 <see cref="CallScope.Written"/> 登记,
-    /// 被换下的旧缓冲按列读者纪元退役(同 <see cref="ColumnBufferRing{T}"/>:退役纪元推迟到下一次 Rent 才打),
+    /// 被换下的旧缓冲按列读者纪元退役(同 <see cref="ColumnBufferPool{T}"/>:退役纪元推迟到下一次 Rent 才打),
     /// 在它退役之前进场的读者全部离场后才会再交出去。已发布在任何端口上的缓冲绝不交出去。
     /// </para>
     /// <para>
@@ -20,17 +20,17 @@ namespace Hevo.Charting.LowCode
     /// 调用超时(PerCallTimeoutWatchdog)时 Python 线程可能还在用本对象,宿主调 <see cref="Abandon"/>,调用点换一个新的。
     /// </para>
     /// </summary>
-    public sealed class ColumnCallBuffers
+    public sealed class ResultBufferPool
     {
         private const int MaxFree = 6;
-        private readonly ArrayGrowthOptions _growth;
+        private readonly CapacityPolicyOptions _growth;
 
-        public ColumnCallBuffers(ArrayGrowthOptions? growth = null) => _growth = growth ?? ArrayGrowthOptions.Default;
+        public ResultBufferPool(CapacityPolicyOptions? growth = null) => _growth = growth ?? CapacityPolicyOptions.Default;
 
-        [ThreadStatic] private static ColumnCallBuffers? t_current;
+        [ThreadStatic] private static ResultBufferPool? t_current;
 
         /// <summary>当前线程正在进行的调用所属的调用点(调用点外为 null,宿主照旧每次新分配)。</summary>
-        public static ColumnCallBuffers? Current => t_current;
+        public static ResultBufferPool? Current => t_current;
 
         private readonly object _lock = new();
         private readonly Dictionary<object, double[]> _publishedByPort = new();
@@ -65,14 +65,14 @@ namespace Hevo.Charting.LowCode
                 for (int i = 0; i < _free.Count; i++)
                 {
                     var (arr, at) = _free[i];
-                    if (ArrayGrowth.Fits(arr.Length, minLength, _growth) && ColumnReaders.IsReclaimable(at))
+                    if (CapacityPolicy.Fits(arr.Length, minLength, _growth) && ColumnReadScope.IsReclaimable(at))
                     {
                         _free.RemoveAt(i);
                         _rented.Add(arr);
                         return arr;
                     }
                 }
-                var fresh = new double[ArrayGrowth.Capacity(minLength, _growth)];
+                var fresh = new double[CapacityPolicy.Capacity(minLength, _growth)];
                 _rented.Add(fresh);
                 return fresh;
             }
@@ -116,7 +116,7 @@ namespace Hevo.Charting.LowCode
         private void StampPending()
         {
             if (_pendingRetire.Count == 0) return;
-            long at = ColumnReaders.Retire();
+            long at = ColumnReadScope.Retire();
             foreach (var arr in _pendingRetire) AddFree(arr, at);
             _pendingRetire.Clear();
         }
@@ -128,7 +128,7 @@ namespace Hevo.Charting.LowCode
             // 空闲总字节封顶(至少留最新的一块)
             long bytes = 0;
             foreach (var (a, _) in _free) bytes += (long)a.Length * sizeof(double);
-            while (_free.Count > 1 && bytes > _growth.MaximumFreeBytes)
+            while (_free.Count > 1 && bytes > _growth.MaxIdleBytes)
             {
                 bytes -= (long)_free[0].Array.Length * sizeof(double);
                 _free.RemoveAt(0);
@@ -140,9 +140,9 @@ namespace Hevo.Charting.LowCode
 
         public readonly struct CallScope : IDisposable
         {
-            private readonly ColumnCallBuffers? _owner;
-            private readonly ColumnCallBuffers? _prev;
-            internal CallScope(ColumnCallBuffers owner, ColumnCallBuffers? prev) { _owner = owner; _prev = prev; }
+            private readonly ResultBufferPool? _owner;
+            private readonly ResultBufferPool? _prev;
+            internal CallScope(ResultBufferPool owner, ResultBufferPool? prev) { _owner = owner; _prev = prev; }
 
             /// <summary>调用点自己租输出缓冲(C# 指标的 Span 签名:框架租好交给 handler 写)。</summary>
             public double[] Rent(int minLength) => _owner != null ? _owner.Rent(minLength) : new double[minLength];

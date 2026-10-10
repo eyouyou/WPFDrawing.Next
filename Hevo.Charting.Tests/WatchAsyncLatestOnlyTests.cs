@@ -15,7 +15,7 @@ namespace Hevo.Charting.Tests
     /// 且那一次读到最新值;回调抛异常后订阅还能继续工作;退订后不再跑待重跑的那次。
     /// 以前每次通知都丢一个线程池任务:慢回调下任务无限堆积,同一订阅并发执行、乱序提交。
     /// </summary>
-    public sealed class WatchAsyncSingleFlightTests
+    public sealed class WatchAsyncLatestOnlyTests
     {
         private static void WaitIdle(Func<bool> done, int timeoutMs = 10_000)
         {
@@ -28,7 +28,7 @@ namespace Hevo.Charting.Tests
         public void SameSubscription_NeverRunsConcurrently()
         {
             int running = 0, maxRunning = 0, runs = 0;
-            var gate = new FeatureExtensions.SingleFlight(_ =>
+            var gate = new FeatureExtensions.LatestOnlyRunner(_ =>
             {
                 int now = Interlocked.Increment(ref running);
                 int seen;
@@ -57,7 +57,7 @@ namespace Hevo.Charting.Tests
             int value = 0, runs = 0, lastSeen = -1;
             using var inFirst = new ManualResetEventSlim(false);
             using var release = new ManualResetEventSlim(false);
-            var gate = new FeatureExtensions.SingleFlight(_ =>
+            var gate = new FeatureExtensions.LatestOnlyRunner(_ =>
             {
                 int v = Volatile.Read(ref value); // 回调自己读"黑板"最新值
                 if (Interlocked.Increment(ref runs) == 1) { inFirst.Set(); release.Wait(5000); }
@@ -78,7 +78,7 @@ namespace Hevo.Charting.Tests
         public void ThrowingCallback_DoesNotWedgeSubscription()
         {
             int runs = 0;
-            var gate = new FeatureExtensions.SingleFlight(_ =>
+            var gate = new FeatureExtensions.LatestOnlyRunner(_ =>
             {
                 if (Interlocked.Increment(ref runs) == 1) throw new InvalidOperationException("boom");
             });
@@ -97,7 +97,7 @@ namespace Hevo.Charting.Tests
             int runs = 0;
             using var inFirst = new ManualResetEventSlim(false);
             using var release = new ManualResetEventSlim(false);
-            var gate = new FeatureExtensions.SingleFlight(_ =>
+            var gate = new FeatureExtensions.LatestOnlyRunner(_ =>
             {
                 if (Interlocked.Increment(ref runs) == 1) { inFirst.Set(); release.Wait(5000); }
             });

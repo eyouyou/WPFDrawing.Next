@@ -69,7 +69,7 @@ namespace Hevo.Charting.Benchmarks
 
         public override int LogicalLength => Volatile.Read(ref _count);
         // LogicalLength 不依赖 _readSnapshot.Length,展示柜可以留余量(不再每追加一根就整块重分配)
-        protected override Hevo.Charting.LowCode.ArrayGrowthOptions? SnapshotGrowth => Hevo.Charting.LowCode.ArrayGrowthOptions.Default;
+        protected override bool ReserveSnapshotCapacity => true;
 
         protected override Task<int> OnFetchAsync(string context, CancellationToken token)
         {
@@ -192,7 +192,7 @@ namespace Hevo.Charting.Benchmarks
             var priceMeta = FieldMeta.Literal("价", Colors.LightGray, "F2");
             var smaMeta = FieldMeta.Literal("SMA20", Color.FromRgb(0xFF, 0xB7, 0x4D), "F2");
 
-            canvas.Add(new ComputeFeature { InputPort = ClosePort, OutputPort = _smaPort, Compute = (ColumnCompute)Sma20 });
+            canvas.Add(new ComputeFeature { InputPort = ClosePort, OutputPort = _smaPort, Compute = (ComputeInto)Sma20 });
             canvas.Add(SeqFeature);
 
             canvas
@@ -224,7 +224,7 @@ namespace Hevo.Charting.Benchmarks
             }
         }
 
-        // 零分配签名(ColumnCompute):往框架给的 output 里写,输出缓冲由调用点池复用
+        // 零分配签名(ComputeInto):往框架给的 output 里写,输出缓冲由调用点池复用
         private static void Sma20(ReadOnlySpan<double> src, Span<double> result)
         {
             const int len = 20;

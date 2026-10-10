@@ -22,7 +22,7 @@ namespace Hevo.Charting.WorkFlow
         private readonly ISequenceTransform _transform;
 
         private VersionToken _lastVersion; // 💥 查脏哨兵
-        private readonly ColumnBufferRing<double> _ring = new();
+        private readonly ColumnBufferPool<double> _ring = new();
 
         public AoSSequenceTransformIngestor(
             DataPort<ReadOnlyMemory<double>> targetPort,
@@ -44,7 +44,7 @@ namespace Hevo.Charting.WorkFlow
             int len = _lengthProvider();
             if (len <= 0) return;
 
-            // 1. 目标缓冲:每次发布写进一块没有读者的缓冲,见 ColumnBufferRing
+            // 1. 目标缓冲:每次发布写进一块没有读者的缓冲,见 ColumnBufferPool
             var target = _ring.Rent(len);
 
             // 2. 榨取降维：将 Span 投喂给自定义委托，并透传 _sourceRef 消除闭包！

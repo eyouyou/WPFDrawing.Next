@@ -26,7 +26,7 @@ namespace Hevo.Charting.WorkFlow
 
         // 跨帧复用的合并输出缓冲（只增不减）
         private DateTime[] _mergedTimes = Array.Empty<DateTime>();
-        private readonly ColumnBufferRing<DateTime> _timeRing = new();
+        private readonly ColumnBufferPool<DateTime> _timeRing = new();
         private int _mergedCount;
         private SourceEntryBase[] _snapshotBuf = Array.Empty<SourceEntryBase>();
 
@@ -187,7 +187,7 @@ namespace Hevo.Charting.WorkFlow
                 e.Cursor = 0;
             }
 
-            // 2. 输出缓冲:每次合并写进一块没有读者的缓冲(锁外读者可能还拿着上一次发布的列),见 ColumnBufferRing
+            // 2. 输出缓冲:每次合并写进一块没有读者的缓冲(锁外读者可能还拿着上一次发布的列),见 ColumnBufferPool
             _mergedTimes = _timeRing.Rent(maxTotal);
             for (int i = 0; i < n; i++) _snapshotBuf[i].EnsureBuffers(maxTotal);
 
@@ -334,7 +334,7 @@ namespace Hevo.Charting.WorkFlow
             public readonly Func<TItem, TSource, double> Selector;
             public readonly DataPort<ReadOnlyMemory<double>> Port;
             public double[] Buffer = Array.Empty<double>();
-            public readonly ColumnBufferRing<double> Ring = new();
+            public readonly ColumnBufferPool<double> Ring = new();
 
             public EmitterSlot(Func<TItem, TSource, double> selector, DataPort<ReadOnlyMemory<double>> port)
             {
