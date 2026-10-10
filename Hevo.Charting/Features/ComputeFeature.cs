@@ -15,10 +15,24 @@ namespace Hevo.Charting.Features
     public delegate void ComputeInto(ReadOnlySpan<double> input, Span<double> output);
 
     /// <summary>
-    /// 多输入版零分配签名:<paramref name="inputs"/> 按 <see cref="ComputeFeature.InputOrder"/> 排列,
-    /// <paramref name="output"/> 长度 = 第一个输入的长度。同样每个元素都要写。
+    /// 多输入版零分配签名(输入个数不固定):<paramref name="inputs"/> 按 <see cref="ComputeFeature.InputOrder"/> 排列。
+    /// <paramref name="output"/> 长度 = 各输入长度的最小值(输入等长时就是输入长度)。同样每个元素都要写。
+    /// 蓝图里按形参名接线的 handler 用下面固定元数的 ComputeInto2 / 3 / 4(形参名就是输入名)。
     /// </summary>
     public delegate void ComputeIntoMulti(ReadOnlySpan<ReadOnlyMemory<double>> inputs, Span<double> output);
+
+    /// <summary>
+    /// 2 个具名输入的零分配签名。<c>[BlueprintHandler]</c> 静态方法写成
+    /// <c>void F(ReadOnlySpan&lt;double&gt; latest, ReadOnlySpan&lt;double&gt; prev_close, Span&lt;double&gt; result)</c> 即可,
+    /// 形参名(最后一个 output 除外)就是蓝图的输入名。output 长度 = 各输入长度的最小值,每个元素都要写。
+    /// </summary>
+    public delegate void ComputeInto2(ReadOnlySpan<double> a, ReadOnlySpan<double> b, Span<double> output);
+
+    /// <summary>3 个具名输入的零分配签名,规则同 <see cref="ComputeInto2"/>。</summary>
+    public delegate void ComputeInto3(ReadOnlySpan<double> a, ReadOnlySpan<double> b, ReadOnlySpan<double> c, Span<double> output);
+
+    /// <summary>4 个具名输入的零分配签名,规则同 <see cref="ComputeInto2"/>。</summary>
+    public delegate void ComputeInto4(ReadOnlySpan<double> a, ReadOnlySpan<double> b, ReadOnlySpan<double> c, ReadOnlySpan<double> d, Span<double> output);
 
     /// <summary>
     /// 蓝图层"计算节点":输入 → 委托 → 输出。委托可以是 Python(经 PythonHandlerRegistry 注册)、
@@ -192,15 +206,10 @@ namespace Hevo.Charting.Features
                     object? raw;
                     try
                     {
-                        if (Compute is ComputeIntoMulti cm)
+                        if (IsComputeIntoFamily(Compute))
                         {
                             if (multiOutput) { WarnSpanMultiOutput(); return; }
-                            var roms = new ReadOnlyMemory<double>[argsBuf.Length];
-                            for (int i = 0; i < roms.Length; i++) roms[i] = (ReadOnlyMemory<double>)argsBuf[i]!;
-                            int n = roms[0].Length;
-                            var arr = call.Rent(n);
-                            cm(roms, arr.AsSpan(0, n));
-                            raw = new ReadOnlyMemory<double>(arr, 0, n);
+                            raw = InvokeComputeInto(Compute, argsBuf, call);
                         }
                         else raw = Compute.DynamicInvoke(argsBuf);
                     }
@@ -310,10 +319,35 @@ namespace Hevo.Charting.Features
         /// </summary>
         internal static bool AllocatesResultEachCall(Delegate compute)
         {
-            if (compute is ComputeInto || compute is ComputeIntoMulti) return false;
+            if (compute is ComputeInto || IsComputeIntoFamily(compute)) return false;
             if (compute.Method.DeclaringType == null) return false;
             var ret = compute.Method.ReturnType;
             return ret == typeof(ReadOnlyMemory<double>) || ret == typeof(double[]);
+        }
+
+        /// <summary>多输入的零分配签名(ComputeIntoMulti / ComputeInto2 / 3 / 4)。</summary>
+        internal static bool IsComputeIntoFamily(Delegate d)
+            => d is ComputeIntoMulti || d is ComputeInto2 || d is ComputeInto3 || d is ComputeInto4;
+
+        // 多输入零分配签名:output 长度 = 各输入长度最小值,缓冲从调用点池租
+        internal static ReadOnlyMemory<double> InvokeComputeInto(Delegate compute, object?[] args, ResultBufferPool.CallScope call)
+        {
+            var roms = new ReadOnlyMemory<double>[args.Length];
+            int n = int.MaxValue;
+            for (int i = 0; i < roms.Length; i++) { roms[i] = (ReadOnlyMemory<double>)args[i]!; n = Math.Min(n, roms[i].Length); }
+            if (n == int.MaxValue || n == 0) return ReadOnlyMemory<double>.Empty;
+            var arr = call.Rent(n);
+            var output = arr.AsSpan(0, n);
+            switch (compute)
+            {
+                case ComputeIntoMulti m: m(roms, output); break;
+                case ComputeInto2 c2 when roms.Length == 2: c2(roms[0].Span.Slice(0, n), roms[1].Span.Slice(0, n), output); break;
+                case ComputeInto3 c3 when roms.Length == 3: c3(roms[0].Span.Slice(0, n), roms[1].Span.Slice(0, n), roms[2].Span.Slice(0, n), output); break;
+                case ComputeInto4 c4 when roms.Length == 4: c4(roms[0].Span.Slice(0, n), roms[1].Span.Slice(0, n), roms[2].Span.Slice(0, n), roms[3].Span.Slice(0, n), output); break;
+                default:
+                    throw new InvalidOperationException($"{compute.GetType().Name} 需要 {compute.Method.GetParameters().Length - 1} 个输入,InputOrder 给了 {roms.Length} 个。");
+            }
+            return new ReadOnlyMemory<double>(arr, 0, n);
         }
 
         private static void WarnSpanMultiOutput() =>

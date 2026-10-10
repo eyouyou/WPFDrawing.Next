@@ -328,11 +328,13 @@ namespace Hevo.Charting.LowCode.Designer
             var delegateType = ResolveDelegateType(method);
             // 形参名捞一份给 inputs,所有 attr 共用(handler 名变 lifecycle 不变形参顺序)。
             var parameters = method.GetParameters();
+            // 零分配签名(ComputeInto 系列)最后一个形参是输出缓冲,不算输入
+            int inputCount = IsComputeIntoType(delegateType) ? parameters.Length - 1 : parameters.Length;
             string[]? inputs = null;
-            if (parameters.Length > 0)
+            if (inputCount > 0)
             {
-                inputs = new string[parameters.Length];
-                for (int i = 0; i < parameters.Length; i++)
+                inputs = new string[inputCount];
+                for (int i = 0; i < inputCount; i++)
                     inputs[i] = parameters[i].Name ?? $"arg{i}";
             }
 
@@ -377,11 +379,29 @@ namespace Hevo.Charting.LowCode.Designer
                 : nodeAttr.Lifecycle;
         }
 
+        private static bool IsComputeIntoType(Type? t)
+            => t == typeof(Hevo.Charting.Features.ComputeInto) || t == typeof(Hevo.Charting.Features.ComputeInto2)
+               || t == typeof(Hevo.Charting.Features.ComputeInto3) || t == typeof(Hevo.Charting.Features.ComputeInto4);
+
         // method 签名 → 闭合 Action<...> / Func<..., TReturn> 类型。
         // 含开放泛型参数 / 超过 16 参数 → null(调用方报错,handler 不可注册)。
         internal static Type? ResolveDelegateType(MethodInfo method)
         {
             var paramTypes = method.GetParameters().Select(p => p.ParameterType).ToArray();
+            // Span 是 ref struct,不能当 Func / Action 的泛型参数:(ReadOnlySpan<double> × N, Span<double>) → void
+            // 的零分配指标签名映射到 ComputeInto 系列(N = 1..4)
+            if (method.ReturnType == typeof(void) && paramTypes.Length >= 2 && paramTypes.Length <= 5
+                && paramTypes[paramTypes.Length - 1] == typeof(Span<double>)
+                && paramTypes.Take(paramTypes.Length - 1).All(t => t == typeof(ReadOnlySpan<double>)))
+            {
+                switch (paramTypes.Length - 1)
+                {
+                    case 1: return typeof(Hevo.Charting.Features.ComputeInto);
+                    case 2: return typeof(Hevo.Charting.Features.ComputeInto2);
+                    case 3: return typeof(Hevo.Charting.Features.ComputeInto3);
+                    case 4: return typeof(Hevo.Charting.Features.ComputeInto4);
+                }
+            }
             if (Array.Exists(paramTypes, t => t.ContainsGenericParameters)) return null;
             if (method.ReturnType.ContainsGenericParameters) return null;
 
