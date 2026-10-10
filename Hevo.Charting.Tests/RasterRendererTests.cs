@@ -253,12 +253,20 @@ namespace Hevo.Charting.Tests
             d.DrawRectangle(GreenBrush, GridPen, new HevoRect(150.4f, 112.2f, 50.5f, 25.5f));
         }
 
+        /// <summary>
+        /// 只比 WPF 截图里"确定"的像素(alpha 0 或 255)。RenderTargetBitmap 不认 EdgeMode,
+        /// 截出来的 WPF 参考图总是抗锯齿的(实测:EdgeMode 设在父节点、自身或不设,斜线的半透明像素数完全一样);
+        /// 屏幕上画布是 Aliased。半透明的边缘像素在 Aliased 下取哪一边取决于像素中心,截图里没有这个信息,跳过。
+        /// 完全覆盖(255)的像素像素中心必然在图形内,完全没覆盖(0)的必然在外,这两类位图后端必须一致。
+        /// </summary>
         private static int CountDiff(uint[] a, uint[] b, out int covered)
         {
             int diff = 0;
             covered = 0;
             for (int i = 0; i < a.Length; i++)
             {
+                uint alpha = a[i] >> 24;
+                if (alpha != 0 && alpha != 0xFF) continue;
                 if (a[i] != 0 || b[i] != 0) covered++;
                 if (a[i] != b[i]) diff++;
             }
@@ -270,7 +278,7 @@ namespace Hevo.Charting.Tests
         {
             var (wpf, bmp) = RenderBoth(AxisAlignedScene);
             int diff = CountDiff(wpf, bmp, out int covered);
-            _out.WriteLine($"轴对齐场景:覆盖 {covered} 像素,不同 {diff}");
+            _out.WriteLine($"轴对齐场景:确定像素 {covered},不同 {diff}");
             Assert.True(covered > 2000, "场景没画出来");
             Assert.Equal(0, diff);
         });
@@ -293,9 +301,10 @@ namespace Hevo.Charting.Tests
             });
             int diff = CountDiff(wpf, bmp, out int covered);
             double ratio = (double)diff / Math.Max(1, covered);
-            _out.WriteLine($"混合场景(斜线 / 虚线 / 椭圆 / 圆角):覆盖 {covered} 像素,不同 {diff}({ratio:P1})");
+            _out.WriteLine($"混合场景(斜线 / 虚线 / 椭圆 / 圆角):确定像素 {covered},不同 {diff}({ratio:P1})");
             Assert.True(covered > 1000, "场景没画出来");
-            Assert.True(ratio < 0.15, $"跟 WPF 差异 {ratio:P1} 超过 15%");
+            // 斜边和曲线的多边形近似、虚线切分点的浮点误差会让极少数确定像素翻面
+            Assert.True(ratio < 0.02, $"跟 WPF 差异 {ratio:P1} 超过 2%");
         });
 
         [Fact]
