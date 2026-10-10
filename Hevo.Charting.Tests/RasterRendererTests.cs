@@ -258,15 +258,19 @@ namespace Hevo.Charting.Tests
         /// 截出来的 WPF 参考图总是抗锯齿的(实测:EdgeMode 设在父节点、自身或不设,斜线的半透明像素数完全一样);
         /// 屏幕上画布是 Aliased。半透明的边缘像素在 Aliased 下取哪一边取决于像素中心,截图里没有这个信息,跳过。
         /// 完全覆盖(255)的像素像素中心必然在图形内,完全没覆盖(0)的必然在外,这两类位图后端必须一致。
+        /// 半透明边缘叠在不透明图形上(比如 K 线边缘压在网格线上)时 alpha 是 255,但颜色是两者混出来的;
+        /// 位图后端是硬边,这种颜色它根本画不出来,所以 WPF 的颜色只要在位图结果里一次都没出现过,也按边缘像素跳过。
         /// </summary>
         private static int CountDiff(uint[] a, uint[] b, out int covered)
         {
+            var palette = new HashSet<uint>(b);
             int diff = 0;
             covered = 0;
             for (int i = 0; i < a.Length; i++)
             {
                 uint alpha = a[i] >> 24;
                 if (alpha != 0 && alpha != 0xFF) continue;
+                if (alpha == 0xFF && !palette.Contains(a[i])) continue;
                 if (a[i] != 0 || b[i] != 0) covered++;
                 if (a[i] != b[i]) diff++;
             }
