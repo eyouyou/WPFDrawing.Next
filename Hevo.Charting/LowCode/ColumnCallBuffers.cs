@@ -23,6 +23,9 @@ namespace Hevo.Charting.LowCode
     public sealed class ColumnCallBuffers
     {
         private const int MaxFree = 6;
+        private readonly ArrayGrowthOptions _growth;
+
+        public ColumnCallBuffers(ArrayGrowthOptions? growth = null) => _growth = growth ?? ArrayGrowthOptions.Default;
 
         [ThreadStatic] private static ColumnCallBuffers? t_current;
 
@@ -62,14 +65,14 @@ namespace Hevo.Charting.LowCode
                 for (int i = 0; i < _free.Count; i++)
                 {
                     var (arr, at) = _free[i];
-                    if (arr.Length >= minLength && ColumnReaders.IsReclaimable(at))
+                    if (ArrayGrowth.Fits(arr.Length, minLength, _growth) && ColumnReaders.IsReclaimable(at))
                     {
                         _free.RemoveAt(i);
                         _rented.Add(arr);
                         return arr;
                     }
                 }
-                var fresh = new double[minLength + (minLength >> 2) + 16];
+                var fresh = new double[ArrayGrowth.Capacity(minLength, _growth)];
                 _rented.Add(fresh);
                 return fresh;
             }
@@ -122,6 +125,14 @@ namespace Hevo.Charting.LowCode
         {
             if (_free.Count == MaxFree) _free.RemoveAt(0); // 更旧的丢给 GC(可能还有读者,不能进任何共享池)
             _free.Add((arr, at));
+            // 空闲总字节封顶(至少留最新的一块)
+            long bytes = 0;
+            foreach (var (a, _) in _free) bytes += (long)a.Length * sizeof(double);
+            while (_free.Count > 1 && bytes > _growth.MaximumFreeBytes)
+            {
+                bytes -= (long)_free[0].Array.Length * sizeof(double);
+                _free.RemoveAt(0);
+            }
         }
 
         /// <summary>测试用:当前发布在各端口上的缓冲。</summary>

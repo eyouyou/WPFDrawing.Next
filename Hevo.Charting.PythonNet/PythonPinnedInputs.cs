@@ -24,7 +24,7 @@ namespace Hevo.Charting.PythonNet
         {
             public double[] Array = System.Array.Empty<double>();
             public PyObject? Full;   // 覆盖整个容量的 ndarray 视图(GIL 内创建 / 释放)
-            public PyObject? Stale;  // 扩容后待释放的旧视图(Stage 不持 GIL,留到下次 View 时在 GIL 内释放)
+            public readonly List<PyObject> Stale = new();  // 换缓冲后待释放的旧视图(Stage 不持 GIL,留到下次 View 时在 GIL 内释放)
         }
 
         private readonly List<Slot> _slots = new();
@@ -34,11 +34,11 @@ namespace Hevo.Charting.PythonNet
         {
             while (_slots.Count <= index) _slots.Add(new Slot());
             var slot = _slots[index];
-            if (slot.Array.Length < column.Length)
+            int cap = Hevo.Charting.LowCode.ArrayGrowth.Resize(slot.Array.Length, column.Length);
+            if (cap != slot.Array.Length)   // 不够了就扩,远小于容量就缩(ArrayGrowth 统一规则)
             {
-                int cap = column.Length + (column.Length >> 2) + 16;
                 slot.Array = GC.AllocateUninitializedArray<double>(cap, pinned: true);
-                if (slot.Full != null) { slot.Stale?.Dispose(); slot.Stale = slot.Full; slot.Full = null; }
+                if (slot.Full != null) { slot.Stale.Add(slot.Full); slot.Full = null; }
             }
             column.CopyTo(slot.Array);
             return new PinnedArg(index, column.Length);
@@ -48,7 +48,8 @@ namespace Hevo.Charting.PythonNet
         public PyObject View(int index, int length)
         {
             var slot = _slots[index];
-            if (slot.Stale != null) { slot.Stale.Dispose(); slot.Stale = null; }
+            foreach (var old in slot.Stale) old.Dispose();
+            slot.Stale.Clear();
             slot.Full ??= Helpers.MakeView(slot.Array);
             return Helpers.Head(slot.Full, length);
         }

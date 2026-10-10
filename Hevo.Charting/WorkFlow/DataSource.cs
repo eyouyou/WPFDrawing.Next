@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Hevo.Charting.Core;
 using Hevo.Charting.LowCode.Designer;
 using Hevo.Charting.WorkFlow;
@@ -120,6 +121,21 @@ namespace Hevo.Charting
         // 最近一次 Publish 的有效长度(锁内写)。_buffer.Count 可能在两次 Publish 之间被子类改过,不能代替它。
         private int _publishedCount;
 
+        /// <summary>最近一次 Publish 的有效长度。开了 <see cref="SnapshotGrowth"/> 的子类,LogicalLength 要用它而不是 <c>_readSnapshot.Length</c>。</summary>
+        protected int PublishedCount => Volatile.Read(ref _publishedCount);
+
+        /// <summary>
+        /// 展示柜 <c>_readSnapshot</c> 的扩缩容规则。
+        /// <list type="bullet">
+        ///   <item>null(默认,兼容旧子类):展示柜长度始终等于有效长度 —— 有子类(包括 hevo.drawing 的数据源)用
+        ///         <c>_readSnapshot.Length</c> 当 LogicalLength、或直接读 <c>_readSnapshot[^1]</c>。代价是每追加一根就整块重分配、整块拷贝
+        ///         (2 万根 K 线每次 ~1 MB 进 LOH)。</item>
+        ///   <item>非 null:按 <see cref="LowCode.ArrayGrowth"/> 留封顶余量、远小于容量时收缩。此时 <c>_readSnapshot.Length</c> 是容量,
+        ///         子类必须用 <see cref="PublishedCount"/>(或自己的计数)做 LogicalLength,不能直接按数组长度读。</item>
+        /// </list>
+        /// </summary>
+        protected virtual LowCode.ArrayGrowthOptions? SnapshotGrowth => null;
+
         public VersionToken CurrentVersion => _dataClock.Snapshot();
 
         public DataPipeBuilder<TSource, TItem> Pipe() => new((TSource)this, Stream);
@@ -131,17 +147,28 @@ namespace Hevo.Charting
         {
             lock (_lock)
             {
-                // 1. 数组扩容：如果展示柜不够放了，才换个大点的柜子 (避免频繁 GC)
-                if (_readSnapshot.Length < _buffer.Count)
-                {
-                    _readSnapshot = new TItem[_buffer.Count];
-                }
-                else if (_buffer.Count == 0 && _readSnapshot.Length > 0)
+                // 1. 展示柜尺寸
+                int need = _buffer.Count;
+                var growth = SnapshotGrowth;
+                if (need == 0)
                 {
                     // 归零路径：SwitchContext 清 buffer 后必须把展示柜也清空，
                     // 否则 _readSnapshot[0] 仍持有上一上下文的引用，依赖它计算 LogicalLength
                     // 的子类（如 KLineDataSource）会把"归零信号"误报成"未变化"，下游 Watch 收不到。
-                    _readSnapshot = Array.Empty<TItem>();
+                    if (_readSnapshot.Length > 0) _readSnapshot = Array.Empty<TItem>();
+                }
+                else if (growth == null)
+                {
+                    // 兼容模式:长度 == 有效长度。以前只在变长时换,变短(非归零)时数组还是旧长度,
+                    // 用 _readSnapshot.Length 当 LogicalLength 的子类会报错长度;现在变短也换。
+                    if (_readSnapshot.Length != need) _readSnapshot = new TItem[need];
+                }
+                else
+                {
+                    int cap = LowCode.ArrayGrowth.Resize(_readSnapshot.Length, need, growth);
+                    if (cap != _readSnapshot.Length) _readSnapshot = new TItem[cap];
+                    else if (need < _publishedCount && RuntimeHelpers.IsReferenceOrContainsReferences<TItem>())
+                        Array.Clear(_readSnapshot, need, _publishedCount - need); // 变短:尾部旧元素别拖着引用
                 }
 
                 // 2. 物理拷贝：把后厨数据端到前台(没扩容时是原地覆盖 —— 已发布出去的同一个数组会被改写,

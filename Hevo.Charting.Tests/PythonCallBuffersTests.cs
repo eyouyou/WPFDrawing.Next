@@ -93,8 +93,9 @@ namespace Hevo.Charting.Tests
             var r2 = InCallSite(b, fn, big, port).ToArray();
             Assert.Equal(new[] { 9.0, 50_000.0, 49_999.0 }, r2);
             GC.Collect(); GC.WaitForPendingFinalizers();
+            // 变得很短:固定缓冲按 ArrayGrowth 收缩成新的一块,存住的旧视图还指着 5 万那块(内容不变、内存还活着)
             var r3 = InCallSite(b, fn, new double[] { 4 }, port).ToArray();
-            Assert.Equal(new[] { 4.0, 1.0, 4.0 }, r3);
+            Assert.Equal(new[] { 0.0, 1.0, 4.0 }, r3);
         }
 
         [Fact]

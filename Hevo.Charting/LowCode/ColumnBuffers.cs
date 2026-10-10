@@ -169,10 +169,11 @@ namespace Hevo.Charting.LowCode
     /// <summary>
     /// 摄入器的列缓冲轮换:每次发布都写进一块"没有读者"的缓冲,绝不改写已发布的那块。
     /// <list type="bullet">
-    ///   <item><see cref="Rent"/>:优先复用已退役、且 <see cref="ColumnReaders.IsReclaimable"/> 的缓冲,没有就新分配(带 25% 余量,
-    ///         逐根追加时不必每次都换);绝不等待。</item>
-    ///   <item><see cref="Published"/>:发布后调用,上一块退役并记下纪元。最多留 3 块退役缓冲,更旧的直接丢给 GC
-    ///         (可能还有读者拿着,不能回收进任何池子)。</item>
+    ///   <item><see cref="Rent"/>:优先复用已退役、<see cref="ColumnReaders.IsReclaimable"/> 且容量合适(<see cref="ArrayGrowth.Fits"/>)
+    ///         的缓冲,没有就按 <see cref="ArrayGrowth.Capacity"/> 新分配(带封顶的余量,逐根追加时不必每次都换);绝不等待。</item>
+    ///   <item><see cref="Published"/>:发布后调用,上一块退役并记下纪元。最多留 3 块退役缓冲、且总字节不超过
+    ///         <see cref="ArrayGrowthOptions.MaximumFreeBytes"/>(至少留一块),更旧的直接丢给 GC
+    ///         (可能还有读者拿着,不能回收进任何池子)。列变短很多时,太大的旧缓冲不再被选中,会被挤出去(即收缩)。</item>
     /// </list>
     /// 不再 Return 给 ArrayPool:还给共享池的数组会被别人租走改写,而读者可能还拿着它。
     /// 单写者(调用方在黑板写锁 / 数据源锁内),本类不加锁。
@@ -190,32 +191,31 @@ namespace Hevo.Charting.LowCode
         // 挡不住回收。下一次 Rent 时上一个事务的通知早已发完,此时打戳才安全。
         private T[]? _pendingRetire;
 
+        private readonly ArrayGrowthOptions _growth;
+        private static readonly int ElementSize = System.Runtime.CompilerServices.Unsafe.SizeOf<T>();
+
+        public ColumnBufferRing(ArrayGrowthOptions? growth = null) => _growth = growth ?? ArrayGrowthOptions.Default;
+
         public T[] Rent(int minLength)
         {
             StampPending();
             for (int i = 0; i < _retiredCount; i++)
             {
-                if (_retired[i].Length >= minLength && ColumnReaders.IsReclaimable(_retiredAt[i]))
+                if (ArrayGrowth.Fits(_retired[i].Length, minLength, _growth) && ColumnReaders.IsReclaimable(_retiredAt[i]))
                 {
                     var arr = _retired[i];
                     RemoveAt(i);
                     return arr;
                 }
             }
-            return new T[minLength + (minLength >> 2) + 16];
+            return new T[ArrayGrowth.Capacity(minLength, _growth)];
         }
 
         /// <summary>最近一次发布的缓冲(写者自己读它是安全的:已发布的缓冲不会再被改写)。</summary>
         public T[]? Current => _published;
 
         /// <summary>租到但没发布(内容跟当前发布的一样、不必发布)的缓冲还回来:没人见过它,可以立刻再用。</summary>
-        public void Unused(T[] array)
-        {
-            if (_retiredCount == MaxRetired) RemoveAt(0);
-            _retired[_retiredCount] = array;
-            _retiredAt[_retiredCount] = 0; // 纪元 0:任何读者都比它新,IsReclaimable 恒为真
-            _retiredCount++;
-        }
+        public void Unused(T[] array) => AddRetired(array, 0); // 纪元 0:任何读者都比它新,IsReclaimable 恒为真
 
         public void Published(T[] array)
         {
@@ -230,11 +230,25 @@ namespace Hevo.Charting.LowCode
         private void StampPending()
         {
             if (_pendingRetire == null) return;
-            if (_retiredCount == MaxRetired) RemoveAt(0);
-            _retired[_retiredCount] = _pendingRetire;
-            _retiredAt[_retiredCount] = ColumnReaders.Retire();
-            _retiredCount++;
+            var arr = _pendingRetire;
             _pendingRetire = null;
+            AddRetired(arr, ColumnReaders.Retire());
+        }
+
+        private void AddRetired(T[] array, long retiredAt)
+        {
+            if (_retiredCount == MaxRetired) RemoveAt(0);
+            _retired[_retiredCount] = array;
+            _retiredAt[_retiredCount] = retiredAt;
+            _retiredCount++;
+            // 空闲总字节封顶(至少留最新的一块):超出时丢最旧的给 GC
+            long bytes = 0;
+            for (int i = 0; i < _retiredCount; i++) bytes += (long)_retired[i].Length * ElementSize;
+            while (_retiredCount > 1 && bytes > _growth.MaximumFreeBytes)
+            {
+                bytes -= (long)_retired[0].Length * ElementSize;
+                RemoveAt(0);
+            }
         }
 
         private void RemoveAt(int i)
