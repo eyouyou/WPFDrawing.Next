@@ -86,6 +86,9 @@ namespace Hevo.Charting.Benchmarks
                 cell.RunFrameNow(PlotMode.Sync);
                 Console.WriteLine($"[latency-probe] 绘制策略:{renderer}");
             }
+            // ProbeRig 的宿主默认 IsHitTestVisible=false(render-probe 靠脚本写端口,不能让真实鼠标干扰计数);
+            // 这里测的恰恰是真实鼠标输入,必须打开,否则图表收不到 MouseMove / MouseWheel,一帧都不会重画。
+            if (window.Content is UIElement host) host.IsHitTestVisible = true;
             window.Topmost = true;
             window.Activate();
             RenderProbe.Pump(500);
