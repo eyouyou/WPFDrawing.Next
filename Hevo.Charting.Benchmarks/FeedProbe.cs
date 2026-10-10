@@ -68,6 +68,8 @@ namespace Hevo.Charting.Benchmarks
         }
 
         public override int LogicalLength => Volatile.Read(ref _count);
+        // LogicalLength 不依赖 _readSnapshot.Length,展示柜可以留余量(不再每追加一根就整块重分配)
+        protected override Hevo.Charting.LowCode.ArrayGrowthOptions? SnapshotGrowth => Hevo.Charting.LowCode.ArrayGrowthOptions.Default;
 
         protected override Task<int> OnFetchAsync(string context, CancellationToken token)
         {

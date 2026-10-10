@@ -70,6 +70,8 @@ namespace Hevo.Drawing.LowCodeDemo
 
         private int _localCount;
         public override int LogicalLength => _localCount;
+        // LogicalLength 不依赖 _readSnapshot.Length,展示柜可以留余量(不再每追加一根就整块重分配)
+        protected override Hevo.Charting.LowCode.ArrayGrowthOptions? SnapshotGrowth => Hevo.Charting.LowCode.ArrayGrowthOptions.Default;
 
         /// <summary>
         /// §回测 把进程级共享 timeline 当前帧快照成数组,供 <c>BacktestView</c> 跑离线策略评估。

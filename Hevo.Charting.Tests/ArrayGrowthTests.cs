@@ -71,7 +71,8 @@ namespace Hevo.Charting.Tests
 
         private sealed class GrowingSource : BufferedDataSource<GrowingSource, Bar>
         {
-            public override int LogicalLength => PublishedCount;   // 默认开余量,不用 override SnapshotGrowth
+            public override int LogicalLength => PublishedCount;
+            protected override ArrayGrowthOptions? SnapshotGrowth => ArrayGrowthOptions.Default;
             public int Capacity => _readSnapshot.Length;
             public void Set(int n) { lock (_lock) { _buffer.Clear(); for (int i = 0; i < n; i++) _buffer.Add(new Bar(i)); Publish(); } }
             public void Append() { lock (_lock) { _buffer.Add(new Bar(_buffer.Count)); Publish(); } }
@@ -80,13 +81,12 @@ namespace Hevo.Charting.Tests
         private sealed class LegacySource : BufferedDataSource<LegacySource, Bar>
         {
             public override int LogicalLength => _readSnapshot.Length;   // 旧写法(hevo.drawing 的数据源都是这样)
-            protected override ArrayGrowthOptions? SnapshotGrowth => null; // 旧写法必须关掉余量
             public void Set(int n) { lock (_lock) { _buffer.Clear(); for (int i = 0; i < n; i++) _buffer.Add(new Bar(i)); Publish(); } }
             public void Append() { lock (_lock) { _buffer.Add(new Bar(_buffer.Count)); Publish(); } }
         }
 
         [Fact]
-        public void DefaultSnapshot_AppendsWithoutReallocatingEveryBar()
+        public void OptedInSnapshot_AppendsWithoutReallocatingEveryBar()
         {
             var src = new GrowingSource();
             var published = new List<DataSnapshot<Bar>>();
@@ -107,7 +107,7 @@ namespace Hevo.Charting.Tests
         }
 
         [Fact]
-        public void DefaultSnapshot_ShrinksWhenFarSmaller_AndEmptiesOnZero()
+        public void OptedInSnapshot_ShrinksWhenFarSmaller_AndEmptiesOnZero()
         {
             var src = new GrowingSource();
             src.Set(20000);
@@ -118,32 +118,6 @@ namespace Hevo.Charting.Tests
             Assert.Equal(0, src.Capacity);
             Assert.Equal(0, src.GetSnapshot().Count);
         }
-
-        private sealed class ForgotToMigrateSource : BufferedDataSource<ForgotToMigrateSource, Bar>
-        {
-            public override int LogicalLength => _readSnapshot.Length;   // 没改:默认留余量后报的是容量
-            public void Set(int n) { lock (_lock) { _buffer.Clear(); for (int i = 0; i < n; i++) _buffer.Add(new Bar(i)); Publish(); } }
-        }
-
-        private sealed class CaptureListener : System.Diagnostics.TraceListener
-        {
-            public readonly List<string> Lines = new();
-            public override void Write(string? message) { lock (Lines) Lines.Add(message ?? ""); }
-            public override void WriteLine(string? message) { lock (Lines) Lines.Add(message ?? ""); }
-        }
-
-#if DEBUG
-        [Fact]
-        public void Debug_WarnsWhenLogicalLengthStillUsesArrayLength()
-        {
-            var listener = new CaptureListener();
-            System.Diagnostics.Trace.Listeners.Add(listener);
-            try { new ForgotToMigrateSource().Set(100); }
-            finally { System.Diagnostics.Trace.Listeners.Remove(listener); }
-            lock (listener.Lines)
-                Assert.Contains(listener.Lines, l => l.Contains(nameof(ForgotToMigrateSource)) && l.Contains("PublishedCount"));
-        }
-#endif
 
         [Fact]
         public void LegacySnapshot_LengthAlwaysEqualsCount_IncludingShrink()
