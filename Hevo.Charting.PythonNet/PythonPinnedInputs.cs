@@ -63,18 +63,18 @@ namespace Hevo.Charting.PythonNet
 
             // __array_interface__ 对象做 base:ndarray 引用它,它引用 .NET 数组(pythonnet 包装对象持 GCHandle),
             // 视图活着数组就活着;数组在 POH 上,地址不变。
-            private const string Code = """
-                import numpy as _np
-                class _HevoPinned(object):
-                    __slots__ = ('__array_interface__', '_owner')
-                    def __init__(self, addr, n, owner):
-                        self.__array_interface__ = {'data': (addr, False), 'shape': (n,), 'typestr': '<f8', 'version': 3}
-                        self._owner = owner
-                def view(addr, n, owner):
-                    return _np.asarray(_HevoPinned(addr, n, owner))
-                def head(a, n):
-                    return a[:n]
-                """;
+            // 普通字符串拼接(原始字符串字面量是 C# 11,开发规范要求可在 .NET 5 SDK 下编译)
+            private const string Code =
+                "import numpy as _np\n" +
+                "class _HevoPinned(object):\n" +
+                "    __slots__ = ('__array_interface__', '_owner')\n" +
+                "    def __init__(self, addr, n, owner):\n" +
+                "        self.__array_interface__ = {'data': (addr, False), 'shape': (n,), 'typestr': '<f8', 'version': 3}\n" +
+                "        self._owner = owner\n" +
+                "def view(addr, n, owner):\n" +
+                "    return _np.asarray(_HevoPinned(addr, n, owner))\n" +
+                "def head(a, n):\n" +
+                "    return a[:n]\n";
 
             private static void Ensure()
             {

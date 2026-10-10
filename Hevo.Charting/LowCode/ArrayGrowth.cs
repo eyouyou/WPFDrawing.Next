@@ -42,6 +42,9 @@ namespace Hevo.Charting.LowCode
     /// </summary>
     public static class ArrayGrowth
     {
+        // Array.MaxLength 是 .NET 6+ API;开发规范要求可在 .NET 5 SDK 下编译,这里写死同值
+        private const int MaxArrayLength = 0x7FFFFFC7;
+
         /// <summary>需要量对应的余量(元素)。</summary>
         public static int Headroom(int required, ArrayGrowthOptions? options = null)
         {
@@ -56,7 +59,7 @@ namespace Hevo.Charting.LowCode
         {
             if (required <= 0) return 0;
             long cap = (long)required + Headroom(required, options);
-            return (int)Math.Min(cap, Array.MaxLength);
+            return (int)Math.Min(cap, MaxArrayLength);
         }
 
         /// <summary>
