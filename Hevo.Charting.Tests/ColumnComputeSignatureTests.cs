@@ -59,6 +59,26 @@ namespace Hevo.Charting.Tests
         }
 
         [Fact]
+        public void MigrationHint_OnlyForCSharpHandlersReturningNewArrays()
+        {
+            Func<ReadOnlyMemory<double>, ReadOnlyMemory<double>> csharp = col => new double[col.Length];
+            Func<ReadOnlyMemory<double>, ReadOnlyMemory<double>, ReadOnlyMemory<double>> csharp2 = (a, b) => a;
+            Func<ReadOnlyMemory<double>, IDictionary<string, object?>> dict = _ => new Dictionary<string, object?>();
+            ColumnCompute span = (i, o) => { };
+            ColumnComputeMulti spanMulti = (i, o) => { };
+            // Python handler 的委托是表达式树编译出来的(跟 PythonInvokerShim 一样)
+            var p = System.Linq.Expressions.Expression.Parameter(typeof(ReadOnlyMemory<double>));
+            var compiled = System.Linq.Expressions.Expression.Lambda<Func<ReadOnlyMemory<double>, ReadOnlyMemory<double>>>(p, p).Compile();
+
+            Assert.True(ComputeFeature.AllocatesResultEachCall(csharp));
+            Assert.True(ComputeFeature.AllocatesResultEachCall(csharp2));
+            Assert.False(ComputeFeature.AllocatesResultEachCall(dict));
+            Assert.False(ComputeFeature.AllocatesResultEachCall(span));
+            Assert.False(ComputeFeature.AllocatesResultEachCall(spanMulti));
+            Assert.False(ComputeFeature.AllocatesResultEachCall(compiled));
+        }
+
+        [Fact]
         public void SingleInput_SpanSignature_ProducesCorrectValues_AndReusesBuffers()
         {
             var sink = new Sink();

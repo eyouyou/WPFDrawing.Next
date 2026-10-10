@@ -136,6 +136,12 @@ namespace Hevo.Charting.Features
             }
             bool multiOutput = Outputs.Count > 0;
             if (!multiOutput && OutputPort == null) return;
+#if DEBUG
+            if (AllocatesResultEachCall(Compute) && s_allocHinted.TryAdd(Compute.Method, true))
+                System.Diagnostics.Trace.TraceWarning(
+                    $"[ComputeFeature] C# 指标 {Compute.Method.DeclaringType?.Name}.{Compute.Method.Name} 返回新数组,每次计算都分配一块结果" +
+                    "(2 万根时 160 KB,进 LOH)。改用 ColumnCompute(input, output) / ColumnComputeMulti 往框架给的缓冲里写,可零分配。");
+#endif
 
             // §D2.X 多输入路径:Inputs 非空时,InputOrder 必填。按声明顺序拉值,DynamicInvoke。
             if (Inputs.Count > 0)
@@ -262,6 +268,23 @@ namespace Hevo.Charting.Features
                 // ③ 写锁提交
                 WriteOutput(board, raw, multiOutput, call);
             }
+        }
+
+#if DEBUG
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<System.Reflection.MethodInfo, bool> s_allocHinted = new();
+#endif
+
+        /// <summary>
+        /// 是不是"每次自己 new 结果数组"的 C# 指标(DEBUG 下提示迁移到 <see cref="ColumnCompute"/>)。
+        /// Python handler 不算:PythonInvokerShim 用表达式树编译(Method.DeclaringType 为空),结果由框架拷进调用点池。
+        /// 返回字典的多输出 handler 也不算(零分配签名只支持单输出)。
+        /// </summary>
+        internal static bool AllocatesResultEachCall(Delegate compute)
+        {
+            if (compute is ColumnCompute || compute is ColumnComputeMulti) return false;
+            if (compute.Method.DeclaringType == null) return false;
+            var ret = compute.Method.ReturnType;
+            return ret == typeof(ReadOnlyMemory<double>) || ret == typeof(double[]);
         }
 
         private static void WarnSpanMultiOutput() =>
