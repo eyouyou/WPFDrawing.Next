@@ -190,7 +190,7 @@ namespace Hevo.Charting.Benchmarks
             var priceMeta = FieldMeta.Literal("价", Colors.LightGray, "F2");
             var smaMeta = FieldMeta.Literal("SMA20", Color.FromRgb(0xFF, 0xB7, 0x4D), "F2");
 
-            canvas.Add(new ComputeFeature { InputPort = ClosePort, OutputPort = _smaPort, Compute = (Func<ReadOnlyMemory<double>, ReadOnlyMemory<double>>)Sma20 });
+            canvas.Add(new ComputeFeature { InputPort = ClosePort, OutputPort = _smaPort, Compute = (ColumnCompute)Sma20 });
             canvas.Add(SeqFeature);
 
             canvas
@@ -222,11 +222,10 @@ namespace Hevo.Charting.Benchmarks
             }
         }
 
-        private static ReadOnlyMemory<double> Sma20(ReadOnlyMemory<double> close)
+        // 零分配签名(ColumnCompute):往框架给的 output 里写,输出缓冲由调用点池复用
+        private static void Sma20(ReadOnlySpan<double> src, Span<double> result)
         {
             const int len = 20;
-            var src = close.Span;
-            var result = new double[src.Length];
             double sum = 0;
             for (int i = 0; i < src.Length; i++)
             {
@@ -234,7 +233,6 @@ namespace Hevo.Charting.Benchmarks
                 if (i >= len) sum -= src[i - len];
                 result[i] = i >= len - 1 ? sum / len : double.NaN;
             }
-            return result;
         }
     }
 

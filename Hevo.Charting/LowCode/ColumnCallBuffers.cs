@@ -133,6 +133,9 @@ namespace Hevo.Charting.LowCode
             private readonly ColumnCallBuffers? _prev;
             internal CallScope(ColumnCallBuffers owner, ColumnCallBuffers? prev) { _owner = owner; _prev = prev; }
 
+            /// <summary>调用点自己租输出缓冲(C# 指标的 Span 签名:框架租好交给 handler 写)。</summary>
+            public double[] Rent(int minLength) => _owner != null ? _owner.Rent(minLength) : new double[minLength];
+
             /// <summary>结果 <paramref name="value"/> 已写进 <paramref name="port"/>(调用点在写锁内写完后调)。</summary>
             public void Written(object port, ReadOnlyMemory<double> value) => _owner?.Written(port, value);
 
