@@ -19,7 +19,7 @@ namespace Hevo.Charting.Benchmarks
     /// 输入到画面的端到端延迟 + WPF 渲染线程合成上屏时间(render-probe 只测 UI 线程 CPU 管线,这里补后半段)。
     /// <para>
     /// 用法(Windows,Release,本机直接显示,不要远程桌面;测量期间别碰鼠标,约 30 秒):
-    /// <c>dotnet run -c Release --project Hevo.Charting.Benchmarks -- --latency-probe [--samples=150] [--bars=2000] [--out=latency-probe.csv]</c>
+    /// <c>dotnet run -c Release --project Hevo.Charting.Benchmarks -- --latency-probe [--samples=150] [--bars=2000] [--out=latency-probe.csv] [--renderer=wpf|bitmap|series]</c>
     /// </para>
     /// <para>
     /// 做法:置顶窗口里放一张 K 线图,后台线程用 SendInput 注入真实的系统鼠标输入(移动 → 十字光标,滚轮 → 缩放),
@@ -52,11 +52,12 @@ namespace Hevo.Charting.Benchmarks
             int samples = int.Parse(ProbeOptions.Get(args, "--samples=") ?? "150", CultureInfo.InvariantCulture);
             int bars = int.Parse(ProbeOptions.Get(args, "--bars=") ?? "2000", CultureInfo.InvariantCulture);
             string outPath = ProbeOptions.Get(args, "--out=") ?? "latency-probe.csv";
+            var renderer = ProbeRenderers.Parse(ProbeOptions.Get(args, "--renderer="));
 
             int exit = 0;
             var thread = new Thread(() =>
             {
-                try { exit = RunOnUiThread(samples, bars, outPath); }
+                try { exit = RunOnUiThread(samples, bars, outPath, renderer); }
                 catch (Exception ex) { Console.Error.WriteLine(ex); exit = 99; }
             });
             thread.SetApartmentState(ApartmentState.STA);
@@ -65,7 +66,7 @@ namespace Hevo.Charting.Benchmarks
             return exit;
         }
 
-        private static int RunOnUiThread(int samplesPerKind, int bars, string outPath)
+        private static int RunOnUiThread(int samplesPerKind, int bars, string outPath, ProbeRenderer renderer)
         {
             ProbeEnvironment.Standardize();
             var env = ProbeEnvironment.Capture();
@@ -79,6 +80,12 @@ namespace Hevo.Charting.Benchmarks
             if (rig == null) return 99;
             var window = rig.Window;
             var cell = rig.Charts[0].Cell;
+            if (renderer != ProbeRenderer.Wpf)
+            {
+                ProbeRenderers.Apply(rig, renderer);
+                cell.RunFrameNow(PlotMode.Sync);
+                Console.WriteLine($"[latency-probe] 绘制策略:{renderer}");
+            }
             window.Topmost = true;
             window.Activate();
             RenderProbe.Pump(500);

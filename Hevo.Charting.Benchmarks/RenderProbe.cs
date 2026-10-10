@@ -48,7 +48,8 @@ namespace Hevo.Charting.Benchmarks
     /// </summary>
     internal static class RenderProbe
     {
-        internal sealed record Mode(string Key, string Name, bool FullPass, bool BypassShortCircuit, bool LayerRedraw, PlotMode Plot);
+        internal sealed record Mode(string Key, string Name, bool FullPass, bool BypassShortCircuit, bool LayerRedraw, PlotMode Plot,
+            ProbeRenderer Renderer = ProbeRenderer.Wpf);
 
         internal static readonly Mode[] AllModes =
         {
@@ -59,6 +60,9 @@ namespace Hevo.Charting.Benchmarks
             new("full",      "全量(两侧都关)",    true,  false, true,  PlotMode.Sync),
             new("inc-par",   "增量+Parallel",      false, false, false, PlotMode.Parallel),
             new("full-par",  "全量+Parallel",      true,  false, true,  PlotMode.Parallel),
+            // 绘制策略对照:同一套指令改由框架光栅化进位图(ChartCell.RenderModeOverride / ChartLayer.Mode = Bitmap)
+            new("bmp",        "增量+位图(全部图层)", false, false, false, PlotMode.Sync, ProbeRenderer.BitmapAll),
+            new("bmp-series", "增量+位图(序列图层)", false, false, false, PlotMode.Sync, ProbeRenderer.BitmapSeries),
         };
 
         /// <summary>默认跑的逐帧场景(不带 --scenarios 时)。</summary>
@@ -265,6 +269,7 @@ namespace Hevo.Charting.Benchmarks
         {
             var step = ScenarioStep(rig, c.Scenario);
             Apply(c.Mode);
+            ProbeRenderers.Apply(rig, c.Mode.Renderer);
             try
             {
                 rig.ResetAll();
@@ -312,6 +317,7 @@ namespace Hevo.Charting.Benchmarks
             finally
             {
                 IncrementalRenderProbe.Reset();
+                ProbeRenderers.Apply(rig, ProbeRenderer.Wpf);
                 rig.ResetAll();
                 RunFrame(rig, PlotMode.Sync);
             }

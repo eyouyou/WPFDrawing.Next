@@ -252,7 +252,7 @@ dotnet run -c Release -- --render-probe --scenarios=Hover,Zoom --rounds=10 --out
 | `--charts=` | 1 | 同一窗口里的图数(UniformGrid 排布,各自独立 schema / 黑板),逗号分隔可扫多个 |
 | `--steps=` / `--warmup=` / `--rounds=` | 300 / 100 / 5 | 每轮每组合的测量帧数 / 预热帧数 / 轮数 |
 | `--scenarios=` | 六个基础场景 + Startup | 逐帧:`Hover,Pan,Zoom,Tick,Append,Resize`,扩展逐帧:`HoverNoTip,DashHover,DashPan,DashTick,Zoom@150,Zoom@200`;套件:`Feed,PyFeed,Blueprint,Soak`;`Startup`;`all` = 除 `Soak` 外全部(见下文"扩展场景") |
-| `--modes=` | 全部 | `inc,nobag,layerfull,featfull,full,inc-par,full-par` |
+| `--modes=` | 全部 | `inc,nobag,layerfull,featfull,full,inc-par,full-par,bmp,bmp-series` |
 | `--window=` | 1280x720 | 图表区域尺寸(定在内容上,窗口 SizeToContent) |
 | `--out=` | render-probe.csv | 逐帧明细;同名 `.md` 汇总表、`.json` 汇总数据 |
 | `--baseline=` / `--write-baseline=` / `--tolerance=` | - / - / 0.02 | 计数回归门槛(见下面 CI 一节) |
@@ -290,6 +290,11 @@ dotnet run -c Release -- --render-probe --scenarios=Hover,Zoom --rounds=10 --out
 | featfull | Feature侧全量 | 每帧都当作环境纪元变化,所有 Feature 重投影、`UsePort` 全部视为变脏 |
 | full | 全量(两侧都关) | 上面两项同时打开,相当于没有增量机制 |
 | inc-par / full-par | +Parallel | 同 inc / full,但图层录制走 `PlotMode.Parallel`(脏图层 ≥3 时 `Parallel.ForEach`) |
+| bmp | 增量+位图(全部图层) | 同 inc,但 `ChartCell.RenderModeOverride = Bitmap`:所有图层由框架光栅化进 WriteableBitmap,WPF 侧每层只剩一条 DrawImage |
+| bmp-series | 增量+位图(序列图层) | 同 inc,只有 K 线 / 折线 / 柱 / 散点图层 `Mode = Bitmap`,坐标轴 / 十字光标等仍走 WPF 矢量 |
+
+> 位图模式把光栅化从 WPF 渲染线程挪到了 UI 线程:render-probe 的"帧耗时"只量 UI 线程,位图模式这一列会变大,
+> 而 WPF 渲染线程省下的那部分这里看不到。比较两种策略要同时看"分配/帧"和 `--latency-probe --renderer=` 的端到端延迟。
 
 **统计与标准化**:
 - 进程 High 优先级、UI 线程 Highest;每个组合先预热一遍,再歇 300ms 让后台 Tier1 编译落地。
@@ -549,8 +554,10 @@ tick → 帧延迟 P99 在所有组合下都 ≤ 1.4 ms(本次堆只有几 MB,Ge
 ## 输入到画面的端到端延迟 (`--latency-probe`, [LatencyProbe](LatencyProbe.cs))
 
 ```bash
-dotnet run -c Release -- --latency-probe [--samples=150] [--bars=2000] [--out=latency-probe.csv]
+dotnet run -c Release -- --latency-probe [--samples=150] [--bars=2000] [--out=latency-probe.csv] [--renderer=wpf|bitmap|series]
 ```
+
+`--renderer=` 选绘制策略:`wpf`(默认,矢量)、`bitmap`(全部图层位图)、`series`(只有序列图层位图),跟 render-probe 的 `inc` / `bmp` / `bmp-series` 对应。
 
 置顶窗口里放一张 K 线图,后台线程用 `SendInput` 注入**真实的系统鼠标输入**(移动 → 十字光标,滚轮 → 缩放),
 然后不停用 GDI `BitBlt` 抓屏幕上绘图区里的两行像素直到像素变化。屏幕抓到的是 DWM 合成后的桌面,
