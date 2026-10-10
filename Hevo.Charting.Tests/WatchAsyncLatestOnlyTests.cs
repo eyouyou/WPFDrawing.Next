@@ -135,7 +135,7 @@ namespace Hevo.Charting.Tests
                         Compute = (Func<ReadOnlyMemory<double>, ReadOnlyMemory<double>>)(col =>
                         {
                             double g = col.Span[0];
-                            Thread.Sleep(rnd.Value!.Next(0, 15));
+                            Thread.Sleep(rnd.Value!.Next(2, 15));   // 至少 2 ms:一定比下面的推送慢,必然发生合并
                             lock (committed) committed.Add(g); // 合并后同一订阅串行:返回顺序 = 提交顺序
                             return new[] { g };
                         }),
@@ -144,7 +144,7 @@ namespace Hevo.Charting.Tests
                 var cell = new ChartCell { Template = schema };
                 using (var ctx = cell.CreateContext()) schema.ComposeAll(cell, ctx);
 
-                for (int gen = 1; gen <= 300; gen++) { schema.Source.PublishGen(gen, 100); Thread.Sleep(1); }
+                for (int gen = 1; gen <= 300; gen++) { schema.Source.PublishGen(gen, 100); Thread.SpinWait(2000); }
                 lastGen = 300;
                 WaitIdle(() => { lock (committed) return committed.Count > 0 && committed[^1] == 300; });
                 lock (committed) finalOut = committed.Count > 0 ? committed[^1] : double.NaN;
