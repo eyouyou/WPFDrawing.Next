@@ -142,3 +142,46 @@ WidgetBuffer 不走任何 backend,统一在 `ChartCell.RenderWidgetLayers` 走 `
 - ❌ 不要在 `IRenderer.Render` 内分配 List / 临时数组 / 闭包。命令热路径是 60Hz × N 命令,任何分配都会进 LOH 或 Gen0 频繁 GC
 - ❌ 不要绕开 `PixelSnap`。让新 backend "用自己的 snap 逻辑"会导致跟 WPF backend 渲染的 layer 像素错位 1px,业务侧 debug 极痛苦
 - ❌ 不要在 backend 实现里直接读业务 trait(如 CandleData)。所有数据都已在 Layer.OnUpdate 阶段编码进 RenderBuffer 命令,backend 只消费命令、不感知业务语义
+
+---
+
+## 位图回放后端(RenderMode.Bitmap)
+
+不是新接一个图形库,而是给同一套 `DrawCmd` 加第二种回放方式:框架自己把指令光栅化进图层的 `WriteableBitmap`,
+图层的 DrawingVisual 里只挂"裁剪 + 一张位图"三条 RenderData。图层代码、Feature、蓝图都不用改。
+
+### 怎么切
+
+```csharp
+// 单个图层(构造后任何时候都可以改,下一帧生效,不重录图层)
+var candles = new CandleLayer { Mode = RenderMode.Bitmap };
+candles.Mode = RenderMode.Software;   // 切回矢量
+
+// 整张图统一切(null = 各图层按自己的 Mode)
+chart.RenderModeOverride = RenderMode.Bitmap;
+```
+
+建议只给指令多、每帧整层重录的图层开(K 线、折线、柱、散点);坐标轴、十字光标这类指令少的图层留在矢量,文字更清晰。
+
+### 文件
+
+| 文件 | 作用 |
+|---|---|
+| `Renderers/Raster/RasterSurface.cs` | 预乘 BGRA32 像素目标(绑定 WriteableBitmap.BackBuffer),裁剪框、脏区、src-over 混合 |
+| `Renderers/Raster/ScanlineFiller.cs` | 扫描线多边形填充,像素中心采样(= `EdgeMode.Aliased`),非零 / 奇偶 |
+| `Renderers/Raster/Stroker.cs` | 折线描边展开(线端 / 拐角 / 虚线,语义同 WPF Pen,DashCap 默认 Square) |
+| `Renderers/Raster/RasterTextRenderer.cs` | 字形蒙版缓存(GlyphTypeface 能覆盖时)+ 整串 FormattedText 兜底(中文回退字体等) |
+| `Renderers/Raster/RasterDrawingRenderer.cs` | `IRenderer<DrawingBuffer / BitmapBuffer, RasterSurface>`,DrawOp 全覆盖(DrawVideo 除外) |
+| `Renderers/Raster/RasterRenderProvider.cs` | `IRendererProvider<RasterSurface>` |
+| `Renderers/Raster/BitmapLayerSurface.cs` | 每个位图图层的 WriteableBitmap:只增不减 + 1/8 余量、低于一半收缩;只清 / 只提交画过的区域 |
+| `Core/ChartCell.cs` `RenderVisualLayers` | 按 `RenderModeOverride ?? layer.Mode` 分发;策略刚切换的那一帧不脏也重新上屏 |
+
+### 跟 WPF 矢量路径的差异
+
+- 像素对齐沿用 `PixelSnap`,覆盖规则同 `EdgeMode.Aliased`:水平 / 垂直线、矩形逐像素一致(`RasterRendererTests` 截图对比)。
+- `PushOpacity` 逐图元乘透明度(WPF 是整组合成后再乘,组内图元重叠处会略深)。
+- 渐变只取首尾两个色标;ImageBrush / VisualBrush 不支持(该图元跳过)。
+- 文字:字形落在整像素上(WPF 亚像素定位),宽度用 advance 之和;标签框位置可能差 1 像素。
+- 含 `DrawVideo` 的帧自动回退矢量。
+- 内存:每个位图图层 ≈ 宽 × 高 × 8 字节(WriteableBitmap 前后台各一份),1920×1080 约 16MB。
+- 光栅化在 UI 线程做,WPF 渲染线程省掉对应的几何处理;评估时看分配和 `--latency-probe --renderer=` 端到端延迟,不要只看 UI 线程帧耗时。

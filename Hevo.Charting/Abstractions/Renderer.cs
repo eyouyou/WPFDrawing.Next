@@ -14,7 +14,13 @@ namespace Hevo.Charting.Abstractions
         /// <summary>
         /// D3D GPU 渲染 (高性能)
         /// </summary>
-        Hardware
+        Hardware,
+        /// <summary>
+        /// 位图回放:同一套绘制指令由框架光栅化进一张 WriteableBitmap,图层 Visual 只挂这张位图。
+        /// WPF 侧每帧不再生成 RenderData(K 线 / 折线这类上千条指令的图层,缩放平移时分配大降)。
+        /// 图层代码不用改,随时可切回 Software;含 DrawVideo 的帧自动回退矢量。
+        /// </summary>
+        Bitmap
     }
 
     /// <summary>

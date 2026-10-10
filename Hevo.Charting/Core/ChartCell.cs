@@ -1,6 +1,7 @@
 ﻿using Hevo.Charting.Abstractions;
 using Hevo.Charting.DevTools;
 using Hevo.Charting.Renderers;
+using Hevo.Charting.Renderers.Raster;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows;
@@ -72,7 +73,8 @@ namespace Hevo.Charting.Core
     /// 3. 生命周期：作为 ChartSession 的挂载点。
     ///
     /// LayerBuffer 三类子缓冲的路由(不变量):
-    /// - Drawing(矢量指令):全部 Software,统一走 RenderWpfLayers → WpfRenderProvider。
+    /// - Drawing(矢量指令):RenderWpfLayers 按图层绘制策略分发 —— Software 走 WpfRenderProvider 回放进 DrawingContext,
+    ///   Bitmap 走 RasterRenderProvider 光栅化进图层自己的 WriteableBitmap(见 <see cref="RenderModeOverride"/>)。
     /// - Widget(WPF 控件):所有 Layer 通过 RenderWidgetLayers 进入 InteractionCanvas 控件池。
     ///
     /// 注:RenderMode.Hardware 枚举值在 API 层保留以避免破坏下游枚举调用,但当前所有 Hardware
@@ -133,6 +135,29 @@ namespace Hevo.Charting.Core
         // RendererProvider — 注入 per-cell diagnostics 收集器
         private readonly RenderDiagnostics _diagnostics = new();
         private readonly WpfRenderProvider _wpfProvider;
+
+        // 位图后端:第一次有图层走 Bitmap 时才创建(字形 / 画刷缓存跟着 cell 走)
+        private RasterRenderProvider? _rasterProvider;
+
+        /// <summary>
+        /// 整张图统一的绘制策略。null(默认)= 各图层按自己的 <see cref="ChartLayer.Mode"/>;
+        /// 设成 <see cref="RenderMode.Bitmap"/> / <see cref="RenderMode.Software"/> 则所有图层统一走这一种。
+        /// 运行时可改,下一帧生效,不重算 Feature、不重录图层。
+        /// </summary>
+        public RenderMode? RenderModeOverride
+        {
+            get => _renderModeOverride;
+            set
+            {
+                if (_renderModeOverride == value) return;
+                _renderModeOverride = value;
+                RequestUpdate(s_noopUpdate);
+            }
+        }
+        private RenderMode? _renderModeOverride;
+
+        private static readonly Action<RenderContext> s_noopUpdate = _ => { };
+        private void OnLayerModeChanged(ChartLayer _) => RequestUpdate(s_noopUpdate);
 
         /// <summary>
         /// 获取本 cell 渲染管线的诊断快照。所有计数 UI 线程累加,无锁。
@@ -712,24 +737,48 @@ namespace Hevo.Charting.Core
         /// </summary>
         private void RenderWpfLayers()
         {
-            for (int i = 0; i < _visualRegistry.Count; i++)
+            RenderVisualLayers(_visualRegistry, _drawingCanvas);
+            RenderVisualLayers(_overlayVisualRegistry, _overlayCanvas);
+        }
+
+        // 每个图层按自己的绘制策略上屏:Software → WpfRenderProvider 回放进 DrawingContext;
+        // Bitmap → RasterRenderProvider 光栅化进图层自己的 WriteableBitmap。
+        // 不脏的图层只在"想要的策略 ≠ 当前挂着的"时才重放前台指令(策略刚切换的那一帧)。
+        private void RenderVisualLayers(List<(IChartLayer Layer, ChartLayerType Type)> registry, ChartDrawingCanvas host)
+        {
+            for (int i = 0; i < registry.Count; i++)
             {
-                var layer = _visualRegistry[i].Layer;
-                if (layer is ChartLayer cl && cl.IsDirty && cl.Buffer is LayerBuffer buffer)
+                if (registry[i].Layer is not ChartLayer cl) continue;
+                bool wantBitmap = (RenderModeOverride ?? cl.Mode) == RenderMode.Bitmap;
+                bool isBitmap = cl.BitmapSurface is { IsMounted: true };
+                if (!cl.IsDirty && wantBitmap == isBitmap) continue;
+                if (cl.Buffer is not LayerBuffer buffer) continue;
+
+                if (wantBitmap && TryRenderBitmap(cl, buffer, host)) continue;
+
+                // 矢量路径;从位图切回(或位图这一帧画不了)时释放位图
+                if (cl.BitmapSurface != null)
                 {
-                    using var dc = cl.RenderOpen();
-                    buffer.Execute(_wpfProvider, dc);
+                    cl.BitmapSurface.Dispose();
+                    cl.BitmapSurface = null;
                 }
+                using var dc = cl.RenderOpen();
+                buffer.Execute(_wpfProvider, dc);
             }
-            for (int i = 0; i < _overlayVisualRegistry.Count; i++)
-            {
-                var layer = _overlayVisualRegistry[i].Layer;
-                if (layer is ChartLayer cl && cl.IsDirty && cl.Buffer is LayerBuffer buffer)
-                {
-                    using var dc = cl.RenderOpen();
-                    buffer.Execute(_wpfProvider, dc);
-                }
-            }
+        }
+
+        private bool TryRenderBitmap(ChartLayer cl, LayerBuffer buffer, FrameworkElement host)
+        {
+            double w = host.ActualWidth, h = host.ActualHeight;
+            if (w <= 0 || h <= 0) return false;                                  // 还没布局:先走矢量
+            if (!RasterDrawingRenderer.CanRasterize(buffer.Drawing)) return false; // DrawVideo 只能交给 WPF
+
+            _rasterProvider ??= new RasterRenderProvider(_diagnostics);
+            var surface = cl.BitmapSurface ??= new BitmapLayerSurface();
+            surface.Render(buffer, _rasterProvider, w, h, _pixelsPerDip);
+            using var dc = cl.RenderOpen();
+            surface.Mount(dc); // 固定三条 RenderData(裁剪 / 位图 / 出栈),跟图层指令数无关
+            return true;
         }
 
         // --- 管线 B: Widget Controls ---
@@ -868,6 +917,7 @@ namespace Hevo.Charting.Core
                 }
                 _overlayCanvas.InsertVisual(insertIndex, v);
                 _overlayVisualRegistry.Insert(insertIndex, (v, v.Level));
+                v.ModeChanged = OnLayerModeChanged;
             }
             else if (layer is ChartLayer staticLayer)
             {
@@ -878,6 +928,7 @@ namespace Hevo.Charting.Core
                 }
                 _drawingCanvas.InsertVisual(insertIndex, staticLayer);
                 _visualRegistry.Insert(insertIndex, (staticLayer, staticLayer.Level));
+                staticLayer.ModeChanged = OnLayerModeChanged;
             }
             UpdateActiveLayersCache();
 

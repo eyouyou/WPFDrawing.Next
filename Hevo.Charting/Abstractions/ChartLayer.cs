@@ -105,7 +105,28 @@ namespace Hevo.Charting.Abstractions
     {
         public string Name { get; set; } = string.Empty;
         public ChartLayerType Level { get; set; }
-        public RenderMode Mode { get; set; } = RenderMode.Software;
+
+        /// <summary>
+        /// 绘制策略。Software = WPF 矢量回放(默认);Bitmap = 框架光栅化到位图后再交给 WPF。
+        /// 运行时随时可改,下一帧生效(不需要重录图层);也可以用 <see cref="ChartCell.RenderModeOverride"/> 整张图统一切。
+        /// </summary>
+        public RenderMode Mode
+        {
+            get => _mode;
+            set
+            {
+                if (_mode == value) return;
+                _mode = value;
+                ModeChanged?.Invoke(this);
+            }
+        }
+        private RenderMode _mode = RenderMode.Software;
+
+        /// <summary>ChartCell 挂上的回调:Mode 变了就排一帧,把当前前台指令按新策略重新上屏。</summary>
+        internal Action<ChartLayer>? ModeChanged;
+
+        /// <summary>位图模式下的像素宿主(ChartCell 管理;切回矢量 / 移除图层时释放)。</summary>
+        internal Renderers.Raster.BitmapLayerSurface? BitmapSurface;
 
         // ==========================================
         // 双缓冲机制：存的是 LayerBuffer (大礼包)
@@ -238,6 +259,9 @@ namespace Hevo.Charting.Abstractions
                     // 1. 清理其他可能的大内存引用，帮助 GC 尽早回收
                     _frontBuffer.Clear();
                     _backBuffer.Clear();
+                    BitmapSurface?.Dispose();
+                    BitmapSurface = null;
+                    ModeChanged = null;
                 }
 
                 // 释放未托管的资源(未托管的对象)并重写终结器
